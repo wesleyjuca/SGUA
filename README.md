@@ -11,8 +11,6 @@ Plataforma web de gestão, monitoramento e operação das unidades ambientais do
 - **CIMAs** — Centros Integrados de Meio Ambiente  
 - **UGAIs** — Unidades de Gestão Ambiental Integrada
 
-Design fiel ao sistema original v7 (paleta amazônica, navbar, mapa Leaflet).
-
 ---
 
 ## Funcionalidades
@@ -58,8 +56,6 @@ Não requer instalação ou servidor.
 
 | Perfil | E-mail | Senha |
 |--------|--------|-------|
-| Admin | admin@sema.ac.gov.br | admin123 |
-| Gestor | gestor@sema.ac.gov.br | gestor123 |
 | Visualizador | viewer@sema.ac.gov.br | viewer123 |
 
 > O login aparece **somente** ao clicar em "⚙ Admin" — a página inicial é pública.
