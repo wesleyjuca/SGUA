@@ -10,17 +10,15 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#fff;color:#1E2218;-webkit-font-smoothing:antialiased}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#fff;color:#1E2218;-webkit-font-smoothing:antialiased}
 input,select,textarea,button{font-family:inherit;outline:none}
 input,select,textarea{padding:8px 12px;border:1px solid #DEE2D8;border-radius:8px;font-size:13px;color:#1E2218;background:#fff;width:100%;transition:border-color .15s;box-sizing:border-box}
-input:focus,select:focus,textarea:focus{border-color:#2E9E63}
+input:focus,select:focus,textarea:focus{border-color:#2E9E63;box-shadow:0 0 0 2px rgba(46,158,99,.1)}
 button{cursor:pointer}
 a{color:inherit;text-decoration:none}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:#F7F8F5}
 ::-webkit-scrollbar-thumb{background:#DEE2D8;border-radius:4px}
-
-/* LOADING */
 #app-loading{position:fixed;inset:0;background:#0F5C3A;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:99999;gap:16px;transition:opacity .4s}
 #app-loading.hidden{opacity:0;pointer-events:none}
 .ll{width:54px;height:54px;background:#2E9E63;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:26px;animation:lp 1.5s ease-in-out infinite}
@@ -29,6 +27,10 @@ a{color:inherit;text-decoration:none}
 .lt{color:rgba(255,255,255,.6);font-size:11px;letter-spacing:1px}
 @keyframes lp{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
 @keyframes lbar{0%{width:0;margin-left:0}50%{width:60%;margin-left:20%}100%{width:0;margin-left:100%}}
+/* tabela import */
+table{border-collapse:collapse}
+th,td{text-align:left;vertical-align:middle}
+code{font-family:monospace}
 </style>
 </head>
 <body>
@@ -42,8 +44,714 @@ a{color:inherit;text-decoration:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SEGURANÇA — SHA-256 puro JS (sync) · sem dependências externas
+// ══════════════════════════════════════════════════════════════════════════════
+function sha256(msg){
+  var K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+         0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+         0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+         0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+         0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+         0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+         0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+         0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  var H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  function rr(w,n){return(w>>>n)|(w<<(32-n));}
+  // UTF-8 encode
+  var bytes=[];
+  for(var i=0;i<msg.length;i++){
+    var c=msg.charCodeAt(i);
+    if(c<128)bytes.push(c);
+    else if(c<2048)bytes.push(0xc0|(c>>6),0x80|(c&63));
+    else bytes.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));
+  }
+  var blen=bytes.length*8;
+  bytes.push(0x80);
+  while(bytes.length%64!==56)bytes.push(0);
+  for(var i=7;i>=0;i--)bytes.push((blen/Math.pow(2,i*8))&255);
+  // Process chunks
+  for(var ck=0;ck<bytes.length;ck+=64){
+    var w=[];
+    for(var i=0;i<16;i++)w[i]=(bytes[ck+i*4]<<24)|(bytes[ck+i*4+1]<<16)|(bytes[ck+i*4+2]<<8)|bytes[ck+i*4+3];
+    for(var i=16;i<64;i++){
+      var s0=rr(w[i-15],7)^rr(w[i-15],18)^(w[i-15]>>>3);
+      var s1=rr(w[i-2],17)^rr(w[i-2],19)^(w[i-2]>>>10);
+      w[i]=(w[i-16]+s0+w[i-7]+s1)>>>0;
+    }
+    var a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],hh=H[7];
+    for(var i=0;i<64;i++){
+      var S1=rr(e,6)^rr(e,11)^rr(e,25),ch=(e&f)^(~e&g);
+      var t1=(hh+S1+ch+K[i]+w[i])>>>0;
+      var S0=rr(a,2)^rr(a,13)^rr(a,22),maj=(a&b)^(a&c)^(b&c);
+      var t2=(S0+maj)>>>0;
+      hh=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;
+    }
+    H[0]=(H[0]+a)>>>0;H[1]=(H[1]+b)>>>0;H[2]=(H[2]+c)>>>0;H[3]=(H[3]+d)>>>0;
+    H[4]=(H[4]+e)>>>0;H[5]=(H[5]+f)>>>0;H[6]=(H[6]+g)>>>0;H[7]=(H[7]+hh)>>>0;
+  }
+  return H.map(function(n){return('00000000'+(n>>>0).toString(16)).slice(-8);}).join('');
+}
+
+// Sanitização — remove tags HTML e limita comprimento
+function sanitize(str,maxLen){
+  if(typeof str!=='string')return '';
+  var s=str.replace(/<[^>]*>/g,'').replace(/[<>"'`]/g,'').trim();
+  return maxLen?s.slice(0,maxLen):s;
+}
+
+// Validação de campos com regras declarativas
+// rules: [{field, label, required, maxLen, pattern, patternMsg}]
+function validateFields(obj,rules){
+  var errs=[];
+  rules.forEach(function(r){
+    var v=obj[r.field];
+    if(r.required&&(!v||String(v).trim()===''))errs.push(r.label+' é obrigatório.');
+    if(v&&r.maxLen&&String(v).length>r.maxLen)errs.push(r.label+': máximo '+r.maxLen+' caracteres.');
+    if(v&&r.pattern&&!r.pattern.test(String(v)))errs.push(r.label+': '+(r.patternMsg||'formato inválido'));
+    if(v&&r.min!==undefined&&Number(v)<r.min)errs.push(r.label+': mínimo '+r.min+'.');
+    if(v&&r.max!==undefined&&Number(v)>r.max)errs.push(r.label+': máximo '+r.max+'.');
+  });
+  return errs; // [] = válido
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PERSISTÊNCIA — localStorage (dados de negócio apenas, jamais senhas)
+// ══════════════════════════════════════════════════════════════════════════════
+var SK='sagcu_v4_'; // versão do schema — bump para invalidar cache antigo
+function lsGet(key,fallback){
+  try{var r=localStorage.getItem(SK+key);return r?JSON.parse(r):fallback;}
+  catch(e){return fallback;}
+}
+function lsSet(key,data){
+  try{localStorage.setItem(SK+key,JSON.stringify(data));}
+  catch(e){/* quota exceeded — silently ignore */}
+}
+function lsClear(){
+  try{Object.keys(localStorage).filter(function(k){return k.startsWith(SK);}).forEach(function(k){localStorage.removeItem(k);});}
+  catch(e){}
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DOMÍNIO — approveUso(uns, setUns, unidadeId, orgaoData) : {ok, err?, orgao?}
+// Regras:
+//   1. Unidade deve existir e estar ativa (status !== 'inativo')
+//   2. Impede duplicação: mesmo orgão ativo na mesma unidade
+//   3. Incrementa ocupacaoAtual
+//   4. Insere registro {id, nome, tipo, dataEntrada, ativo:true}
+//   5. Persiste no estado (setUns) e no localStorage
+// ══════════════════════════════════════════════════════════════════════════════
+function approveUso(uns, setUns, unidadeId, orgaoData){
+  // 1. Encontrar unidade
+  var u=uns.find(function(x){return x.id===unidadeId;});
+  if(!u) return {ok:false, err:'Unidade não encontrada (id='+unidadeId+')'};
+  if(u.status==='inativo') return {ok:false, err:'Unidade "'+u.nome+'" está inativa e não pode receber órgãos.'};
+
+  // 2. Sanitizar e validar campos do orgão
+  var nome=sanitize(String(orgaoData.nome||''),100);
+  var tipo=sanitize(String(orgaoData.tipo||''),60);
+  var errs=validateFields({nome:nome,tipo:tipo},[
+    {field:'nome',label:'Nome do órgão',required:true,maxLen:100},
+    {field:'tipo',label:'Tipo do evento',required:true,maxLen:60}
+  ]);
+  if(errs.length) return {ok:false, err:errs.join(' ')};
+
+  // 3. Impedir duplicação — mesmo orgão ativo na unidade
+  var presentes=u.orgaosPresentes||[];
+  var jaAtivo=presentes.find(function(o){
+    return o.ativo && o.nome.toLowerCase()===nome.toLowerCase();
+  });
+  if(jaAtivo) return {ok:false, err:'Órgão "'+nome+'" já está ativo nesta unidade desde '+formatData(jaAtivo.dataEntrada)+'.'};
+
+  // 4. Criar registro do órgão
+  var novoOrgao={
+    id:String(Date.now())+'_'+Math.random().toString(36).slice(2,6),
+    nome:nome,
+    tipo:tipo,
+    dataEntrada:new Date().toISOString().split('T')[0],
+    ativo:true
+  };
+
+  // 5. Persistir — atualizar estado e localStorage
+  var resultado={ok:true, orgao:novoOrgao};
+  setUns(function(us){
+    var atualizadas=us.map(function(un){
+      if(un.id!==unidadeId) return un;
+      var novaLista=(un.orgaosPresentes||[]).concat([novoOrgao]);
+      var ativos=novaLista.filter(function(o){return o.ativo;}).length;
+      return Object.assign({},un,{orgaosPresentes:novaLista, ocupacaoAtual:ativos});
+    });
+    lsSet('uns',atualizadas); // persistência imediata
+    return atualizadas;
+  });
+  return resultado;
+}
+
+// leaveUso — desativa um órgão na unidade (checkout)
+function leaveUso(uns, setUns, unidadeId, orgaoId){
+  var u=uns.find(function(x){return x.id===unidadeId;});
+  if(!u) return {ok:false, err:'Unidade não encontrada'};
+  var org=(u.orgaosPresentes||[]).find(function(o){return o.id===orgaoId;});
+  if(!org) return {ok:false, err:'Órgão não encontrado nesta unidade'};
+  if(!org.ativo) return {ok:false, err:'Órgão já está inativo'};
+
+  setUns(function(us){
+    var atualizadas=us.map(function(un){
+      if(un.id!==unidadeId) return un;
+      var novaLista=(un.orgaosPresentes||[]).map(function(o){
+        return o.id===orgaoId?Object.assign({},o,{ativo:false,dataSaida:new Date().toISOString().split('T')[0]}):o;
+      });
+      var ativos=novaLista.filter(function(o){return o.ativo;}).length;
+      return Object.assign({},un,{orgaosPresentes:novaLista, ocupacaoAtual:ativos});
+    });
+    lsSet('uns',atualizadas);
+    return atualizadas;
+  });
+  return {ok:true};
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RELATÓRIOS — Export CSV/XLSX · Import CSV/XLSX com validação e deduplicação
+// ══════════════════════════════════════════════════════════════════════════════
+
+// --- Definição de colunas por dataset ---
+var UN_COLS=[
+  {key:'id',       label:'ID',         fmt:function(u){return u.id;}},
+  {key:'tipo',     label:'Tipo',       fmt:function(u){return u.tipo;}},
+  {key:'nome',     label:'Nome',       fmt:function(u){return u.nome;}},
+  {key:'municipio',label:'Município',  fmt:function(u){return u.municipio;}},
+  {key:'regional', label:'Regional',   fmt:function(u){return u.regional;}},
+  {key:'lat',      label:'Latitude',   fmt:function(u){return u.coords?u.coords.lat:'';}},
+  {key:'lng',      label:'Longitude',  fmt:function(u){return u.coords?u.coords.lng:'';}},
+  {key:'status',   label:'Status',     fmt:function(u){return u.status;}},
+  {key:'taxaUso',  label:'Taxa Uso(%)',fmt:function(u){return u.taxaUso;}},
+  {key:'ocupacaoAtual',label:'Ocupação Atual',fmt:function(u){return u.ocupacaoAtual||0;}},
+  {key:'orgaos',   label:'Órgãos',     fmt:function(u){return (u.orgaos||[]).join('; ');}},
+  {key:'quartos',  label:'Quartos',    fmt:function(u){return u.quartos||0;}},
+  {key:'salas',    label:'Salas',      fmt:function(u){return u.salas||0;}},
+  {key:'cozinha',  label:'Cozinha',    fmt:function(u){return u.cozinha?'Sim':'Não';}},
+  {key:'auditorio',label:'Auditório',  fmt:function(u){return u.auditorio?'Sim':'Não';}},
+  {key:'visivel',  label:'Visível',    fmt:function(u){return u.visivel?'Sim':'Não';}},
+  {key:'decreto',  label:'Decreto',    fmt:function(u){return u.decreto||'';}},
+  {key:'descricao',label:'Descrição',  fmt:function(u){return u.descricao||'';}}
+];
+
+var NW_COLS=[
+  {key:'id',       label:'ID',         fmt:function(n){return n.id;}},
+  {key:'titulo',   label:'Título',     fmt:function(n){return n.titulo;}},
+  {key:'categoria',label:'Categoria',  fmt:function(n){return n.categoria;}},
+  {key:'data',     label:'Data',       fmt:function(n){return n.data;}},
+  {key:'autor',    label:'Autor',      fmt:function(n){return n.autor||'';}},
+  {key:'fonte',    label:'Fonte',      fmt:function(n){return n.fonte||'';}},
+  {key:'destaque', label:'Destaque',   fmt:function(n){return n.destaque?'Sim':'Não';}},
+  {key:'visivel',  label:'Visível',    fmt:function(n){return n.visivel?'Sim':'Não';}},
+  {key:'resumo',   label:'Resumo',     fmt:function(n){return n.resumo||'';}}
+];
+
+var SOL_COLS=[
+  {key:'id',  label:'ID',         fmt:function(s){return s.id;}},
+  {key:'sol', label:'Solicitante',fmt:function(s){return s.sol;}},
+  {key:'org', label:'Órgão',      fmt:function(s){return s.org;}},
+  {key:'un',  label:'Unidade',    fmt:function(s){return s.un;}},
+  {key:'ev',  label:'Evento',     fmt:function(s){return s.ev;}},
+  {key:'dt',  label:'Data',       fmt:function(s){return s.dt;}},
+  {key:'st',  label:'Status',     fmt:function(s){return s.st;}}
+];
+
+var OCP_COLS=[
+  {key:'unidade',    label:'Unidade',    fmt:function(r){return r.unidade;}},
+  {key:'tipo',       label:'Tipo Un.',   fmt:function(r){return r.tipo;}},
+  {key:'municipio',  label:'Município',  fmt:function(r){return r.municipio;}},
+  {key:'orgNome',    label:'Órgão',      fmt:function(r){return r.orgNome;}},
+  {key:'orgTipo',    label:'Tipo Evento',fmt:function(r){return r.orgTipo;}},
+  {key:'dataEntrada',label:'Entrada',    fmt:function(r){return r.dataEntrada;}},
+  {key:'dataSaida',  label:'Saída',      fmt:function(r){return r.dataSaida||'—';}},
+  {key:'ativo',      label:'Ativo',      fmt:function(r){return r.ativo?'Sim':'Não';}}
+];
+
+// Gera linhas de ocupação a partir das unidades
+function buildOcupacaoRows(uns){
+  var rows=[];
+  uns.forEach(function(u){
+    (u.orgaosPresentes||[]).forEach(function(o){
+      rows.push({
+        unidade:u.nome, tipo:u.tipo, municipio:u.municipio,
+        orgNome:o.nome, orgTipo:o.tipo,
+        dataEntrada:o.dataEntrada, dataSaida:o.dataSaida||'', ativo:o.ativo
+      });
+    });
+  });
+  return rows;
+}
+
+// --- Exportação CSV ---
+function escapeCsvCell(v){
+  var s=String(v===null||v===undefined?'':v);
+  s=s.replace(/[\r\n]+/g,' ');
+  if(s.indexOf(',')!==-1||s.indexOf('"')!==-1||s.indexOf(';')!==-1){
+    s='"'+s.replace(/"/g,'""')+'"';
+  }
+  return s;
+}
+function exportCSV(rows, cols, filename){
+  var lines=[cols.map(function(c){return '"'+c.label+'"';}).join(',')];
+  rows.forEach(function(row){
+    lines.push(cols.map(function(c){return escapeCsvCell(c.fmt(row));}).join(','));
+  });
+  var blob=new Blob(['\uFEFF'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');
+  a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},2000);
+}
+
+// --- Exportação XLSX (SheetJS obrigatório) ---
+function exportXLSX(rows, cols, filename){
+  if(typeof XLSX==='undefined'){alert('SheetJS não carregado. Use a exportação CSV.');return;}
+  var data=[cols.map(function(c){return c.label;})];
+  rows.forEach(function(row){
+    data.push(cols.map(function(c){
+      var v=c.fmt(row);
+      return(v===null||v===undefined)?'':v;
+    }));
+  });
+  var ws=XLSX.utils.aoa_to_sheet(data);
+  // Largura automática
+  var wscols=cols.map(function(c,i){
+    var max=c.label.length;
+    rows.forEach(function(row){var v=String(c.fmt(row)||'');if(v.length>max)max=v.length;});
+    return{wch:Math.min(Math.max(max+2,8),60)};
+  });
+  ws['!cols']=wscols;
+  var wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Dados');
+  XLSX.writeFile(wb,filename);
+}
+
+// --- Parser CSV robusto (RFC 4180) ---
+function parseCSVLine(line){
+  var result=[],cur='',inQ=false;
+  for(var i=0;i<line.length;i++){
+    var ch=line[i];
+    if(ch==='"'){if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ;}
+    else if(ch===','&&!inQ){result.push(cur.trim());cur='';}
+    else cur+=ch;
+  }
+  result.push(cur.trim());
+  return result;
+}
+function parseCSV(text){
+  var lines=text.split(/\r?\n/).filter(function(l){return l.trim();});
+  if(lines.length<2) return{headers:[],rows:[]};
+  var headers=parseCSVLine(lines[0]).map(function(h){return h.replace(/^"+|"+$/g,'');});
+  var rows=lines.slice(1).map(function(line){
+    var vals=parseCSVLine(line);
+    var obj={};
+    headers.forEach(function(h,i){obj[h]=vals[i]!==undefined?vals[i].replace(/^"+|"+$/g,''):'';});
+    return obj;
+  });
+  return{headers:headers,rows:rows};
+}
+
+// --- Validação de linha importada (unidades) ---
+var UN_IMPORT_RULES=[
+  {field:'tipo',  label:'Tipo',  required:true, pattern:/^(CIMA|UGAI)$/, patternMsg:'deve ser CIMA ou UGAI'},
+  {field:'nome',  label:'Nome',  required:true, maxLen:100},
+  {field:'municipio',label:'Município',required:true,maxLen:80},
+  {field:'regional',label:'Regional', required:false,maxLen:60},
+  {field:'status',label:'Status',required:false,pattern:/^(ativo|manutencao|inativo)$/,patternMsg:'deve ser ativo, manutencao ou inativo'},
+  {field:'taxaUso',label:'Taxa Uso',required:false,min:0,max:100}
+];
+function validateUnRow(row){
+  var errs=validateFields(row,UN_IMPORT_RULES);
+  var lat=parseFloat(row.lat||row['Latitude']||'');
+  var lng=parseFloat(row.lng||row['Longitude']||'');
+  if(isNaN(lat)||lat<-90||lat>90) errs.push('Latitude inválida (esperado -90 a 90)');
+  if(isNaN(lng)||lng<-180||lng>180) errs.push('Longitude inválida (esperado -180 a 180)');
+  return errs;
+}
+
+// Mapear linha CSV para objeto unidade
+function csvRowToUnidade(row){
+  var lat=parseFloat(row.lat||row['Latitude']||'');
+  var lng=parseFloat(row.lng||row['Longitude']||'');
+  return{
+    id:null, // será atribuído no merge
+    tipo:sanitize(row.tipo||row['Tipo']||'CIMA',10),
+    nome:sanitize(row.nome||row['Nome']||'',100),
+    municipio:sanitize(row.municipio||row['Município']||'',80),
+    regional:sanitize(row.regional||row['Regional']||'Vale do Juruá',60),
+    coords:{lat:isNaN(lat)?-9.5:lat, lng:isNaN(lng)?-70.5:lng},
+    status:(row.status||row['Status']||'ativo'),
+    taxaUso:Math.min(100,Math.max(0,parseInt(row.taxaUso||row['Taxa Uso(%)'||'Taxa Uso']||'0'))),
+    orgaos:(row.orgaos||row['Órgãos']||'').split(';').map(function(s){return s.trim();}).filter(Boolean),
+    quartos:parseInt(row.quartos||row['Quartos']||'0')||0,
+    salas:parseInt(row.salas||row['Salas']||'0')||0,
+    cozinha:(row.cozinha||row['Cozinha']||'Não').toLowerCase()==='sim',
+    auditorio:(row.auditorio||row['Auditório']||'Não').toLowerCase()==='sim',
+    visivel:(row.visivel||row['Visível']||'Sim').toLowerCase()!=='não',
+    decreto:sanitize(row.decreto||row['Decreto']||'',120),
+    descricao:sanitize(row.descricao||row['Descrição']||'',500),
+    historia:'', foto:'', galeria:[], extras:[], orgaosPresentes:[], ocupacaoAtual:0
+  };
+}
+
+// Aplicar import com estratégia merge ou overwrite
+// strategy: 'merge' (mantém existentes) | 'overwrite' (substitui por nome)
+function applyImport(uns, parsedRows, strategy){
+  var valid=parsedRows.filter(function(r){return r._errs.length===0;});
+  if(!valid.length) return uns;
+  if(strategy==='overwrite'){
+    var novos=valid.map(function(r){return Object.assign({},r._obj,{id:Date.now()+Math.random()});});
+    var nomesNovos=novos.map(function(u){return u.nome.toLowerCase();});
+    // manter unidades que não estão no import e adicionar as novas
+    var mantidos=uns.filter(function(u){return nomesNovos.indexOf(u.nome.toLowerCase())===-1;});
+    return mantidos.concat(novos);
+  } else { // merge
+    var result=uns.slice();
+    valid.forEach(function(r){
+      var obj=r._obj;
+      var existeIdx=result.findIndex(function(u){return u.nome.toLowerCase()===obj.nome.toLowerCase();});
+      if(existeIdx===-1){
+        result.push(Object.assign({},obj,{id:Date.now()+Math.random()}));
+      }
+      // merge: ignora existentes (deduplicação por nome)
+    });
+    return result;
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AdminRelatorios — aba de relatórios com export/import
+// ══════════════════════════════════════════════════════════════════════════════
+function AdminRelatorios(p){
+  var uns=p.uns,setUns=p.setUns,news=p.news,sols=p.sols,toast2=p.toast2;
+  var sT=useState('export');var tab=sT[0],setTab=sT[1];
+  var sDS=useState('uns');var dataset=sDS[0],setDataset=sDS[1];
+  var sFmt=useState('csv');var fmt=sFmt[0],setFmt=sFmt[1];
+  var sSt=useState('merge');var strategy=sSt[0],setStrategy=sSt[1];
+  var sPR=useState(null);var parsedRows=sPR[0],setParsedRows=sPR[1];
+  var sFL=useState('');var fileName=sFL[0],setFileName=sFL[1];
+  var sLoad=useState(false);var loading=sLoad[0],setLoading=sLoad[1];
+
+  var DATASETS={
+    uns:{label:'Unidades',cols:UN_COLS,rows:uns},
+    news:{label:'Notícias',cols:NW_COLS,rows:news},
+    sols:{label:'Solicitações',cols:SOL_COLS,rows:sols},
+    ocp:{label:'Ocupação por Órgão',cols:OCP_COLS,rows:buildOcupacaoRows(uns)}
+  };
+  var ds=DATASETS[dataset];
+
+  function doExport(){
+    var ts=new Date().toISOString().slice(0,10);
+    var base='SEMA_'+ds.label.replace(/ /g,'_')+'_'+ts;
+    if(fmt==='xlsx') exportXLSX(ds.rows,ds.cols,base+'.xlsx');
+    else exportCSV(ds.rows,ds.cols,base+'.csv');
+    toast2('Exportado: '+base+'.'+(fmt==='xlsx'?'xlsx':'csv'));
+  }
+
+  function handleFile(e){
+    var file=e.target.files[0];
+    if(!file){setParsedRows(null);return;}
+    setFileName(file.name);
+    setLoading(true);
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var rows=[];
+        var isXlsx=file.name.toLowerCase().endsWith('.xlsx');
+        if(isXlsx){
+          if(typeof XLSX==='undefined'){alert('SheetJS não carregado. Use CSV.');setLoading(false);return;}
+          var wb=XLSX.read(ev.target.result,{type:'binary'});
+          var ws=wb.Sheets[wb.SheetNames[0]];
+          var data=XLSX.utils.sheet_to_json(ws,{defval:''});
+          rows=data.map(function(r){
+            var errs=validateUnRow(r);
+            return{_raw:r,_errs:errs,_obj:errs.length===0?csvRowToUnidade(r):null};
+          });
+        } else {
+          var parsed=parseCSV(ev.target.result);
+          rows=parsed.rows.map(function(r){
+            var errs=validateUnRow(r);
+            return{_raw:r,_errs:errs,_obj:errs.length===0?csvRowToUnidade(r):null};
+          });
+        }
+        setParsedRows(rows);
+      }catch(err){toast2('Erro ao processar arquivo: '+err.message,C.rm);}
+      setLoading(false);
+    };
+    if(file.name.toLowerCase().endsWith('.xlsx'))reader.readAsBinaryString(file);
+    else reader.readAsText(file,'UTF-8');
+  }
+
+  function doImport(){
+    if(!parsedRows) return;
+    var valid=parsedRows.filter(function(r){return r._errs.length===0;});
+    if(!valid.length){toast2('Nenhuma linha válida para importar.',C.am);return;}
+    var novas=applyImport(uns,parsedRows,strategy);
+    setUns(novas);
+    lsSet('uns',novas);
+    toast2(valid.length+' unidade(s) importada(s) com estratégia "'+strategy+'".');
+    setParsedRows(null);setFileName('');
+  }
+
+  var btnBase={padding:'8px 18px',borderRadius:8,border:'none',fontSize:12,cursor:'pointer',fontWeight:600};
+
+  return h('div',null,
+    h('h2',{style:{fontSize:20,fontWeight:700,margin:'0 0 4px',color:C.cd}},'Relatórios'),
+    h('p',{style:{fontSize:13,color:C.cm,margin:'0 0 20px'}},'Exportação CSV/XLSX e importação de unidades com validação e deduplicação.'),
+
+    // Tabs Export / Import
+    h('div',{style:{display:'flex',gap:2,marginBottom:20,borderBottom:'1px solid '+C.cl}},
+      [['export','📤 Exportar'],['import','📥 Importar']].map(function(t){
+        return h('button',{key:t[0],onClick:function(){setTab(t[0]);},
+          style:{background:'none',border:'none',cursor:'pointer',fontSize:13,fontWeight:tab===t[0]?700:400,
+                 color:tab===t[0]?C.g2:C.cm,padding:'8px 16px',
+                 borderBottom:tab===t[0]?'2px solid '+C.g2:'2px solid transparent',marginBottom:-1}
+        },t[1]);
+      })
+    ),
+
+    // ─── ABA EXPORTAR ───────────────────────────────────────────
+    tab==='export'&&h('div',null,
+      // Seletor de dataset
+      h('div',{style:{marginBottom:16}},
+        h('label',{style:{fontSize:11,fontWeight:700,color:C.cm,display:'block',marginBottom:8}},'CONJUNTO DE DADOS'),
+        h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
+          Object.entries(DATASETS).map(function(entry){
+            var k=entry[0],v=entry[1];
+            return h('button',{key:k,onClick:function(){setDataset(k);},
+              style:Object.assign({},btnBase,{
+                background:dataset===k?C.gx:'#fff',
+                color:dataset===k?C.g2:C.cm,
+                border:'1px solid '+(dataset===k?C.g2:C.cl)
+              })
+            },v.label+' ('+v.rows.length+')');
+          })
+        )
+      ),
+
+      // Seletor de formato
+      h('div',{style:{marginBottom:20}},
+        h('label',{style:{fontSize:11,fontWeight:700,color:C.cm,display:'block',marginBottom:8}},'FORMATO'),
+        h('div',{style:{display:'flex',gap:8}},
+          [['csv','📄 CSV (UTF-8)'],['xlsx','📊 Excel (XLSX)']].map(function(f){
+            return h('button',{key:f[0],onClick:function(){setFmt(f[0]);},
+              style:Object.assign({},btnBase,{
+                background:fmt===f[0]?C.gx:'#fff',
+                color:fmt===f[0]?C.g2:C.cm,
+                border:'1px solid '+(fmt===f[0]?C.g2:C.cl)
+              })
+            },f[1]);
+          })
+        )
+      ),
+
+      // Preview das colunas
+      h(Card,{style:{padding:'16px 18px',marginBottom:16}},
+        h('div',{style:{fontSize:11,fontWeight:700,color:C.cm,marginBottom:8,letterSpacing:.5}},'COLUNAS DO RELATÓRIO'),
+        h('div',{style:{display:'flex',flexWrap:'wrap',gap:6}},
+          ds.cols.map(function(c){return h('span',{key:c.key,style:{fontSize:11,padding:'2px 8px',borderRadius:10,background:C.cx,color:C.cm}},c.label);})
+        ),
+        h('div',{style:{marginTop:10,fontSize:12,color:C.cm}},ds.rows.length+' registro(s) serão exportados.')
+      ),
+
+      h('button',{onClick:doExport,
+        style:Object.assign({},btnBase,{padding:'10px 28px',fontSize:13,background:C.g2,color:'#fff'})
+      },'⬇ Baixar '+ds.label+'.'+fmt)
+    ),
+
+    // ─── ABA IMPORTAR ───────────────────────────────────────────
+    tab==='import'&&h('div',null,
+      h('div',{style:{background:C.cx,borderRadius:12,padding:'16px 18px',marginBottom:16,fontSize:13,color:C.cm,lineHeight:1.7}},
+        h('strong',{style:{color:C.cd}},'Formato esperado para Unidades:'),' ',
+        'CSV ou XLSX com colunas: ',
+        h('code',{style:{fontSize:11,background:C.cl,padding:'1px 5px',borderRadius:4}},
+          'tipo, nome, municipio, regional, lat, lng, status, taxaUso, orgaos, quartos, salas, cozinha, auditorio, visivel, decreto, descricao'
+        ),'. Exporte uma planilha existente para ver o modelo exato.'
+      ),
+
+      // Estratégia
+      h('div',{style:{marginBottom:16}},
+        h('label',{style:{fontSize:11,fontWeight:700,color:C.cm,display:'block',marginBottom:8}},'ESTRATÉGIA'),
+        h('div',{style:{display:'flex',gap:8}},
+          [['merge','🔀 Merge (adicionar novas, manter existentes)'],['overwrite','♻ Overwrite (substituir por nome)']].map(function(st){
+            return h('button',{key:st[0],onClick:function(){setStrategy(st[0]);},
+              style:Object.assign({},btnBase,{
+                background:strategy===st[0]?C.al:'#fff',
+                color:strategy===st[0]?C.am:C.cm,
+                border:'1px solid '+(strategy===st[0]?C.am:C.cl)
+              })
+            },st[1]);
+          })
+        ),
+        h('div',{style:{fontSize:11,color:C.cm,marginTop:6}},
+          strategy==='merge'?'Novas unidades são adicionadas. Nomes já existentes são ignorados (sem sobrescrita).':
+                             'Unidades com mesmo nome são substituídas. Novas são adicionadas. Unidades sem correspondência são mantidas.'
+        )
+      ),
+
+      // Input de arquivo
+      h('div',{style:{marginBottom:16}},
+        h('label',{style:{display:'inline-block',padding:'10px 20px',borderRadius:9,border:'1.5px dashed '+C.cl,cursor:'pointer',fontSize:13,color:C.g2,fontWeight:600}},
+          '📂 Selecionar arquivo CSV ou XLSX',
+          h('input',{type:'file',accept:'.csv,.xlsx',onChange:handleFile,style:{display:'none'}})
+        ),
+        fileName&&h('span',{style:{marginLeft:10,fontSize:12,color:C.cm}},fileName)
+      ),
+
+      loading&&h('div',{style:{fontSize:13,color:C.cm,marginBottom:12}},'⏳ Processando...'),
+
+      // Preview da validação
+      parsedRows&&h('div',null,
+        h(Card,{style:{padding:'16px',marginBottom:14}},
+          h('div',{style:{display:'flex',gap:16,marginBottom:12}},
+            h('span',{style:{fontSize:12,fontWeight:700,color:C.g2}},
+              '✅ Válidas: '+parsedRows.filter(function(r){return r._errs.length===0;}).length
+            ),
+            h('span',{style:{fontSize:12,fontWeight:700,color:C.rm}},
+              '❌ Inválidas: '+parsedRows.filter(function(r){return r._errs.length>0;}).length
+            ),
+            h('span',{style:{fontSize:12,color:C.cm}},
+              '📄 Total: '+parsedRows.length+' linhas'
+            )
+          ),
+          // Tabela de preview
+          h('div',{style:{overflowX:'auto',maxHeight:280,overflowY:'auto'}},
+            h('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:11}},
+              h('thead',null,
+                h('tr',null,
+                  ['#','Status','Nome','Município','Tipo','Lat','Lng','Erros'].map(function(col){
+                    return h('th',{key:col,style:{padding:'6px 8px',textAlign:'left',borderBottom:'2px solid '+C.cl,color:C.cm,fontWeight:700,whiteSpace:'nowrap',background:C.cx}},col);
+                  })
+                )
+              ),
+              h('tbody',null,
+                parsedRows.slice(0,50).map(function(r,i){
+                  var ok=r._errs.length===0;
+                  var raw=r._raw;
+                  return h('tr',{key:i,style:{background:ok?'#fff':C.rl+'40'}},
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl,color:C.cm}},i+1),
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl}},ok?'✅':'❌'),
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},raw.nome||raw['Nome']||'—'),
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl}},raw.municipio||raw['Município']||'—'),
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl}},raw.tipo||raw['Tipo']||'—'),
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl,fontFamily:'monospace'}},raw.lat||raw['Latitude']||'—'),
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl,fontFamily:'monospace'}},raw.lng||raw['Longitude']||'—'),
+                    h('td',{style:{padding:'5px 8px',borderBottom:'1px solid '+C.cl,color:C.rm,maxWidth:220}},r._errs.join(' | ')||'—')
+                  );
+                })
+              )
+            )
+          ),
+          parsedRows.length>50&&h('div',{style:{fontSize:11,color:C.cm,marginTop:6}},'Exibindo 50 de '+parsedRows.length+' linhas.')
+        ),
+
+        parsedRows.filter(function(r){return r._errs.length===0;}).length>0&&
+        h('button',{onClick:doImport,
+          style:Object.assign({},btnBase,{padding:'10px 28px',fontSize:13,background:C.g2,color:'#fff'})
+        },'⬆ Aplicar importação ('+parsedRows.filter(function(r){return r._errs.length===0;}).length+' válidas)')
+      )
+    )
+  );
+}
+
+
+// Painel de órgãos presentes numa unidade (exibido na aba 'estrutura')
+function PainelOcupacao(p){
+  var u=p.u,uns=p.uns,setUns=p.setUns,curUser=p.curUser,toast2=p.toast2;
+  var sNome=useState('');var nome=sNome[0],setNome=sNome[1];
+  var sTipo=useState('');var tipo=sTipo[0],setTipo=sTipo[1];
+  var sErr=useState('');var err=sErr[0],setErr=sErr[1];
+  var presentes=u.orgaosPresentes||[];
+  var ativos=presentes.filter(function(o){return o.ativo;});
+  var historico=presentes.filter(function(o){return!o.ativo;});
+
+  function handleApprove(){
+    setErr('');
+    var res=approveUso(uns,setUns,u.id,{nome:nome,tipo:tipo});
+    if(res.ok){setNome('');setTipo('');toast2('Órgão "'+res.orgao.nome+'" registrado com sucesso.');}
+    else{setErr(res.err);}
+  }
+  function handleLeave(orgaoId){
+    var res=leaveUso(uns,setUns,u.id,orgaoId);
+    if(res.ok) toast2('Saída registrada.');
+    else setErr(res.err);
+  }
+
+  var cor=u.tipo==='CIMA'?C.g2:C.b1;
+  var podeEditar=curUser&&(curUser.perfil==='admin'||curUser.permissoes.units);
+  var lbl={fontSize:11,color:C.cm,display:'block',marginBottom:4,fontWeight:600};
+
+  return h('div',null,
+    // Resumo
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:10,marginBottom:20}},
+      h(StatBox,{label:'Órgãos ativos',value:ativos.length,color:C.g2,icon:'🏢'}),
+      h(StatBox,{label:'Ocupação atual',value:(u.ocupacaoAtual||ativos.length),color:u.taxaUso>80?C.rm:cor,icon:'📊'}),
+      h(StatBox,{label:'Histórico',value:historico.length,color:C.cm,icon:'📋'})
+    ),
+
+    // Lista de ativos
+    ativos.length>0&&h(Card,{style:{padding:'16px 18px',marginBottom:14}},
+      h('div',{style:{fontSize:11,fontWeight:700,color:C.cm,marginBottom:10,letterSpacing:.5}},'ÓRGÃOS ATIVOS'),
+      ativos.map(function(o){
+        return h('div',{key:o.id,style:{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'8px 0',borderBottom:'0.5px solid '+C.cl,flexWrap:'wrap',gap:6}},
+          h('div',null,
+            h('div',{style:{fontSize:13,fontWeight:600,color:C.cd}},o.nome),
+            h('div',{style:{fontSize:11,color:C.cm}},'Tipo: '+o.tipo+' · Entrada: '+formatData(o.dataEntrada))
+          ),
+          podeEditar&&h('button',{onClick:function(){handleLeave(o.id);},
+            style:{padding:'4px 12px',borderRadius:7,border:'1px solid '+C.rm,background:C.rl,color:C.rm,fontSize:11,cursor:'pointer'}
+          },'Registrar saída')
+        );
+      })
+    ),
+
+    // Formulário de entrada (só para quem pode editar)
+    podeEditar&&h(Card,{style:{padding:'16px 18px',marginBottom:14}},
+      h('div',{style:{fontSize:11,fontWeight:700,color:C.g2,marginBottom:12,letterSpacing:.5}},'REGISTRAR ENTRADA DE ÓRGÃO'),
+      err&&h('div',{style:{background:C.rl,borderRadius:7,padding:'8px 12px',fontSize:12,color:C.rm,marginBottom:10}},err),
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr auto',gap:10,alignItems:'flex-end'}},
+        h('div',null,
+          h('label',{style:lbl},'Nome do órgão *'),
+          h('input',{value:nome,onChange:function(e){setNome(e.target.value);},placeholder:'Ex: SEAGRI, IBAMA...'})
+        ),
+        h('div',null,
+          h('label',{style:lbl},'Tipo de uso *'),
+          h('input',{value:tipo,onChange:function(e){setTipo(e.target.value);},placeholder:'Ex: Capacitação, Reunião...'})
+        ),
+        h('button',{onClick:handleApprove,
+          style:{padding:'8px 14px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer',whiteSpace:'nowrap'}
+        },'+ Registrar')
+      )
+    ),
+
+    // Histórico de saídas
+    historico.length>0&&h('div',null,
+      h('div',{style:{fontSize:11,fontWeight:700,color:C.cm,marginBottom:8,letterSpacing:.5}},'HISTÓRICO DE SAÍDAS'),
+      historico.map(function(o){
+        return h('div',{key:o.id,style:{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'0.5px solid '+C.cl,fontSize:12,color:C.cm}},
+          h('span',null,o.nome+' ('+o.tipo+')'),
+          h('span',null,formatData(o.dataEntrada)+' → '+(o.dataSaida?formatData(o.dataSaida):'—'))
+        );
+      })
+    ),
+
+    !ativos.length&&!podeEditar&&h('p',{style:{fontSize:13,color:C.cm,fontStyle:'italic'}},'Nenhum órgão ativo no momento.')
+  );
+}
+
 'use strict';
+
 /* SAGCU/SEMA v3 — Design fiel ao v7 original (PDF)
    Paleta, navbar, mapa e layout idênticos ao sistema de referência */
 
@@ -62,16 +770,16 @@ var C={
 };
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-var hashPwd=function(p){return btoa('sema2026:'+p);};
-var verifyPwd=function(p,hh){return btoa('sema2026:'+p)===hh;};
+var hashPwd=function(p){return sha256('sagcu:'+p);};
+var verifyPwd=function(p,hh){return sha256('sagcu:'+p)===hh;};
 var slabel=function(s){return{ativo:"Operacional",manutencao:"Manutenção",inativo:"Inativo"}[s]||s;};
 var scMap={ativo:[C.g2,C.gl],manutencao:[C.am,C.al],inativo:[C.rm,C.rl]};
 var formatData=function(d){if(!d)return "";try{return new Date(d+"T12:00:00").toLocaleDateString("pt-BR");}catch(_){return d;}};
 var CATS=["Monitoramento","Fiscalização","Capacitação","Programa REM","Gestão","Parceria","Evento","Legislação"];
 var PL={admin:"Administrador",gestor:"Gestor",viewer:"Visualizador"};
 var PC={admin:[C.rm,C.rl],gestor:[C.b1,C.bl],viewer:[C.cm,C.cx]};
-var PK={units:"Unidades",news:"Notícias",users:"Usuários",sols:"Solicitações",feeds:"Feeds RSS",cfg:"Configurações",ia:"Assistente IA"};
-var PD={admin:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,ia:true},gestor:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,ia:true},viewer:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,ia:true}};
+var PK={units:"Unidades",news:"Noticias",users:"Usuarios",sols:"Solicitacoes",feeds:"Feeds RSS",cfg:"Configuracoes",ia:"Assistente IA",rel:"Relatorios"};
+var PD={admin:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,ia:true,rel:true},gestor:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,ia:true,rel:true},viewer:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,ia:false,rel:false}};
 
 // ─── DADOS ────────────────────────────────────────────────────────────────────
 var USERS=[
@@ -81,20 +789,20 @@ var USERS=[
 ];
 
 var UNS=[
-  {id:1,tipo:"CIMA",nome:"CIMA Cruzeiro do Sul",municipio:"Cruzeiro do Sul",regional:"Vale do Juruá",coords:{lat:-7.6278,lng:-72.6656},status:"ativo",taxaUso:78,ag:34,descricao:"Principal centro integrado do Vale do Juruá, atendendo toda a região oeste do estado com estrutura completa para capacitações e eventos.",historia:"Fundado em 2012 como parte do Programa de Fortalecimento Ambiental do Acre, o CIMA Cruzeiro do Sul foi idealizado para centralizar as ações de gestão ambiental no Vale do Juruá.",decreto:"Decreto Estadual nº 4.821/2012",orgaos:["SEMA","SEPLAN","SESACRE"],quartos:12,salas:8,cozinha:true,auditorio:true,foto:"https://placehold.co/800x300/0F5C3A/fff?text=CIMA+Cruzeiro+do+Sul",galeria:[{url:"https://placehold.co/400x280/1A7A4A/fff?text=Auditório",leg:"Auditório principal"},{url:"https://placehold.co/400x280/2E9E63/fff?text=Salas",leg:"Salas de reunião"}],extras:[{id:1,k:"Área total",v:"2.400 m²"},{id:2,k:"Energia solar",v:"Sim — 48 painéis"}],visivel:true},
-  {id:2,tipo:"CIMA",nome:"CIMA Brasiléia",municipio:"Brasiléia",regional:"Alto Acre",coords:{lat:-11.0047,lng:-68.7422},status:"ativo",taxaUso:31,ag:9,descricao:"Unidade estratégica na fronteira boliviana, suporte a ações ambientais no Alto Acre e região fronteiriça.",historia:"Inaugurado em 2015 para apoiar as ações de fiscalização e monitoramento ambiental na fronteira com a Bolívia.",decreto:"Decreto Estadual nº 5.103/2015",orgaos:["SEMA","SEE","SEAGRI"],quartos:0,salas:6,cozinha:false,auditorio:true,foto:"https://placehold.co/800x300/1565A8/fff?text=CIMA+Brasiléia",galeria:[],extras:[],visivel:true},
-  {id:3,tipo:"CIMA",nome:"CIMA Feijó",municipio:"Feijó",regional:"Vale do Envira",coords:{lat:-8.1728,lng:-70.3536},status:"ativo",taxaUso:55,ag:18,descricao:"Centro de apoio ao monitoramento ambiental do Vale do Envira e Tarauacá.",historia:"Criado em 2014 para apoiar operações no Vale do Envira.",decreto:"Decreto Estadual nº 4.950/2014",orgaos:["SEMA","SEINFRA"],quartos:8,salas:6,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/2E9E63/fff?text=CIMA+Feijó",galeria:[],extras:[],visivel:true},
-  {id:4,tipo:"CIMA",nome:"CIMA Rio Branco",municipio:"Rio Branco",regional:"Vale do Acre",coords:{lat:-9.9747,lng:-67.8092},status:"ativo",taxaUso:88,ag:52,descricao:"Sede central da rede CIMAs do estado, polo de capacitação ambiental do Acre.",historia:"Inaugurado em 2010, é o maior centro integrado do estado e sede da coordenação da rede CIMA.",decreto:"Decreto Estadual nº 4.100/2010",orgaos:["SEMA","Casa Civil","SEPLAN"],quartos:0,salas:10,cozinha:true,auditorio:true,foto:"https://placehold.co/800x300/0A3D2B/fff?text=CIMA+Rio+Branco",galeria:[],extras:[{id:1,k:"Área total",v:"3.200 m²"}],visivel:true},
-  {id:5,tipo:"UGAI",nome:"UGAI Tarauacá",municipio:"Tarauacá",regional:"Vale do Juruá",coords:{lat:-8.1601,lng:-70.7689},status:"ativo",taxaUso:62,ag:14,descricao:"Base operacional no Vale do Envira, monitoramento de Áreas de Preservação Permanente.",historia:"Estabelecida em 2018 como base avançada para o monitoramento ambiental no Alto Juruá.",decreto:"Decreto Estadual nº 6.240/2018",orgaos:["SEMA","IBAMA"],quartos:4,salas:3,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/5B3FA8/fff?text=UGAI+Tarauacá",galeria:[],extras:[],visivel:true},
-  {id:6,tipo:"UGAI",nome:"UGAI Sena Madureira",municipio:"Sena Madureira",regional:"Vale do Purus",coords:{lat:-9.0658,lng:-68.6589},status:"manutencao",taxaUso:20,ag:3,descricao:"Em processo de modernização com instalação de energia solar e sistema de reúso de água.",historia:"Criada em 2016, em processo de modernização e ampliação desde 2025.",decreto:"Decreto Estadual nº 5.580/2016",orgaos:["SEMA"],quartos:3,salas:2,cozinha:false,auditorio:false,foto:"https://placehold.co/800x300/C4832A/fff?text=UGAI+Sena+Madureira",galeria:[],extras:[],visivel:true},
-  {id:7,tipo:"UGAI",nome:"UGAI Jordão",municipio:"Jordão",regional:"Vale do Juruá",coords:{lat:-9.1669,lng:-71.8969},status:"ativo",taxaUso:45,ag:7,descricao:"Apoio a territórios indígenas e áreas de proteção integral no extremo sul do estado.",historia:"Criada em 2019 para apoio a territórios indígenas e áreas protegidas.",decreto:"Decreto Estadual nº 6.580/2019",orgaos:["SEMA","FUNAI"],quartos:6,salas:2,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/1565A8/fff?text=UGAI+Jordão",galeria:[],extras:[],visivel:true},
-  {id:8,tipo:"UGAI",nome:"UGAI Mâncio Lima",municipio:"Mâncio Lima",regional:"Vale do Juruá",coords:{lat:-7.6133,lng:-72.8969},status:"ativo",taxaUso:58,ag:11,descricao:"Suporte ao monitoramento do Parque Nacional da Serra do Divisor.",historia:"Estabelecida em 2017 para apoiar o Parque Nacional da Serra do Divisor.",decreto:"Decreto Estadual nº 5.900/2017",orgaos:["SEMA","ICMBio"],quartos:5,salas:3,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/0F5C3A/fff?text=UGAI+Mâncio+Lima",galeria:[],extras:[],visivel:true}
+  {id:1,tipo:"CIMA",nome:"CIMA Cruzeiro do Sul",municipio:"Cruzeiro do Sul",regional:"Vale do Juruá",coords:{lat:-7.6278,lng:-72.6656},status:"ativo",taxaUso:78,ag:34,descricao:"Principal centro integrado do Vale do Juruá, atendendo toda a região oeste do estado com estrutura completa para capacitações e eventos.",historia:"Fundado em 2012 como parte do Programa de Fortalecimento Ambiental do Acre, o CIMA Cruzeiro do Sul foi idealizado para centralizar as ações de gestão ambiental no Vale do Juruá.",decreto:"Decreto Estadual nº 4.821/2012",orgaos:["SEMA","SEPLAN","SESACRE"],quartos:12,salas:8,cozinha:true,auditorio:true,foto:"https://placehold.co/800x300/0F5C3A/fff?text=CIMA+Cruzeiro+do+Sul",galeria:[{url:"https://placehold.co/400x280/1A7A4A/fff?text=Auditório",leg:"Auditório principal"},{url:"https://placehold.co/400x280/2E9E63/fff?text=Salas",leg:"Salas de reunião"}],extras:[{id:1,k:"Área total",v:"2.400 m²"},{id:2,k:"Energia solar",v:"Sim — 48 painéis"}],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
+  {id:2,tipo:"CIMA",nome:"CIMA Brasiléia",municipio:"Brasiléia",regional:"Alto Acre",coords:{lat:-11.0047,lng:-68.7422},status:"ativo",taxaUso:31,ag:9,descricao:"Unidade estratégica na fronteira boliviana, suporte a ações ambientais no Alto Acre e região fronteiriça.",historia:"Inaugurado em 2015 para apoiar as ações de fiscalização e monitoramento ambiental na fronteira com a Bolívia.",decreto:"Decreto Estadual nº 5.103/2015",orgaos:["SEMA","SEE","SEAGRI"],quartos:0,salas:6,cozinha:false,auditorio:true,foto:"https://placehold.co/800x300/1565A8/fff?text=CIMA+Brasiléia",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
+  {id:3,tipo:"CIMA",nome:"CIMA Feijó",municipio:"Feijó",regional:"Vale do Envira",coords:{lat:-8.1728,lng:-70.3536},status:"ativo",taxaUso:55,ag:18,descricao:"Centro de apoio ao monitoramento ambiental do Vale do Envira e Tarauacá.",historia:"Criado em 2014 para apoiar operações no Vale do Envira.",decreto:"Decreto Estadual nº 4.950/2014",orgaos:["SEMA","SEINFRA"],quartos:8,salas:6,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/2E9E63/fff?text=CIMA+Feijó",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
+  {id:4,tipo:"CIMA",nome:"CIMA Rio Branco",municipio:"Rio Branco",regional:"Vale do Acre",coords:{lat:-9.9747,lng:-67.8092},status:"ativo",taxaUso:88,ag:52,descricao:"Sede central da rede CIMAs do estado, polo de capacitação ambiental do Acre.",historia:"Inaugurado em 2010, é o maior centro integrado do estado e sede da coordenação da rede CIMA.",decreto:"Decreto Estadual nº 4.100/2010",orgaos:["SEMA","Casa Civil","SEPLAN"],quartos:0,salas:10,cozinha:true,auditorio:true,foto:"https://placehold.co/800x300/0A3D2B/fff?text=CIMA+Rio+Branco",galeria:[],extras:[{id:1,k:"Área total",v:"3.200 m²"}],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
+  {id:5,tipo:"UGAI",nome:"UGAI Tarauacá",municipio:"Tarauacá",regional:"Vale do Juruá",coords:{lat:-8.1601,lng:-70.7689},status:"ativo",taxaUso:62,ag:14,descricao:"Base operacional no Vale do Envira, monitoramento de Áreas de Preservação Permanente.",historia:"Estabelecida em 2018 como base avançada para o monitoramento ambiental no Alto Juruá.",decreto:"Decreto Estadual nº 6.240/2018",orgaos:["SEMA","IBAMA"],quartos:4,salas:3,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/5B3FA8/fff?text=UGAI+Tarauacá",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
+  {id:6,tipo:"UGAI",nome:"UGAI Sena Madureira",municipio:"Sena Madureira",regional:"Vale do Purus",coords:{lat:-9.0658,lng:-68.6589},status:"manutencao",taxaUso:20,ag:3,descricao:"Em processo de modernização com instalação de energia solar e sistema de reúso de água.",historia:"Criada em 2016, em processo de modernização e ampliação desde 2025.",decreto:"Decreto Estadual nº 5.580/2016",orgaos:["SEMA"],quartos:3,salas:2,cozinha:false,auditorio:false,foto:"https://placehold.co/800x300/C4832A/fff?text=UGAI+Sena+Madureira",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
+  {id:7,tipo:"UGAI",nome:"UGAI Jordão",municipio:"Jordão",regional:"Vale do Juruá",coords:{lat:-9.1669,lng:-71.8969},status:"ativo",taxaUso:45,ag:7,descricao:"Apoio a territórios indígenas e áreas de proteção integral no extremo sul do estado.",historia:"Criada em 2019 para apoio a territórios indígenas e áreas protegidas.",decreto:"Decreto Estadual nº 6.580/2019",orgaos:["SEMA","FUNAI"],quartos:6,salas:2,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/1565A8/fff?text=UGAI+Jordão",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
+  {id:8,tipo:"UGAI",nome:"UGAI Mâncio Lima",municipio:"Mâncio Lima",regional:"Vale do Juruá",coords:{lat:-7.6133,lng:-72.8969},status:"ativo",taxaUso:58,ag:11,descricao:"Suporte ao monitoramento do Parque Nacional da Serra do Divisor.",historia:"Estabelecida em 2017 para apoiar o Parque Nacional da Serra do Divisor.",decreto:"Decreto Estadual nº 5.900/2017",orgaos:["SEMA","ICMBio"],quartos:5,salas:3,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/0F5C3A/fff?text=UGAI+Mâncio+Lima",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0}
 ];
 
 var NWS=[
-  {id:1,titulo:"SEMA amplia monitoramento no Vale do Juruá",resumo:"Novas estações instaladas em pontos estratégicos para detecção precoce de desmatamento.",conteudo:"<h2>Expansão do monitoramento</h2><p>A SEMA/AC anunciou a expansão do programa de monitoramento com 12 novas estações, com investimento de R$ 2,4 milhões do Programa REM Acre.</p>",data:"2026-03-24",categoria:"Monitoramento",unidade:"CIMA Cruzeiro do Sul",destaque:true,visivel:true,fonte:"SEMA/AC",autor:"Assessoria de Comunicação"},
-  {id:2,titulo:"Fiscalização registra redução de 18% no desmatamento",resumo:"Dados do INPE confirmam queda nas taxas do 1º trimestre de 2026.",conteudo:"<h2>Resultados da fiscalização</h2><p>O primeiro trimestre de 2026 registrou redução de 18% no desmatamento no Acre, segundo dados do INPE.</p>",data:"2026-03-20",categoria:"Fiscalização",unidade:"",destaque:false,visivel:true,fonte:"INPE/SEMA",autor:"Diretoria de Fiscalização"},
-  {id:3,titulo:"Programa REM Fase II apoia expansão da rede de unidades",resumo:"Recursos viabilizarão três novas UGAIs no estado até 2027.",conteudo:"<h2>Programa REM: resultados</h2><p>O Programa REM Acre Fase II anunciou R$ 8,7 milhões para a criação de três novas UGAIs.</p>",data:"2026-03-10",categoria:"Programa REM",unidade:"",destaque:true,visivel:true,fonte:"Programa REM",autor:"Coordenação REM"}
+  {id:1,titulo:"SEMA amplia monitoramento no Vale do Juruá",resumo:"Novas estações instaladas em pontos estratégicos para detecção precoce de desmatamento.",conteudo:"<h2>Expansão do monitoramento</h2><p>A SEMA/AC anunciou a expansão do programa de monitoramento com 12 novas estações, com investimento de R$ 2,4 milhões do Programa REM Acre.</p>",data:"2026-03-24",categoria:"Monitoramento",unidade:"CIMA Cruzeiro do Sul",destaque:true,visivel:true,orgaosPresentes:[],ocupacaoAtual:0,fonte:"SEMA/AC",autor:"Assessoria de Comunicação"},
+  {id:2,titulo:"Fiscalização registra redução de 18% no desmatamento",resumo:"Dados do INPE confirmam queda nas taxas do 1º trimestre de 2026.",conteudo:"<h2>Resultados da fiscalização</h2><p>O primeiro trimestre de 2026 registrou redução de 18% no desmatamento no Acre, segundo dados do INPE.</p>",data:"2026-03-20",categoria:"Fiscalização",unidade:"",destaque:false,visivel:true,orgaosPresentes:[],ocupacaoAtual:0,fonte:"INPE/SEMA",autor:"Diretoria de Fiscalização"},
+  {id:3,titulo:"Programa REM Fase II apoia expansão da rede de unidades",resumo:"Recursos viabilizarão três novas UGAIs no estado até 2027.",conteudo:"<h2>Programa REM: resultados</h2><p>O Programa REM Acre Fase II anunciou R$ 8,7 milhões para a criação de três novas UGAIs.</p>",data:"2026-03-10",categoria:"Programa REM",unidade:"",destaque:true,visivel:true,orgaosPresentes:[],ocupacaoAtual:0,fonte:"Programa REM",autor:"Coordenação REM"}
 ];
 
 var FDS=[
@@ -361,7 +1069,7 @@ function PageUnidade(p){
   var cor=u.tipo==="CIMA"?C.g2:C.b1;
   var corL=u.tipo==="CIMA"?C.gx:C.bl;
   var scr=scMap[u.status]||[C.cm,C.cx];var sc=scr[0],sbg=scr[1];
-  var abas=[["sobre","Sobre"],["historia","História"],["galeria","Galeria"],["mapa","Localização"],["estrutura","Estrutura"]];
+  var abas=[["sobre","Sobre"],["historia","História"],["galeria","Galeria"],["mapa","Localização"],["estrutura","Estrutura"],["ocupacao","Ocupação"]];
 
   return h("div",{style:{background:"#fff",minHeight:"100vh"}},
     // Hero
@@ -415,6 +1123,8 @@ function PageUnidade(p){
       aba==="historia"&&h(Card,{style:{padding:"24px 28px",maxWidth:740}},h("h2",{style:{fontSize:18,fontWeight:700,margin:"0 0 16px",color:cor}},"História da unidade"),u.historia?h("p",{style:{fontSize:14,color:C.cd,lineHeight:1.9,margin:0}},u.historia):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Histórico não cadastrado.")),
       aba==="galeria"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Galeria de fotos"),u.galeria&&u.galeria.length>0?h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}},u.galeria.map(function(f,i){return h("div",{key:i,style:{aspectRatio:"4/3",borderRadius:10,overflow:"hidden",background:C.cl}},h("img",{src:f.url,alt:f.leg||"",style:{width:"100%",height:"100%",objectFit:"cover"}}));})):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Nenhuma foto cadastrada.")),
       aba==="mapa"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Localização georeferenciada"),h(MapView,{units:[u],height:"380px",compact:false,singleUnit:true}),h("div",{style:{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.cx,borderRadius:8,fontSize:11,color:C.cm}},h("span",{style:{fontFamily:"monospace"}},"Lat "+u.coords.lat.toFixed(6)+", Lon "+u.coords.lng.toFixed(6)),h("a",{href:"https://www.google.com/maps?q="+u.coords.lat+","+u.coords.lng,target:"_blank",rel:"noreferrer",style:{color:C.b1,fontWeight:500}},"Abrir no Maps ↗"))),
+      
+      aba==="ocupacao"&&h(PainelOcupacao,{u:u,uns:p.uns||[u],setUns:p.setUns||function(){},curUser:p.curUser,toast2:p.toast2||function(){}}),
       aba==="estrutura"&&h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}},
         [{ic:"🛏",l:"Quartos",v:u.quartos||"Não possui"},{ic:"🚪",l:"Salas de reunião",v:u.salas},{ic:"🍽",l:"Cozinha",v:u.cozinha?"Sim":"Não"},{ic:"🎤",l:"Auditório",v:u.auditorio?"Sim":"Não"}].map(function(s,i){
           return h(Card,{key:i,style:{padding:"16px 18px"}},h("div",{style:{fontSize:22,marginBottom:8}},s.ic),h("div",{style:{fontSize:11,color:C.cm,marginBottom:4}},s.l),h("div",{style:{fontSize:18,fontWeight:700,color:cor}},s.v));
@@ -579,7 +1289,7 @@ function TelaLogin(p){
 
 // ─── FORMULÁRIOS ADMIN ────────────────────────────────────────────────────────
 function FmUn(p){
-  var DEF={id:null,tipo:"CIMA",nome:"",municipio:"",regional:"Vale do Juruá",coords:{lat:-9.0,lng:-70.0},status:"ativo",descricao:"",historia:"",decreto:"",orgaos:[],quartos:0,salas:0,cozinha:false,auditorio:false,taxaUso:0,ag:0,foto:"",galeria:[],extras:[],visivel:true};
+  var DEF={id:null,tipo:"CIMA",nome:"",municipio:"",regional:"Vale do Juruá",coords:{lat:-9.0,lng:-70.0},status:"ativo",descricao:"",historia:"",decreto:"",orgaos:[],quartos:0,salas:0,cozinha:false,auditorio:false,taxaUso:0,ag:0,foto:"",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0};
   var sF=useState(p.init||DEF);var f=sF[0],setF=sF[1];
   var sA=useState("dados");var ab=sA[0],setAb=sA[1];
   function sv(k,v){setF(function(x){return Object.assign({},x,{[k]:v});});}
@@ -653,7 +1363,7 @@ function FmUn(p){
 }
 
 function FmNw(p){
-  var DEF={id:null,titulo:"",resumo:"",conteudo:"",data:"",categoria:"Monitoramento",unidade:"",destaque:false,visivel:true,fonte:"",autor:""};
+  var DEF={id:null,titulo:"",resumo:"",conteudo:"",data:"",categoria:"Monitoramento",unidade:"",destaque:false,visivel:true,orgaosPresentes:[],ocupacaoAtual:0,fonte:"",autor:""};
   var sF=useState(p.init||DEF);var f=sF[0],setF=sF[1];
   function sv(k,v){setF(function(x){return Object.assign({},x,{[k]:v});});}
   var lbl={fontSize:11,color:C.cm,display:"block",marginBottom:4};
@@ -792,9 +1502,9 @@ function App(){
   var sP=useState("home");var page=sP[0],setPage=sP[1];
   var sUV=useState(null);var uVista=sUV[0],setUVista=sUV[1];
   var sNV=useState(null);var nVista=sNV[0],setNVista=sNV[1];
-  var sUns=useState(UNS);var uns=sUns[0],setUns=sUns[1];
-  var sNws=useState(NWS);var news=sNws[0],setNews=sNws[1];
-  var sFds=useState(FDS);var feeds=sFds[0],setFeeds=sFds[1];
+  var sUns=useState(function(){return lsGet("uns",UNS);});var uns=sUns[0],setUns=sUns[1];
+  var sNws=useState(function(){return lsGet("news",NWS);});var news=sNws[0],setNews=sNws[1];
+  var sFds=useState(function(){return lsGet("feeds",FDS);});var feeds=sFds[0],setFeeds=sFds[1];
   var sUsr=useState(USERS);var users=sUsr[0],setUsers=sUsr[1];
   var sCU=useState(null);var curUser=sCU[0],setCurUser=sCU[1];
   var sSL=useState(false);var showLogin=sSL[0],setShowLogin=sSL[1];
@@ -811,6 +1521,11 @@ function App(){
   var sSf=useState({nome:"",org:"",email:"",un:"",ev:"",dt:"",hr:"",just:""});var sf=sSf[0],setSf=sSf[1];
   var sSv=useState(false);var senv=sSv[0],setSenv=sSv[1];
 
+
+  useEffect(function(){lsSet('uns',uns);},[uns]);
+  useEffect(function(){lsSet('news',news);},[news]);
+  useEffect(function(){lsSet('feeds',feeds);},[feeds]);
+  useEffect(function(){lsSet('sols',sols);},[sols]);
   useEffect(function(){
     setTimeout(function(){var el=document.getElementById("app-loading");if(el){el.classList.add("hidden");setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},500);}},700);
   },[]);
@@ -839,7 +1554,7 @@ function App(){
   var NAV=[{id:"home",l:"Início"},{id:"cima",l:"CIMA"},{id:"ugai",l:"UGAI"},{id:"mapa",l:"🗺 Mapa"},{id:"noticias",l:"Notícias"},{id:"sol",l:"Solicitação"},{id:"transp",l:"Transparência"}];
 
   // Vistas especiais
-  if(uVista) return h(PageUnidade,{u:uVista,onBack:function(){setUVista(null);},onSolicitar:function(){setSf(function(f){return Object.assign({},f,{un:uVista.nome});});setUVista(null);setPage("sol");}});
+  if(uVista) return h(PageUnidade,{u:uVista,uns:uns,setUns:setUns,curUser:curUser,toast2:toast2,onBack:function(){setUVista(null);},onSolicitar:function(){setSf(function(f){return Object.assign({},f,{un:uVista.nome});});setUVista(null);setPage("sol");}});
   if(nVista){
     var ncc=getCC(nVista.categoria);
     return h("div",{style:{background:"#fff",minHeight:"100vh"}},
@@ -1169,7 +1884,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["ia","🤖","Assistente IA",canDo("ia")]].filter(function(it){return it[3];}).map(function(it){
+        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["ia","🤖","Assistente IA",canDo("ia")],["rel","📊","Relatórios",canDo("rel")]].filter(function(it){return it[3];}).map(function(it){
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},it[1]),it[2]
           );
@@ -1308,7 +2023,7 @@ function App(){
                     h("div",{style:{fontSize:11,color:C.cm,marginTop:2}},s.un+" · "+s.ev+" · "+formatData(s.dt))
                   ),
                   s.st==="pendente"&&h("div",{style:{display:"flex",gap:7}},
-                    h("button",{onClick:function(){setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"aprovada"}):x;});});toast2("Aprovada.");},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.g2,background:C.gx,color:C.g2,fontSize:12,fontWeight:700,cursor:"pointer"}},"Aprovar"),
+                    h("button",{onClick:function(){var unid=uns.find(function(u){return u.nome===s.un;});if(unid){var res=approveUso(uns,setUns,unid.id,{nome:s.org,tipo:s.ev});if(!res.ok)toast2("Aviso: "+res.err,C.am);}setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"aprovada"}):x;});});toast2("Aprovada.");},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.g2,background:C.gx,color:C.g2,fontSize:12,fontWeight:700,cursor:"pointer"}},"Aprovar"),
                     h("button",{onClick:function(){setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"rejeitada"}):x;});});toast2("Rejeitada.",C.rm);},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:12,fontWeight:700,cursor:"pointer"}},"Rejeitar")
                   )
                 )
@@ -1320,7 +2035,7 @@ function App(){
         atab==="users"&&canDo("users")&&h(AdminUsers,{users:users,setUsers:setUsers,curUser:curUser,toast2:toast2,setConf:setConf}),
 
         atab==="cfg"&&canDo("cfg")&&h("div",null,
-          h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 6px",color:C.cd}},"Configuração da Home"),
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}},h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 6px",color:C.cd}},"Configuração da Home"),h("button",{onClick:function(){lsClear();toast2("Cache limpo. Recarregue a página.",C.am);},style:{padding:"5px 12px",borderRadius:7,border:"1px solid "+C.am,background:C.al,color:C.am,fontSize:11,cursor:"pointer"}},"🗑 Limpar cache")),
           h("p",{style:{fontSize:13,color:C.cm,margin:"0 0 24px"}},"Ative ou desative seções da página inicial em tempo real."),
           h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}},
             [["hero","🖼 Hero"],["alert","⚠ Alertas"],["bloco","📖 CIMA/UGAI"],["mapa","🗺 Mapa"],["dash","📊 Dashboard"],["acesso","⚡ Acesso rápido"],["news","📰 Notícias"],["ia","🤖 Assistente IA"]].map(function(pr){
@@ -1333,6 +2048,8 @@ function App(){
             })
           )
         ),
+
+        atab==="rel"&&canDo("rel")&&h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2}),
 
         atab==="ia"&&canDo("ia")&&h("div",null,
           h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 4px",color:C.cd}},"Assistente IA"),
