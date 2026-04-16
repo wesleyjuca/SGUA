@@ -1,5 +1,5 @@
 # SEMA/AC — Sistema de Gestão CIMA & UGAI  
-### v4.0 — Full-Stack: Domínio · Relatórios · Segurança
+### v4.1 — Full-Stack: Domínio · Relatórios · Segurança · SQLite
 
 ---
 
@@ -64,15 +64,22 @@ applyImport(uns, parsedRows, strategy: 'merge'|'overwrite') → Unit[]
 
 ---
 
-## Persistência localStorage
+## Persistência (localStorage + SQLite)
 
 ```
-sagcu_v4_uns    → unidades (com orgaosPresentes, ocupacaoAtual)
-sagcu_v4_news   → notícias
-sagcu_v4_feeds  → feeds RSS
-sagcu_v4_sols   → solicitações
+sagcu_v4_uns    → unidades (cache local, fallback offline)
+sagcu_v4_news   → notícias (cache local, fallback offline)
+sagcu_v4_feeds  → feeds RSS (cache local, fallback offline)
+sagcu_v4_sols   → solicitações (cache local, fallback offline)
+sagcu_v4_users  → usuários (cache local, fallback offline)
 ```
-> **Senhas NÃO são armazenadas.** Usuários re-inicializam com SHA-256 a cada load.
+Quando o app roda via `node server.js`, o front sincroniza automaticamente com:
+- `GET /api/state` (carrega estado salvo no SQLite)
+- `PUT /api/state` (salva alterações do app no SQLite)
+
+Banco local padrão: `data/sgua.db`.
+
+> **Senhas NÃO são armazenadas em plaintext.** O sistema mantém hash no estado de usuários.
 
 ---
 
@@ -118,8 +125,21 @@ sagcu_v4_sols   → solicitações
 | Leaflet | 1.9.4 | cdnjs |
 | MarkerCluster | 1.5.3 | cdnjs |
 | SheetJS (xlsx) | 0.18.5 | cdnjs |
+| Express | 4.x | backend local |
+| SQLite3 | 5.x | backend local |
 
 > SHA-256 implementado em pure JS — zero dependências para segurança.
+
+---
+
+## Executar com banco de dados (SQLite)
+
+```bash
+npm install
+npm start
+```
+
+A aplicação ficará disponível em `http://localhost:3000` com API e front-end no mesmo servidor.
 
 ---
 

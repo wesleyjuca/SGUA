@@ -137,6 +137,29 @@ function lsClear(){
   catch(e){}
 }
 
+// Backend API (opcional): quando disponível, sincroniza dados com SQLite via /api/state
+var API_BASE=(window.SAGCU_API_BASE||'').replace(/\/$/,'');
+var API_ENABLED=typeof window!=='undefined'&&window.location&&window.location.protocol.indexOf('http')===0;
+function apiUrl(path){return(API_BASE||'')+path;}
+function apiFetchState(){
+  if(!API_ENABLED) return Promise.resolve(null);
+  return fetch(apiUrl('/api/state'),{headers:{'Accept':'application/json'}}).then(function(r){
+    if(!r.ok) throw new Error('Falha ao carregar estado remoto ('+r.status+')');
+    return r.json();
+  });
+}
+function apiSaveState(payload){
+  if(!API_ENABLED) return Promise.resolve();
+  return fetch(apiUrl('/api/state'),{
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(payload)
+  }).then(function(r){
+    if(!r.ok) throw new Error('Falha ao salvar estado remoto ('+r.status+')');
+    return r.json();
+  });
+}
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DOMÍNIO — approveUso(uns, setUns, unidadeId, orgaoData) : {ok, err?, orgao?}
@@ -1505,7 +1528,7 @@ function App(){
   var sUns=useState(function(){return lsGet("uns",UNS);});var uns=sUns[0],setUns=sUns[1];
   var sNws=useState(function(){return lsGet("news",NWS);});var news=sNws[0],setNews=sNws[1];
   var sFds=useState(function(){return lsGet("feeds",FDS);});var feeds=sFds[0],setFeeds=sFds[1];
-  var sUsr=useState(USERS);var users=sUsr[0],setUsers=sUsr[1];
+  var sUsr=useState(function(){return lsGet("users",USERS);});var users=sUsr[0],setUsers=sUsr[1];
   var sCU=useState(null);var curUser=sCU[0],setCurUser=sCU[1];
   var sSL=useState(false);var showLogin=sSL[0],setShowLogin=sSL[1];
   var sAT=useState("dash");var atab=sAT[0],setAtab=sAT[1];
@@ -1514,18 +1537,43 @@ function App(){
   var sCf=useState(null);var conf=sCf[0],setConf=sCf[1];
   var sSe=useState({hero:true,alert:true,bloco:true,mapa:true,dash:true,acesso:true,news:true,ia:true});
   var secs=sSe[0],setSecs=sSe[1];
-  var sSo=useState([
+  var sSo=useState(function(){return lsGet("sols",[
     {id:"SOL-001",sol:"Maria Silva",org:"SESACRE",un:"CIMA Rio Branco",ev:"Capacitação",dt:"2026-04-10",st:"pendente"},
     {id:"SOL-002",sol:"João Melo",org:"SEAGRI",un:"CIMA Feijó",ev:"Reunião",dt:"2026-04-05",st:"aprovada"}
-  ]);var sols=sSo[0],setSols=sSo[1];
+  ]);});var sols=sSo[0],setSols=sSo[1];
   var sSf=useState({nome:"",org:"",email:"",un:"",ev:"",dt:"",hr:"",just:""});var sf=sSf[0],setSf=sSf[1];
   var sSv=useState(false);var senv=sSv[0],setSenv=sSv[1];
+  var sRdy=useState(false);var remoteReady=sRdy[0],setRemoteReady=sRdy[1];
 
 
   useEffect(function(){lsSet('uns',uns);},[uns]);
   useEffect(function(){lsSet('news',news);},[news]);
   useEffect(function(){lsSet('feeds',feeds);},[feeds]);
   useEffect(function(){lsSet('sols',sols);},[sols]);
+  useEffect(function(){lsSet('users',users);},[users]);
+  useEffect(function(){
+    var alive=true;
+    apiFetchState().then(function(data){
+      if(!alive||!data) return;
+      if(Array.isArray(data.uns)) setUns(data.uns);
+      if(Array.isArray(data.news)) setNews(data.news);
+      if(Array.isArray(data.feeds)) setFeeds(data.feeds);
+      if(Array.isArray(data.sols)) setSols(data.sols);
+      if(Array.isArray(data.users)) setUsers(data.users);
+      if(data.secs&&typeof data.secs==='object') setSecs(data.secs);
+    }).catch(function(e){
+      console.warn('SAGCU remote load warning:',e&&e.message?e.message:e);
+    }).finally(function(){
+      if(alive) setRemoteReady(true);
+    });
+    return function(){alive=false;};
+  },[]);
+  useEffect(function(){
+    if(!remoteReady) return;
+    apiSaveState({uns:uns,news:news,feeds:feeds,sols:sols,users:users,secs:secs}).catch(function(e){
+      console.warn('SAGCU remote save warning:',e&&e.message?e.message:e);
+    });
+  },[remoteReady,uns,news,feeds,sols,users,secs]);
   useEffect(function(){
     setTimeout(function(){var el=document.getElementById("app-loading");if(el){el.classList.add("hidden");setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},500);}},700);
   },[]);
@@ -2023,7 +2071,7 @@ function App(){
                     h("div",{style:{fontSize:11,color:C.cm,marginTop:2}},s.un+" · "+s.ev+" · "+formatData(s.dt))
                   ),
                   s.st==="pendente"&&h("div",{style:{display:"flex",gap:7}},
-                    h("button",{onClick:function(){var unid=uns.find(function(u){return u.nome===s.un;});if(unid){var res=approveUso(uns,setUns,unid.id,{nome:s.org,tipo:s.ev});if(!res.ok)toast2("Aviso: "+res.err,C.am);}setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"aprovada"}):x;});});toast2("Aprovada.");},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.g2,background:C.gx,color:C.g2,fontSize:12,fontWeight:700,cursor:"pointer"}},"Aprovar"),
+                    h("button",{onClick:function(){var unid=uns.find(function(u){return u.nome===s.un;});if(!unid){toast2("Falha ao aprovar: unidade não encontrada.",C.rm);return;}var res=approveUso(uns,setUns,unid.id,{nome:s.org,tipo:s.ev});if(!res.ok){toast2("Aviso: "+res.err,C.am);return;}setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"aprovada"}):x;});});toast2("Aprovada.");},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.g2,background:C.gx,color:C.g2,fontSize:12,fontWeight:700,cursor:"pointer"}},"Aprovar"),
                     h("button",{onClick:function(){setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"rejeitada"}):x;});});toast2("Rejeitada.",C.rm);},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:12,fontWeight:700,cursor:"pointer"}},"Rejeitar")
                   )
                 )
