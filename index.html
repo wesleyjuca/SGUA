@@ -1599,6 +1599,41 @@ function App(){
     uns.filter(function(u){return u.status==="manutencao";}).length>0&&{tp:"i",t:"Manutenção",tx:uns.filter(function(u){return u.status==="manutencao";}).map(function(u){return u.nome;}).join(", ")+" indisponíveis."}
   ].filter(Boolean);
 
+  // Indicadores operacionais do dashboard administrativo
+  var totalUnidades=uns.length;
+  var unidadesVisiveis=uns.filter(function(u){return u.visivel;}).length;
+  var unidadesAtivas=uns.filter(function(u){return u.status==="ativo";}).length;
+  var unidadesManutencao=uns.filter(function(u){return u.status==="manutencao";}).length;
+  var mediaTaxaUso=Math.round(uns.reduce(function(a,u){return a+(Number(u.taxaUso)||0);},0)/Math.max(1,totalUnidades));
+  var unidadesCriticas=uns.filter(function(u){return Number(u.taxaUso)>=90&&u.status==="ativo";}).length;
+  var orgaosAtivos=uns.reduce(function(a,u){return a+(u.orgaosPresentes||[]).filter(function(o){return o.ativo;}).length;},0);
+  var pendentes=sols.filter(function(s){return s.st==="pendente";});
+  var aprovadas=sols.filter(function(s){return s.st==="aprovada";}).length;
+  var taxaAprovacao=Math.round((aprovadas/Math.max(1,sols.length))*100);
+  function diffDias(dt){
+    if(!dt) return 0;
+    var p=Date.parse(dt+"T00:00:00");
+    if(Number.isNaN(p)) return 0;
+    return Math.floor((Date.now()-p)/(1000*60*60*24));
+  }
+  var pendentesAntigos=pendentes.filter(function(s){return diffDias(s.dt)>=7;}).length;
+
+  var alertasDash=[
+    pendentesAntigos>0&&{sev:"alta",titulo:"Solicitações sem resposta há mais de 7 dias",det:""+pendentesAntigos+" solicitação(ões) pendente(s).",sug:"Priorizar triagem na aba Solicitações e definir SLA de aprovação/rejeição em até 48h."},
+    unidadesManutencao>0&&{sev:"media",titulo:"Unidades em manutenção impactando disponibilidade",det:""+unidadesManutencao+" unidade(s) indisponível(is).",sug:"Registrar plano de correção com prazo e redistribuir eventos para unidades ativas."},
+    unidadesCriticas>0&&{sev:"alta",titulo:"Capacidade crítica de ocupação em unidades ativas",det:""+unidadesCriticas+" unidade(s) acima de 90% de uso.",sug:"Rebalancear agenda entre unidades com baixa taxa de uso e revisar limite operacional."},
+    feeds.filter(function(f){return f.ativo;}).length===0&&{sev:"media",titulo:"Nenhum feed RSS ativo",det:"As notícias externas não estão sendo atualizadas.",sug:"Ativar ao menos um feed confiável e agendar sincronização semanal."},
+    users.filter(function(u){return u.ativo;}).length===0&&{sev:"alta",titulo:"Não existem usuários ativos",det:"O painel administrativo pode ficar sem operação.",sug:"Reativar um administrador imediatamente para evitar indisponibilidade de gestão."},
+    unidadesVisiveis<Math.ceil(totalUnidades/2)&&{sev:"baixa",titulo:"Baixa transparência pública",det:"Somente "+unidadesVisiveis+" de "+totalUnidades+" unidades estão visíveis.",sug:"Revisar unidades ocultas e publicar aquelas aptas para consulta pública."}
+  ].filter(Boolean);
+
+  var indicadoresDash=[
+    {nome:"Disponibilidade operacional",valor:Math.round((unidadesAtivas/Math.max(1,totalUnidades))*100),meta:90,cor:C.g2},
+    {nome:"Taxa média de uso",valor:mediaTaxaUso,meta:70,cor:C.b1},
+    {nome:"Taxa de aprovação",valor:taxaAprovacao,meta:75,cor:C.pm},
+    {nome:"Unidades visíveis",valor:Math.round((unidadesVisiveis/Math.max(1,totalUnidades))*100),meta:80,cor:C.am}
+  ];
+
   var NAV=[{id:"home",l:"Início"},{id:"cima",l:"CIMA"},{id:"ugai",l:"UGAI"},{id:"mapa",l:"🗺 Mapa"},{id:"noticias",l:"Notícias"},{id:"sol",l:"Solicitação"},{id:"transp",l:"Transparência"}];
 
   // Vistas especiais
@@ -1950,13 +1985,32 @@ function App(){
         atab==="dash"&&h("div",null,
           h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 20px",color:C.cd}},"Dashboard"),
           h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:24}},
-            h(StatBox,{label:"Unidades",value:uns.length,color:C.g2}),
-            h(StatBox,{label:"Visíveis",value:uns.filter(function(u){return u.visivel;}).length,color:C.g2}),
+            h(StatBox,{label:"Unidades",value:totalUnidades,color:C.g2}),
+            h(StatBox,{label:"Ativas",value:unidadesAtivas,color:C.g2}),
+            h(StatBox,{label:"Em manutenção",value:unidadesManutencao,color:C.am}),
+            h(StatBox,{label:"Órgãos ativos",value:orgaosAtivos,color:C.b1}),
             h(StatBox,{label:"Notícias",value:news.length,color:C.b1}),
             h(StatBox,{label:"Feeds ativos",value:feeds.filter(function(f){return f.ativo;}).length,color:C.pm}),
-            h(StatBox,{label:"Pendentes",value:sols.filter(function(s){return s.st==="pendente";}).length,color:C.am})
+            h(StatBox,{label:"Pendentes",value:pendentes.length,color:C.am}),
+            h(StatBox,{label:"Aprovação",value:taxaAprovacao+"%",color:C.pm})
           ),
-          h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}},
+          h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}},
+            h(Card,{style:{padding:"16px 18px"}},
+              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Alertas e sugestões de correção"),
+              alertasDash.length===0
+                ?h("div",{style:{fontSize:12,color:C.cm}},"Nenhum alerta crítico no momento. Continue monitorando os indicadores.")
+                :alertasDash.map(function(a,ix){
+                  var mapa={alta:[C.rm,C.rl,"🔥"],media:[C.am,C.al,"⚠️"],baixa:[C.b1,C.bl,"ℹ️"]}[a.sev]||[C.cm,C.cx,"•"];
+                  return h("div",{key:ix,style:{padding:"10px 0",borderBottom:ix===alertasDash.length-1?"none":"0.5px solid "+C.cl}},
+                    h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:4}},
+                      h("span",{style:{fontSize:13}},mapa[2]),
+                      h("span",{style:{fontSize:12,fontWeight:700,color:mapa[0]}},a.titulo)
+                    ),
+                    h("div",{style:{fontSize:11,color:C.cd,marginBottom:4}},a.det),
+                    h("div",{style:{fontSize:11,color:C.cm}},h("strong",null,"Sugestão: "),a.sug)
+                  );
+                })
+            ),
             h(Card,{style:{padding:"16px 18px"}},
               h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Utilização"),
               uns.map(function(u){return h("div",{key:u.id,style:{marginBottom:9,opacity:u.visivel?1:.45}},
@@ -1976,6 +2030,32 @@ function App(){
                   h(Pill,{t:s.st,c:cm[0],b:cm[1]})
                 );
               })
+            )
+          )
+          ,
+          h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}},
+            h(Card,{style:{padding:"16px 18px"}},
+              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Indicadores de funcionamento"),
+              indicadoresDash.map(function(ind){
+                var ok=ind.valor>=ind.meta;
+                return h("div",{key:ind.nome,style:{marginBottom:12}},
+                  h("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:C.cd,marginBottom:4}},
+                    h("span",null,ind.nome),
+                    h("span",{style:{fontWeight:700,color:ok?C.g2:C.am}},ind.valor+"% · meta "+ind.meta+"%")
+                  ),
+                  h(Bar,{v:Math.max(0,Math.min(100,ind.valor)),c:ind.cor})
+                );
+              })
+            ),
+            h(Card,{style:{padding:"16px 18px"}},
+              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Resumo executivo"),
+              h("div",{style:{display:"grid",gap:8,fontSize:12,color:C.cd}},
+                h("div",null,"• Média geral de ocupação: ",h("strong",null,mediaTaxaUso+"%")),
+                h("div",null,"• Solicitações pendentes: ",h("strong",null,pendentes.length)," (",pendentesAntigos," com atraso)"),
+                h("div",null,"• Unidades com ocupação crítica: ",h("strong",null,unidadesCriticas)),
+                h("div",null,"• Usuários ativos no sistema: ",h("strong",null,users.filter(function(u){return u.ativo;}).length)),
+                h("div",{style:{fontSize:11,color:C.cm,marginTop:4}},"Use os alertas acima para priorizar correções operacionais, transparência pública e performance das unidades.")
+              )
             )
           )
         ),
