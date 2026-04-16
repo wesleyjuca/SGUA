@@ -829,14 +829,14 @@ var formatData=function(d){if(!d)return "";try{return new Date(d+"T12:00:00").to
 var CATS=["Monitoramento","Fiscalização","Capacitação","Programa REM","Gestão","Parceria","Evento","Legislação"];
 var PL={admin:"Administrador",gestor:"Gestor",viewer:"Visualizador"};
 var PC={admin:[C.rm,C.rl],gestor:[C.b1,C.bl],viewer:[C.cm,C.cx]};
-var PK={units:"Unidades",news:"Noticias",users:"Usuarios",sols:"Solicitacoes",feeds:"Feeds RSS",cfg:"Configuracoes",ia:"Assistente IA",rel:"Relatorios"};
-var PD={admin:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,ia:true,rel:true},gestor:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,ia:true,rel:true},viewer:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,ia:false,rel:false}};
+var PK={units:"Unidades",news:"Noticias",users:"Usuarios",sols:"Solicitacoes",feeds:"Feeds RSS",cfg:"Configuracoes",rel:"Relatorios"};
+var PD={admin:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true},gestor:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,rel:true},viewer:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,rel:false}};
 
 // ─── DADOS ────────────────────────────────────────────────────────────────────
 var USERS=[
-  {id:1,nome:"Administrador SEMA",email:"admin@sema.ac.gov.br",pwdHash:hashPwd("admin123"),perfil:"admin",ativo:true,criadoEm:"2024-01-10",permissoes:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,ia:true}},
-  {id:2,nome:"Carlos Mendes",email:"gestor@sema.ac.gov.br",pwdHash:hashPwd("gestor123"),perfil:"gestor",ativo:true,criadoEm:"2024-03-15",permissoes:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,ia:true}},
-  {id:3,nome:"Ana Rodrigues",email:"viewer@sema.ac.gov.br",pwdHash:hashPwd("viewer123"),perfil:"viewer",ativo:true,criadoEm:"2024-06-01",permissoes:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,ia:true}}
+  {id:1,nome:"Administrador SEMA",email:"admin@sema.ac.gov.br",pwdHash:hashPwd("admin123"),perfil:"admin",ativo:true,criadoEm:"2024-01-10",permissoes:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true}},
+  {id:2,nome:"Carlos Mendes",email:"gestor@sema.ac.gov.br",pwdHash:hashPwd("gestor123"),perfil:"gestor",ativo:true,criadoEm:"2024-03-15",permissoes:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,rel:true}},
+  {id:3,nome:"Ana Rodrigues",email:"viewer@sema.ac.gov.br",pwdHash:hashPwd("viewer123"),perfil:"viewer",ativo:true,criadoEm:"2024-06-01",permissoes:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,rel:false}}
 ];
 
 var UNS=[
@@ -972,6 +972,7 @@ function MapView(p){
 // ─── PÁGINA MAPA COMPLETA (idêntica ao v7) ────────────────────────────────────
 function PgMapa(p){
   var uns=p.uns,onVerUnidade=p.onVerUnidade;
+  var isMobile=typeof window!=="undefined"&&window.innerWidth<=768;
   var sFT=useState("");var filtroTipo=sFT[0],setFiltroTipo=sFT[1];
   var sFM=useState("");var filtroMun=sFM[0],setFiltroMun=sFM[1];
   var sB=useState("");var busca=sB[0],setBusca=sB[1];
@@ -989,7 +990,7 @@ function PgMapa(p){
     setSelId(unitId);var u=uns.find(function(x){return x.id===unitId;});if(u)onVerUnidade(u);
   },[uns,onVerUnidade]);
 
-  return h("div",{style:{display:"flex",flexDirection:"column",height:"calc(100vh - 52px)"}},
+  return h("div",{style:{display:"flex",flexDirection:"column",height:isMobile?"calc(100vh - 46px)":"calc(100vh - 52px)"}},
     // Toolbar
     h("div",{style:{background:"#fff",borderBottom:"1px solid "+C.cl,padding:"10px 16px",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",flexShrink:0,zIndex:10}},
       h("div",{style:{position:"relative",flex:1,minWidth:160}},
@@ -1006,9 +1007,9 @@ function PgMapa(p){
       h("span",{style:{fontSize:12,color:C.cm}},filtradas.length+"/"+uns.filter(function(u){return u.visivel;}).length+" unidades")
     ),
     // Layout
-    h("div",{style:{display:"flex",flex:1,overflow:"hidden"}},
+    h("div",{style:{display:"flex",flex:1,overflow:"hidden",flexDirection:isMobile?"column":"row"}},
       // Lista lateral
-      h("div",{style:{width:256,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,display:"flex",flexDirection:"column",overflow:"hidden"}},
+      h("div",{style:{width:isMobile?"100%":256,height:isMobile?190:"auto",flexShrink:0,background:"#fff",borderRight:isMobile?"none":"1px solid "+C.cl,borderBottom:isMobile?"1px solid "+C.cl:"none",display:"flex",flexDirection:"column",overflow:"hidden"}},
         h("div",{style:{padding:"11px 14px 8px",borderBottom:"0.5px solid "+C.cl,fontSize:11,fontWeight:700,color:C.cm,letterSpacing:.5,flexShrink:0}},"UNIDADES NO MAPA"),
         h("div",{style:{flex:1,overflowY:"auto",padding:8}},
           filtradas.length===0&&h("div",{style:{textAlign:"center",padding:"28px 12px",color:C.cm,fontSize:13}},"Nenhuma unidade encontrada."),
@@ -1067,48 +1068,6 @@ function Confirm(p){
         h("button",{onClick:p.onClose,style:{padding:"8px 18px",borderRadius:8,border:"1px solid "+C.cl,background:"none",fontSize:13,cursor:"pointer"}},"Cancelar"),
         h("button",{onClick:p.onConfirm,style:{padding:"8px 18px",borderRadius:8,border:"none",background:C.rm,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"Excluir")
       )
-    )
-  );
-}
-
-// ─── CHAT IA ──────────────────────────────────────────────────────────────────
-function ChatIA(p){
-  var uns=p.uns;
-  var sM=useState([{role:"assistant",content:"Olá! Sou o assistente de gestão ambiental da SEMA/AC. Como posso ajudar?"}]);
-  var msgs=sM[0],setMsgs=sM[1];
-  var sI=useState("");var inp=sI[0],setInp=sI[1];
-  var sL=useState(false);var load=sL[0],setLoad=sL[1];
-  var endRef=useRef(null);
-
-  function send(){
-    var t=inp.trim();if(!t||load)return;
-    setInp("");setLoad(true);
-    var nm=msgs.concat([{role:"user",content:t}]);setMsgs(nm);
-    fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:900,
-        system:"Assistente SEMA/AC. Dados: "+JSON.stringify(uns.map(function(u){return{nome:u.nome,tipo:u.tipo,municipio:u.municipio,status:u.status,taxaUso:u.taxaUso};}))+" Responda em português.",
-        messages:nm.map(function(m){return{role:m.role,content:m.content};})})
-    }).then(function(r){return r.json();}).then(function(d){
-      var txt=(d.content||[]).map(function(b){return b.text||"";}).join("")||"Erro.";
-      setMsgs(nm.concat([{role:"assistant",content:txt}]));setLoad(false);
-      setTimeout(function(){if(endRef.current)endRef.current.scrollIntoView({behavior:"smooth"});},80);
-    }).catch(function(){setMsgs(nm.concat([{role:"assistant",content:"Erro de conexão."}]));setLoad(false);});
-  }
-
-  return h("div",{style:{display:"flex",flexDirection:"column",height:380}},
-    h("div",{style:{flex:1,overflowY:"auto",padding:14,display:"flex",flexDirection:"column",gap:10}},
-      msgs.map(function(m,i){
-        return h("div",{key:i,style:{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",gap:8}},
-          m.role==="assistant"&&h("div",{style:{width:26,height:26,borderRadius:7,background:C.gl,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,flexShrink:0}},"🌿"),
-          h("div",{style:{maxWidth:"80%",background:m.role==="user"?C.gx:"#f0f4f0",borderRadius:m.role==="user"?"14px 14px 4px 14px":"14px 14px 14px 4px",padding:"9px 13px",fontSize:13,lineHeight:1.65,whiteSpace:"pre-wrap",color:C.cd}},m.content)
-        );
-      }),
-      load&&h("div",{style:{display:"flex",gap:8}},h("div",{style:{width:26,height:26,borderRadius:7,background:C.gl,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}},"🌿"),h("div",{style:{background:"#f0f4f0",borderRadius:14,padding:"9px 13px",fontSize:13,color:C.cm}},"Analisando…")),
-      h("div",{ref:endRef})
-    ),
-    h("div",{style:{padding:"10px 12px",borderTop:"1px solid "+C.cl,display:"flex",gap:8}},
-      h("input",{value:inp,onChange:function(e){setInp(e.target.value);},onKeyDown:function(e){if(e.key==="Enter")send();},placeholder:"Pergunte sobre as unidades…",style:{flex:1,fontSize:13}}),
-      h("button",{onClick:send,disabled:load||!inp.trim(),style:{padding:"7px 16px",borderRadius:8,border:"none",background:inp.trim()?C.g2:C.cl,color:inp.trim()?"#fff":C.cm,fontSize:13,fontWeight:500,cursor:inp.trim()?"pointer":"default"}},"Enviar")
     )
   );
 }
@@ -1584,7 +1543,7 @@ function App(){
   var sTt=useState(null);var toast=sTt[0],setToast=sTt[1];
   var sMo=useState(null);var modal=sMo[0],setModal=sMo[1];
   var sCf=useState(null);var conf=sCf[0],setConf=sCf[1];
-  var sSe=useState(function(){return lsGet("secs",{hero:true,alert:true,bloco:true,mapa:true,dash:true,acesso:true,news:true,ia:true});});
+  var sSe=useState(function(){return lsGet("secs",{hero:true,alert:true,bloco:true,mapa:true,dash:true,acesso:true,news:true});});
   var secs=sSe[0],setSecs=sSe[1];
   var sSo=useState(function(){return lsGet("sols",[
     {id:"SOL-001",sol:"Maria Silva",org:"SESACRE",un:"CIMA Rio Branco",ev:"Capacitação",dt:"2026-04-10",st:"pendente"},
@@ -1593,6 +1552,7 @@ function App(){
   var sSf=useState({nome:"",org:"",email:"",un:"",ev:"",dt:"",hr:"",just:""});var sf=sSf[0],setSf=sSf[1];
   var sSv=useState(false);var senv=sSv[0],setSenv=sSv[1];
   var sRdy=useState(false);var remoteReady=sRdy[0],setRemoteReady=sRdy[1];
+  var sVp=useState(typeof window!=="undefined"?window.innerWidth:1280);var vpWidth=sVp[0],setVpWidth=sVp[1];
 
 
   useEffect(function(){lsSet('uns',uns);},[uns]);
@@ -1627,6 +1587,14 @@ function App(){
   useEffect(function(){
     setTimeout(function(){var el=document.getElementById("app-loading");if(el){el.classList.add("hidden");setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},500);}},700);
   },[]);
+  useEffect(function(){
+    function onResize(){setVpWidth(window.innerWidth||1280);}
+    onResize();
+    window.addEventListener("resize",onResize);
+    return function(){window.removeEventListener("resize",onResize);};
+  },[]);
+
+  var isMobile=vpWidth<=768;
 
   function toast2(m,c){setToast({m:m,c:c||C.g2});}
   function go(pg){setPage(pg);setUVista(null);setNVista(null);}
@@ -1747,7 +1715,7 @@ function App(){
       h("div",{style:{background:C.g1,padding:"4px 20px"}},
         h("span",{style:{fontSize:10,color:"rgba(255,255,255,.6)"}},"Governo do Estado do Acre · Secretaria de Estado do Meio Ambiente")
       ),
-      h("div",{style:{maxWidth:1200,margin:"0 auto",padding:"0 16px",height:52,display:"flex",alignItems:"center"}},
+      h("div",{style:{maxWidth:1200,margin:"0 auto",padding:isMobile?"0 10px":"0 16px",height:isMobile?46:52,display:"flex",alignItems:"center"}},
         // Logo exatamente como v7 — SVG pin
         h("div",{onClick:function(){go("home");},style:{display:"flex",alignItems:"center",gap:9,cursor:"pointer",marginRight:20,flexShrink:0}},
           h("div",{style:{width:32,height:32,borderRadius:8,background:C.g3,display:"flex",alignItems:"center",justifyContent:"center"}},
@@ -1756,24 +1724,24 @@ function App(){
               h("circle",{cx:9,cy:8,r:2.2,fill:C.g3})
             )
           ),
-          h("div",{style:{lineHeight:1.15}},
+          !isMobile&&h("div",{style:{lineHeight:1.15}},
             h("div",{style:{fontSize:14,fontWeight:700,color:"#fff"}},"SEMA/AC"),
             h("div",{style:{fontSize:10,color:"rgba(255,255,255,.55)"}},"CIMA · UGAI")
           )
         ),
         // Itens de navegação
-        h("div",{style:{display:"flex",gap:1,flex:1,overflowX:"auto"}},
+        h("div",{style:{display:"flex",gap:1,flex:1,overflowX:"auto",scrollbarWidth:"none"}},
           NAV.map(function(n){
-            return h("button",{key:n.id,onClick:function(){go(n.id);},style:{background:page===n.id?"rgba(255,255,255,.12)":"none",border:"none",cursor:"pointer",fontSize:12,fontWeight:page===n.id?600:400,color:page===n.id?"#fff":"rgba(255,255,255,.62)",padding:"6px 11px",borderRadius:7,whiteSpace:"nowrap",flexShrink:0,borderBottom:page===n.id?"2px solid "+C.g3:"2px solid transparent"}},n.l);
+            return h("button",{key:n.id,onClick:function(){go(n.id);},style:{background:page===n.id?"rgba(255,255,255,.12)":"none",border:"none",cursor:"pointer",fontSize:12,fontWeight:page===n.id?600:400,color:page===n.id?"#fff":"rgba(255,255,255,.62)",padding:isMobile?"5px 8px":"6px 11px",borderRadius:7,whiteSpace:"nowrap",flexShrink:0,borderBottom:page===n.id?"2px solid "+C.g3:"2px solid transparent"}},n.l);
           })
         ),
         // Botão Admin
-        h("div",{style:{display:"flex",gap:8,alignItems:"center",flexShrink:0,marginLeft:8}},
-          curUser&&h("div",{style:{fontSize:11,color:"rgba(255,255,255,.55)",textAlign:"right"}},
+        h("div",{style:{display:"flex",gap:isMobile?4:8,alignItems:"center",flexShrink:0,marginLeft:isMobile?4:8}},
+          !isMobile&&curUser&&h("div",{style:{fontSize:11,color:"rgba(255,255,255,.55)",textAlign:"right"}},
             h("div",{style:{fontWeight:600,color:"rgba(255,255,255,.85)"}},curUser.nome.split(" ")[0]),
             h("div",{style:{fontSize:10}},PL[curUser.perfil])
           ),
-          h("button",{onClick:function(){if(curUser)go("admin");else setShowLogin(true);},style:{background:page==="admin"?"rgba(255,255,255,.15)":"rgba(255,255,255,.07)",border:"0.5px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.75)",padding:"6px 12px",borderRadius:8,fontSize:12,cursor:"pointer"}},"⚙ Admin"),
+          h("button",{onClick:function(){if(curUser)go("admin");else setShowLogin(true);},style:{background:page==="admin"?"rgba(255,255,255,.15)":"rgba(255,255,255,.07)",border:"0.5px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.75)",padding:isMobile?"6px 8px":"6px 12px",borderRadius:8,fontSize:12,cursor:"pointer"}},isMobile?"⚙":"⚙ Admin"),
           curUser&&h("button",{onClick:function(){setCurUser(null);if(page==="admin")go("home");},style:{background:"none",border:"0.5px solid rgba(255,255,255,.15)",color:"rgba(255,255,255,.45)",padding:"6px 10px",borderRadius:8,fontSize:11,cursor:"pointer"}},"Sair")
         )
       )
@@ -1858,7 +1826,7 @@ function App(){
         ),
 
         // Mapa + Dashboard — grid 1fr 270px (idêntico ao v7)
-        secs.mapa&&h("div",{style:{display:"grid",gridTemplateColumns:"1fr 270px",gap:20,marginBottom:40,alignItems:"start"}},
+        secs.mapa&&h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 270px",gap:20,marginBottom:40,alignItems:"start"}},
           h("div",null,
             h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},
               h("div",null,
@@ -1911,9 +1879,8 @@ function App(){
           )
         ),
 
-        // Notícias + IA (grid 1fr 340px — idêntico ao v7)
-        h("div",{style:{display:"grid",gridTemplateColumns:"1fr 340px",gap:20,alignItems:"start"}},
-          secs.news&&h("div",null,
+        // Notícias
+        secs.news&&h("div",null,
             h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},
               h("h2",{style:{fontSize:16,fontWeight:700,margin:0,color:C.cd}},"Notícias recentes"),
               h("button",{onClick:function(){go("noticias");},style:{fontSize:12,color:C.g2,fontWeight:600,background:"none",border:"none",cursor:"pointer"}},"Ver todas →")
@@ -1930,22 +1897,7 @@ function App(){
                 );
               })
             )
-          ),
-          secs.ia&&h("div",null,
-            h("div",{style:{display:"flex",alignItems:"center",gap:7,marginBottom:12}},
-              h("h2",{style:{fontSize:16,fontWeight:700,margin:0,color:C.cd}},"Assistente IA"),
-              h("span",{style:{fontSize:10,background:C.gx,color:C.g2,padding:"2px 8px",borderRadius:10,fontWeight:700}},"IA")
-            ),
-            h("div",{style:{background:"#fff",border:"1px solid "+C.cl,borderRadius:14,overflow:"hidden"}},
-              h("div",{style:{background:"linear-gradient(135deg,"+C.g0+","+C.g1+")",padding:"11px 16px",display:"flex",alignItems:"center",gap:7}},
-                h("div",{style:{width:7,height:7,borderRadius:"50%",background:C.g3}}),
-                h("span",{style:{fontSize:12,fontWeight:700,color:"#fff"}},"Gestão Ambiental — SEMA/AC"),
-                h("span",{style:{fontSize:10,color:"rgba(255,255,255,.45)",marginLeft:"auto"}},"Claude AI")
-              ),
-              h(ChatIA,{uns:uns})
-            )
           )
-        )
       )
     ),
 
@@ -1997,7 +1949,7 @@ function App(){
         h("div",{style:{display:"flex",flexDirection:"column",gap:14}},
           h(Card,{style:{padding:"20px 22px"}},
             h("div",{style:{fontSize:13,fontWeight:700,color:C.g2,marginBottom:14}},"Dados do solicitante"),
-            h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
+            h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}},
               h("div",null,h("label",{style:lbl11},"Nome completo *"),h("input",{value:sf.nome,onChange:function(e){setSf(function(f){return Object.assign({},f,{nome:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
               h("div",null,h("label",{style:lbl11},"Órgão *"),h("input",{value:sf.org,onChange:function(e){setSf(function(f){return Object.assign({},f,{org:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
               h("div",{style:{gridColumn:"1/-1"}},h("label",{style:lbl11},"E-mail *"),h("input",{type:"email",value:sf.email,onChange:function(e){setSf(function(f){return Object.assign({},f,{email:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}}))
@@ -2005,7 +1957,7 @@ function App(){
           ),
           h(Card,{style:{padding:"20px 22px"}},
             h("div",{style:{fontSize:13,fontWeight:700,color:C.g2,marginBottom:14}},"Dados da solicitação"),
-            h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
+            h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}},
               h("div",null,h("label",{style:lbl11},"Unidade *"),h("select",{value:sf.un,onChange:function(e){setSf(function(f){return Object.assign({},f,{un:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}},h("option",{value:""},"Selecione"),uns.filter(function(u){return u.visivel;}).map(function(u){return h("option",{key:u.id},u.nome);}))),
               h("div",null,h("label",{style:lbl11},"Tipo de evento *"),h("select",{value:sf.ev,onChange:function(e){setSf(function(f){return Object.assign({},f,{ev:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}},h("option",{value:""},"Selecione"),["Reunião técnica","Capacitação","Evento institucional","Hospedagem","Fiscalização","Outro"].map(function(o){return h("option",{key:o},o);}))),
               h("div",null,h("label",{style:lbl11},"Data *"),h("input",{type:"date",value:sf.dt,onChange:function(e){setSf(function(f){return Object.assign({},f,{dt:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
@@ -2054,7 +2006,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["ia","🤖","Assistente IA",canDo("ia")],["rel","📊","Relatórios",canDo("rel")]].filter(function(it){return it[3];}).map(function(it){
+        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["rel","📊","Relatórios",canDo("rel")]].filter(function(it){return it[3];}).map(function(it){
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},it[1]),it[2]
           );
@@ -2081,7 +2033,7 @@ function App(){
             h(StatBox,{label:"Pendentes",value:pendentes.length,color:C.am}),
             h(StatBox,{label:"Aprovação",value:taxaAprovacao+"%",color:C.pm})
           ),
-          h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:16}},
+          h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:16}},
             h(Card,{style:{padding:"16px 18px"}},
               h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Alertas e sugestões de correção"),
               alertasDash.length===0
@@ -2120,7 +2072,7 @@ function App(){
             )
           )
           ,
-          h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}},
+          h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}},
             h(Card,{style:{padding:"16px 18px"}},
               h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Indicadores de funcionamento"),
               indicadoresDash.map(function(ind){
@@ -2253,7 +2205,7 @@ function App(){
           h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}},h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 6px",color:C.cd}},"Configuração da Home"),h("button",{onClick:function(){lsClear();toast2("Cache limpo. Recarregue a página.",C.am);},style:{padding:"5px 12px",borderRadius:7,border:"1px solid "+C.am,background:C.al,color:C.am,fontSize:11,cursor:"pointer"}},"🗑 Limpar cache")),
           h("p",{style:{fontSize:13,color:C.cm,margin:"0 0 24px"}},"Ative ou desative seções da página inicial em tempo real."),
           h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}},
-            [["hero","🖼 Hero"],["alert","⚠ Alertas"],["bloco","📖 CIMA/UGAI"],["mapa","🗺 Mapa"],["dash","📊 Dashboard"],["acesso","⚡ Acesso rápido"],["news","📰 Notícias"],["ia","🤖 Assistente IA"]].map(function(pr){
+            [["hero","🖼 Hero"],["alert","⚠ Alertas"],["bloco","📖 CIMA/UGAI"],["mapa","🗺 Mapa"],["dash","📊 Dashboard"],["acesso","⚡ Acesso rápido"],["news","📰 Notícias"]].map(function(pr){
               return h("div",{key:pr[0],onClick:function(){setSecs(function(s){var n=Object.assign({},s);n[pr[0]]=!n[pr[0]];return n;});},style:{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",background:"#fff",borderRadius:12,border:"1.5px solid "+(secs[pr[0]]?C.g2:C.cl),cursor:"pointer"}},
                 h("div",{style:{width:22,height:22,borderRadius:6,background:secs[pr[0]]?C.g2:C.cl,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}},
                   secs[pr[0]]&&h("svg",{width:12,height:12,viewBox:"0 0 12 12"},h("path",{d:"M2 6l3 3 5-5",stroke:"white",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",fill:"none"}))
@@ -2266,17 +2218,6 @@ function App(){
 
         atab==="rel"&&canDo("rel")&&h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2}),
 
-        atab==="ia"&&canDo("ia")&&h("div",null,
-          h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 4px",color:C.cd}},"Assistente IA"),
-          h(Card,{style:{overflow:"hidden",marginTop:16}},
-            h("div",{style:{background:"linear-gradient(135deg,"+C.g0+","+C.g1+")",padding:"12px 16px",display:"flex",alignItems:"center",gap:8}},
-              h("div",{style:{width:7,height:7,borderRadius:"50%",background:C.g3}}),
-              h("span",{style:{fontSize:13,fontWeight:700,color:"#fff"}},"Assistente de Gestão — SEMA/AC"),
-              h("span",{style:{fontSize:11,color:"rgba(255,255,255,.4)",marginLeft:"auto"}},"Claude AI")
-            ),
-            h(ChatIA,{uns:uns})
-          )
-        )
       )
     ),
 
