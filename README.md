@@ -144,3 +144,19 @@ A aplicação ficará disponível em `http://localhost:3000` com API e front-end
 ---
 
 © 2026 SEMA/AC — Governo do Estado do Acre
+
+---
+
+## Publicação no GitHub Pages (site estático)
+
+Se o site `https://wesleyjuca.github.io/SGUA/` não refletir alterações, o motivo mais comum é que o deploy do Pages não foi executado após o push.
+
+Este repositório agora inclui workflow em `.github/workflows/deploy-pages.yml` que publica automaticamente o `index.html` quando houver push em `main`, `master` ou `work`.
+
+### Checklist rápido quando "não atualiza"
+1. Confirme que o commit foi enviado para o GitHub (`git push`).
+2. Abra a aba **Actions** do repositório e verifique a execução **Deploy GitHub Pages**.
+3. Aguarde o status **success** e depois faça reload forçado no navegador (`Ctrl+F5`).
+4. Se ainda houver versão antiga, em **Settings > Pages** confirme se a origem está como **GitHub Actions**.
+
+> Observação: o backend `server.js` (SQLite/API) não roda no GitHub Pages. No Pages é publicado apenas o front-end estático (`index.html`).
