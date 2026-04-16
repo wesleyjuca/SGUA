@@ -1,6 +1,6 @@
 {
   "name": "sgua",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "private": true,
   "description": "SEMA/AC - Sistema de Gestão CIMA & UGAI com persistência em SQLite",
   "main": "server.js",

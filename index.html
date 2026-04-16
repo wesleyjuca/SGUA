@@ -124,17 +124,41 @@ function validateFields(obj,rules){
 // PERSISTÊNCIA — localStorage (dados de negócio apenas, jamais senhas)
 // ══════════════════════════════════════════════════════════════════════════════
 var SK='sagcu_v4_'; // versão do schema — bump para invalidar cache antigo
+var LS_WARNED={};
+function storageWarnOnce(code,msg){
+  if(LS_WARNED[code]) return;
+  LS_WARNED[code]=true;
+  console.warn('SAGCU storage warning:',msg);
+}
 function lsGet(key,fallback){
-  try{var r=localStorage.getItem(SK+key);return r?JSON.parse(r):fallback;}
-  catch(e){return fallback;}
+  var storageKey=SK+key;
+  try{
+    var r=localStorage.getItem(storageKey);
+    if(!r) return fallback;
+    try{return JSON.parse(r);}
+    catch(e){
+      storageWarnOnce('parse_'+key,'Dados corrompidos em "'+storageKey+'". Cache local foi resetado para este item.');
+      localStorage.removeItem(storageKey);
+      return fallback;
+    }
+  }catch(e){
+    storageWarnOnce('read_'+key,'Falha ao ler "'+storageKey+'": '+(e&&e.message?e.message:String(e)));
+    return fallback;
+  }
 }
 function lsSet(key,data){
-  try{localStorage.setItem(SK+key,JSON.stringify(data));}
-  catch(e){/* quota exceeded — silently ignore */}
+  var storageKey=SK+key;
+  try{localStorage.setItem(storageKey,JSON.stringify(data));return true;}
+  catch(e){
+    storageWarnOnce('write_'+key,'Falha ao persistir "'+storageKey+'": '+(e&&e.message?e.message:String(e)));
+    return false;
+  }
 }
 function lsClear(){
   try{Object.keys(localStorage).filter(function(k){return k.startsWith(SK);}).forEach(function(k){localStorage.removeItem(k);});}
-  catch(e){}
+  catch(e){
+    storageWarnOnce('clear','Falha ao limpar cache local: '+(e&&e.message?e.message:String(e)));
+  }
 }
 
 // Backend API (opcional): quando disponível, sincroniza dados com SQLite via /api/state
@@ -1535,7 +1559,7 @@ function App(){
   var sTt=useState(null);var toast=sTt[0],setToast=sTt[1];
   var sMo=useState(null);var modal=sMo[0],setModal=sMo[1];
   var sCf=useState(null);var conf=sCf[0],setConf=sCf[1];
-  var sSe=useState({hero:true,alert:true,bloco:true,mapa:true,dash:true,acesso:true,news:true,ia:true});
+  var sSe=useState(function(){return lsGet("secs",{hero:true,alert:true,bloco:true,mapa:true,dash:true,acesso:true,news:true,ia:true});});
   var secs=sSe[0],setSecs=sSe[1];
   var sSo=useState(function(){return lsGet("sols",[
     {id:"SOL-001",sol:"Maria Silva",org:"SESACRE",un:"CIMA Rio Branco",ev:"Capacitação",dt:"2026-04-10",st:"pendente"},
@@ -1551,6 +1575,7 @@ function App(){
   useEffect(function(){lsSet('feeds',feeds);},[feeds]);
   useEffect(function(){lsSet('sols',sols);},[sols]);
   useEffect(function(){lsSet('users',users);},[users]);
+  useEffect(function(){lsSet('secs',secs);},[secs]);
   useEffect(function(){
     var alive=true;
     apiFetchState().then(function(data){

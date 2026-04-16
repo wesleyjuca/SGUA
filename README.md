@@ -1,9 +1,14 @@
 # SEMA/AC — Sistema de Gestão CIMA & UGAI  
-### v4.1 — Full-Stack: Domínio · Relatórios · Segurança · SQLite
+### v4.2 — Full-Stack: Domínio · Relatórios · Segurança · SQLite
 
 ---
 
 ## Novas funcionalidades (v4)
+
+### 0) Correções de confiabilidade (v4.2)
+- **Persistência de seções (`secs`) no cache local**: agora as preferências de layout também sobrevivem ao reload.
+- **Observabilidade de falhas no localStorage**: leituras inválidas e erros de gravação/limpeza agora geram `console.warn` controlado.
+- **Auto-recuperação de cache corrompido**: se um item JSON estiver inválido, o sistema remove apenas aquela chave e usa fallback seguro.
 
 ### 1. Regra de domínio — `approveUso`
 - **Validação completa** com `validateFields()` + `sanitize()`
