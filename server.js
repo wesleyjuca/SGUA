@@ -39,6 +39,10 @@ function safeJsonParse(str, fallback) {
   }
 }
 
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 async function initDb() {
   await run(`
     CREATE TABLE IF NOT EXISTS app_state (
@@ -100,7 +104,7 @@ app.put('/api/state', async (req, res) => {
       feeds: Array.isArray(payload.feeds) ? payload.feeds : safeJsonParse(cur.feeds, []),
       sols: Array.isArray(payload.sols) ? payload.sols : safeJsonParse(cur.sols, []),
       users: Array.isArray(payload.users) ? payload.users : safeJsonParse(cur.users, []),
-      secs: payload.secs && typeof payload.secs === 'object' ? payload.secs : safeJsonParse(cur.secs, {})
+      secs: isPlainObject(payload.secs) ? payload.secs : safeJsonParse(cur.secs, {})
     };
 
     await run(

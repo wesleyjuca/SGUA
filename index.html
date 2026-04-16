@@ -62,14 +62,8 @@ function sha256(msg){
          0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
   var H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
   function rr(w,n){return(w>>>n)|(w<<(32-n));}
-  // UTF-8 encode
-  var bytes=[];
-  for(var i=0;i<msg.length;i++){
-    var c=msg.charCodeAt(i);
-    if(c<128)bytes.push(c);
-    else if(c<2048)bytes.push(0xc0|(c>>6),0x80|(c&63));
-    else bytes.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));
-  }
+  // UTF-8 encode (suporta pares substitutos / emoji)
+  var bytes=Array.from(new TextEncoder().encode(String(msg||'')));
   var blen=bytes.length*8;
   bytes.push(0x80);
   while(bytes.length%64!==56)bytes.push(0);
@@ -1560,7 +1554,7 @@ function App(){
       if(Array.isArray(data.feeds)) setFeeds(data.feeds);
       if(Array.isArray(data.sols)) setSols(data.sols);
       if(Array.isArray(data.users)) setUsers(data.users);
-      if(data.secs&&typeof data.secs==='object') setSecs(data.secs);
+      if(data.secs&&typeof data.secs==='object'&&!Array.isArray(data.secs)) setSecs(data.secs);
     }).catch(function(e){
       console.warn('SAGCU remote load warning:',e&&e.message?e.message:e);
     }).finally(function(){
