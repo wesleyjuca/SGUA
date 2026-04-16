@@ -62,7 +62,7 @@ async function initDb() {
   }
 }
 
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(__dirname));
 
 app.get('/api/health', (_req, res) => {
