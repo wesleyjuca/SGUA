@@ -1,0 +1,14 @@
+{
+  "name": "sgua",
+  "version": "4.1.0",
+  "private": true,
+  "description": "SEMA/AC - Sistema de Gestão CIMA & UGAI com persistência em SQLite",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "sqlite3": "^5.1.7"
+  }
+}
