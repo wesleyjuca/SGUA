@@ -1660,6 +1660,29 @@ function App(){
   var pendentes=sols.filter(function(s){return s.st==="pendente";});
   var aprovadas=sols.filter(function(s){return s.st==="aprovada";}).length;
   var taxaAprovacao=Math.round((aprovadas/Math.max(1,sols.length))*100);
+  var unidadesSemCoords=uns.filter(function(u){
+    return !u.coords||typeof u.coords.lat!=="number"||typeof u.coords.lng!=="number"||Math.abs(u.coords.lat)>90||Math.abs(u.coords.lng)>180;
+  });
+  var unidadesTaxaInvalida=uns.filter(function(u){
+    var taxa=Number(u.taxaUso);
+    return Number.isNaN(taxa)||taxa<0||taxa>100;
+  });
+  var ocupacaoInconsistente=uns.filter(function(u){
+    var ativos=(u.orgaosPresentes||[]).filter(function(o){return o.ativo;}).length;
+    var atual=Number(u.ocupacaoAtual||0);
+    return atual!==ativos;
+  });
+  var solicitacoesComErro=sols.filter(function(s){
+    var statusValido=['pendente','aprovada','rejeitada'].indexOf(s.st)!==-1;
+    var dataValida=!!s.dt&&!Number.isNaN(Date.parse(s.dt+"T00:00:00"));
+    return !s.sol||!s.un||!statusValido||!dataValida;
+  });
+  var noticiasSemData=news.filter(function(n){return !n.data||Number.isNaN(Date.parse(n.data+"T00:00:00"));});
+  var unidadesSemHistorico=uns.filter(function(u){return !sanitize(String(u.historia||''),300);});
+  var unidadesSemFoto=uns.filter(function(u){return !sanitize(String(u.foto||''),400);});
+  var usuariosAdminsAtivos=users.filter(function(u){return u.ativo&&u.perfil==="admin";}).length;
+  var feedsInativos=feeds.filter(function(f){return !f.ativo;}).length;
+
   function diffDias(dt){
     if(!dt) return 0;
     var p=Date.parse(dt+"T00:00:00");
@@ -1668,7 +1691,7 @@ function App(){
   }
   var pendentesAntigos=pendentes.filter(function(s){return diffDias(s.dt)>=7;}).length;
 
-  var alertasDash=[
+  var alertasOperacionais=[
     pendentesAntigos>0&&{sev:"alta",titulo:"Solicitações sem resposta há mais de 7 dias",det:""+pendentesAntigos+" solicitação(ões) pendente(s).",sug:"Priorizar triagem na aba Solicitações e definir SLA de aprovação/rejeição em até 48h."},
     unidadesManutencao>0&&{sev:"media",titulo:"Unidades em manutenção impactando disponibilidade",det:""+unidadesManutencao+" unidade(s) indisponível(is).",sug:"Registrar plano de correção com prazo e redistribuir eventos para unidades ativas."},
     unidadesCriticas>0&&{sev:"alta",titulo:"Capacidade crítica de ocupação em unidades ativas",det:""+unidadesCriticas+" unidade(s) acima de 90% de uso.",sug:"Rebalancear agenda entre unidades com baixa taxa de uso e revisar limite operacional."},
@@ -1676,6 +1699,20 @@ function App(){
     users.filter(function(u){return u.ativo;}).length===0&&{sev:"alta",titulo:"Não existem usuários ativos",det:"O painel administrativo pode ficar sem operação.",sug:"Reativar um administrador imediatamente para evitar indisponibilidade de gestão."},
     unidadesVisiveis<Math.ceil(totalUnidades/2)&&{sev:"baixa",titulo:"Baixa transparência pública",det:"Somente "+unidadesVisiveis+" de "+totalUnidades+" unidades estão visíveis.",sug:"Revisar unidades ocultas e publicar aquelas aptas para consulta pública."}
   ].filter(Boolean);
+  var alertasFuncionalidade=[
+    ocupacaoInconsistente.length>0&&{sev:"alta",titulo:"Inconsistência entre ocupação atual e órgãos ativos",det:""+ocupacaoInconsistente.length+" unidade(s) com ocupação divergente.",sug:"Abrir cada unidade e salvar novamente o painel de ocupação para recalcular os totais."},
+    unidadesSemCoords.length>0&&{sev:"alta",titulo:"Unidades com coordenadas inválidas",det:""+unidadesSemCoords.length+" unidade(s) não aparecerão corretamente no mapa.",sug:"Corrigir latitude/longitude no cadastro de unidades para restaurar visualização geográfica."},
+    unidadesTaxaInvalida.length>0&&{sev:"media",titulo:"Taxa de uso fora da faixa esperada (0-100)",det:""+unidadesTaxaInvalida.length+" unidade(s) com valor inválido.",sug:"Padronizar taxa de uso entre 0% e 100% para evitar distorções no dashboard."},
+    solicitacoesComErro.length>0&&{sev:"alta",titulo:"Solicitações com dados incompletos ou inválidos",det:""+solicitacoesComErro.length+" registro(s) com falha de dados.",sug:"Revisar solicitações com data/status inválidos para manter o fluxo de aprovação confiável."},
+    noticiasSemData.length>0&&{sev:"media",titulo:"Notícias sem data válida",det:""+noticiasSemData.length+" notícia(s) podem ficar fora da ordenação cronológica.",sug:"Preencher data no formato AAAA-MM-DD para preservar histórico e filtros."},
+    usuariosAdminsAtivos===0&&users.length>0&&{sev:"alta",titulo:"Nenhum administrador ativo disponível",det:"Usuários ativos sem perfil administrador.",sug:"Promover ou reativar ao menos um admin para garantir governança do sistema."}
+  ].filter(Boolean);
+  var sugestoesImplementacao=[
+    unidadesSemHistorico.length>0&&{sev:"baixa",titulo:"Completar histórico institucional das unidades",det:""+unidadesSemHistorico.length+" unidade(s) sem texto de histórico.",sug:"Adicionar contexto histórico para fortalecer transparência e memória institucional."},
+    unidadesSemFoto.length>0&&{sev:"baixa",titulo:"Adicionar imagens oficiais às unidades",det:""+unidadesSemFoto.length+" unidade(s) sem foto de capa.",sug:"Incluir fotos atualizadas para melhorar identificação visual e comunicação pública."},
+    feedsInativos>0&&feeds.filter(function(f){return f.ativo;}).length>0&&{sev:"baixa",titulo:"Revisar feeds RSS desativados",det:""+feedsInativos+" feed(s) estão desativados.",sug:"Avaliar fontes inativas e substituir por novos canais estratégicos."}
+  ].filter(Boolean);
+  var alertasDash=alertasFuncionalidade.concat(alertasOperacionais,sugestoesImplementacao);
 
   var indicadoresDash=[
     {nome:"Disponibilidade operacional",valor:Math.round((unidadesAtivas/Math.max(1,totalUnidades))*100),meta:90,cor:C.g2},
