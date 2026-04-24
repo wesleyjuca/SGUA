@@ -52,6 +52,28 @@ npm start
 
 Acesse: `http://localhost:3000`.
 
+## Validação automatizada (API + banco SQLite)
+
+```bash
+npm run validate:system
+```
+
+Esse comando sobe o servidor em porta temporária, cria um banco isolado e valida operações de CRUD + fluxos de ocupação com persistência real.
+
+## Publicação (produção)
+
+- Defina variáveis de ambiente:
+  - `PORT` (ex.: `3000`)
+  - `SGUA_DB_PATH` (ex.: `/var/lib/sgua/sgua.db`)
+- Inicie com:
+
+```bash
+npm ci --omit=dev
+npm start
+```
+
+- Exponha a aplicação atrás de um proxy (Nginx/Caddy) e mantenha o diretório do SQLite em volume persistente.
+
 ## Estrutura de pastas
 
 ```text
