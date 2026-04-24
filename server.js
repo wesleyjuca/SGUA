@@ -16,6 +16,7 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const db = new sqlite3.Database(DB_PATH);
+let transactionQueue = Promise.resolve();
 
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -42,6 +43,23 @@ function get(sql, params = []) {
       resolve(row);
     });
   });
+}
+
+function withImmediateTransaction(work) {
+  const runInQueue = transactionQueue.then(async () => {
+    await run('BEGIN IMMEDIATE TRANSACTION');
+    try {
+      const result = await work();
+      await run('COMMIT');
+      return result;
+    } catch (error) {
+      await run('ROLLBACK');
+      throw error;
+    }
+  });
+
+  transactionQueue = runInQueue.catch(() => {});
+  return runInQueue;
 }
 
 function validateEmail(value) {
@@ -332,19 +350,14 @@ app.post('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Capacidade máxima da unidade atingida.' });
   }
 
-  await run('BEGIN IMMEDIATE TRANSACTION');
-  try {
+  await withImmediateTransaction(async () => {
     await run(
       `INSERT INTO occupancy_records(unit_id, user_id, organization_name, usage_type)
        VALUES (?, ?, ?, ?)`,
       [unitId, userId, organizationName, usageType]
     );
     await run('UPDATE units SET current_occupancy = current_occupancy + 1, updated_at = datetime(\'now\') WHERE id = ?', [unitId]);
-    await run('COMMIT');
-  } catch (error) {
-    await run('ROLLBACK');
-    throw error;
-  }
+  });
   res.status(201).json({ ok: true });
 }));
 
@@ -355,8 +368,7 @@ app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
   if (!record) return res.status(404).json({ ok: false, error: 'Registro não encontrado.' });
   if (!record.active) return res.status(400).json({ ok: false, error: 'Registro já inativo.' });
 
-  await run('BEGIN IMMEDIATE TRANSACTION');
-  try {
+  await withImmediateTransaction(async () => {
     await run('UPDATE occupancy_records SET active = 0, end_date = date(\'now\') WHERE id = ?', [id]);
     await run(
       `UPDATE units
@@ -365,11 +377,7 @@ app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
        WHERE id = ?`,
       [record.unit_id]
     );
-    await run('COMMIT');
-  } catch (error) {
-    await run('ROLLBACK');
-    throw error;
-  }
+  });
 
   res.json({ ok: true });
 }));
