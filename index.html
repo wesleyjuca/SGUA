@@ -187,6 +187,17 @@ function apiSaveState(payload){
     return r.json();
   });
 }
+function apiSyncFeeds(feeds,news){
+  if(!API_ENABLED) return Promise.resolve({ok:false,error:'Sincronização requer servidor HTTP ativo.'});
+  return fetch(apiUrl('/api/feeds/sync'),{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({feeds:feeds,news:news})
+  }).then(function(r){
+    if(!r.ok) throw new Error('Falha ao sincronizar feeds ('+r.status+')');
+    return r.json();
+  });
+}
 
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1610,11 +1621,34 @@ function App(){
   function saveFd(f){if(f.id)setFeeds(function(fs){return fs.map(function(x){return x.id===f.id?f:x;});});else setFeeds(function(fs){return fs.concat([Object.assign({},f,{id:Date.now(),sync:"—"})]);});setModal(null);toast2("Feed salvo.");}
   function delFd(id){setFeeds(function(fs){return fs.filter(function(f){return f.id!==id;});});setConf(null);toast2("Removido.",C.am);}
   function togFd(id){setFeeds(function(fs){return fs.map(function(f){return f.id===id?Object.assign({},f,{ativo:!f.ativo}):f;});});}
+  function syncFeeds(ids){
+    var alvo=Array.isArray(ids)&&ids.length?feeds.filter(function(f){return ids.indexOf(f.id)!==-1;}):feeds;
+    apiSyncFeeds(alvo,news).then(function(resp){
+      if(!resp||resp.ok===false){toast2((resp&&resp.error)||"Falha na sincronização.",C.rm);return;}
+      if(Array.isArray(resp.news)) setNews(resp.news);
+      if(Array.isArray(resp.feeds)) setFeeds(function(fs){
+        return fs.map(function(f){
+          var remoto=resp.feeds.find(function(rf){return rf.id===f.id;});
+          return remoto?remoto:f;
+        });
+      });
+      if(resp.warnings&&resp.warnings.length) toast2(resp.warnings[0],C.am);
+      else toast2("Sincronização concluída. "+(resp.added||0)+" notícia(s) importada(s).");
+    }).catch(function(e){
+      toast2("Erro na sincronização: "+(e&&e.message?e.message:'desconhecido'),C.rm);
+    });
+  }
 
   var alts=[
     uns.filter(function(u){return u.visivel&&u.taxaUso<35;}).length>0&&{tp:"a",t:"Subutilizadas",tx:uns.filter(function(u){return u.visivel&&u.taxaUso<35;}).map(function(u){return u.nome;}).join(", ")+" < 35%."},
     uns.filter(function(u){return u.visivel&&u.taxaUso>85;}).length>0&&{tp:"d",t:"Alta demanda",tx:uns.filter(function(u){return u.visivel&&u.taxaUso>85;}).map(function(u){return u.nome;}).join(", ")+" próxima do limite."},
     uns.filter(function(u){return u.status==="manutencao";}).length>0&&{tp:"i",t:"Manutenção",tx:uns.filter(function(u){return u.status==="manutencao";}).map(function(u){return u.nome;}).join(", ")+" indisponíveis."}
+  ].filter(Boolean);
+  var adminInsights=[
+    uns.filter(function(u){return u.status==="manutencao";}).length>0&&"Priorizar plano de manutenção para unidades indisponíveis e atualizar previsão de retorno.",
+    uns.filter(function(u){return u.visivel&&u.taxaUso>85;}).length>1&&"Há concentração de uso em unidades de alta demanda. Avaliar redistribuição de agendas.",
+    feeds.filter(function(f){return f.ativo&&f.sync==="—";}).length>0&&"Existem feeds ativos sem sincronização inicial. Execute o sync para alimentar as notícias automaticamente.",
+    news.filter(function(n){return n.visivel;}).length<3&&"Poucas notícias públicas ativas. Recomenda-se publicar ao menos 3 para manter a home atualizada."
   ].filter(Boolean);
 
   // Indicadores operacionais do dashboard administrativo
@@ -2070,6 +2104,22 @@ function App(){
                 );
               })
             )
+          ),
+          h(Card,{style:{padding:"16px 18px",marginTop:16}},
+            h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 12px",color:C.cd}},"Alertas e sugestões de implementação"),
+            alts.length===0&&adminInsights.length===0&&h("div",{style:{fontSize:12,color:C.cm}},"Nenhum alerta crítico no momento."),
+            alts.map(function(a,i){
+              return h("div",{key:"alt-"+i,style:{background:C.cx,border:"1px solid "+C.cl,borderRadius:10,padding:"8px 10px",fontSize:12,color:C.cd,marginBottom:8}},
+                h("strong",null,a.t+": "),
+                a.tx
+              );
+            }),
+            adminInsights.map(function(txt,i){
+              return h("div",{key:"ins-"+i,style:{display:"flex",gap:8,fontSize:12,color:C.cm,marginBottom:6}},
+                h("span",null,"💡"),
+                h("span",null,txt)
+              );
+            })
           )
           ,
           h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}},
@@ -2154,7 +2204,10 @@ function App(){
         atab==="fds"&&canDo("feeds")&&h("div",null,
           h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},
             h("h2",{style:{fontSize:20,fontWeight:700,margin:0,color:C.cd}},"Feeds RSS externos"),
-            h("button",{onClick:function(){setModal({t:"fd",d:null});},style:{padding:"9px 20px",borderRadius:9,border:"none",background:C.g2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"+ Novo feed")
+            h("div",{style:{display:"flex",gap:8}},
+              h("button",{onClick:function(){syncFeeds();},style:{padding:"9px 14px",borderRadius:9,border:"1px solid "+C.b1,background:C.bl,color:C.b1,fontSize:12,fontWeight:700,cursor:"pointer"}},"↻ Sincronizar ativos"),
+              h("button",{onClick:function(){setModal({t:"fd",d:null});},style:{padding:"9px 20px",borderRadius:9,border:"none",background:C.g2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"+ Novo feed")
+            )
           ),
           h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
             feeds.map(function(f){
@@ -2168,7 +2221,7 @@ function App(){
                   ),
                   h("div",{style:{display:"flex",gap:6,alignItems:"flex-start",flexWrap:"wrap"}},
                     h("button",{onClick:function(){togFd(f.id);},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+(f.ativo?C.g2:C.cl),background:f.ativo?C.gx:"none",color:f.ativo?C.g2:C.cm,fontSize:11,cursor:"pointer",fontWeight:600}},f.ativo?"🟢 Ativo":"⏸ Pausado"),
-                    h("button",{onClick:function(){setFeeds(function(fs){return fs.map(function(x){return x.id===f.id?Object.assign({},x,{sync:new Date().toISOString().split("T")[0]}):x;});});toast2("Sincronizado.");},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.bl,background:C.bl,color:C.b1,fontSize:11,cursor:"pointer"}},"↻ Sync"),
+                    h("button",{onClick:function(){syncFeeds([f.id]);},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.bl,background:C.bl,color:C.b1,fontSize:11,cursor:"pointer"}},"↻ Sync"),
                     h("button",{onClick:function(){setModal({t:"fd",d:Object.assign({},f)});},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.cl,background:"none",color:C.cd,fontSize:11,cursor:"pointer"}},"Editar"),
                     h("button",{onClick:function(){setConf({nome:f.nome,fn:function(){delFd(f.id);}});},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:11,cursor:"pointer"}},"Excluir")
                   )

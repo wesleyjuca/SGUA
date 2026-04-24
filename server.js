@@ -59,6 +59,87 @@ function parsePositiveId(value) {
   return parsed;
 }
 
+function decodeXmlEntities(input) {
+  if (!input || typeof input !== 'string') return '';
+  return input
+    .replace(/<!\[CDATA\[(.*?)\]\]>/gs, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractTag(block, tagName) {
+  const match = block.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+  return decodeXmlEntities(match ? match[1] : '');
+}
+
+function normalizeCategory(rawCategory) {
+  const category = (rawCategory || '').toLowerCase();
+  if (!category) return 'Monitoramento';
+  if (category.includes('fiscal')) return 'Fiscalização';
+  if (category.includes('legis')) return 'Legislação';
+  if (category.includes('parceria')) return 'Parceria';
+  if (category.includes('programa')) return 'Programa REM';
+  if (category.includes('evento')) return 'Evento';
+  if (category.includes('capac')) return 'Capacitação';
+  if (category.includes('gest')) return 'Gestão';
+  return 'Monitoramento';
+}
+
+function normalizeDate(rawDate) {
+  if (!rawDate) return new Date().toISOString().split('T')[0];
+  const parsed = new Date(rawDate);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString().split('T')[0];
+  return parsed.toISOString().split('T')[0];
+}
+
+async function fetchFeedItems(feed) {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const response = await fetch(feed.url, {
+      headers: { 'User-Agent': 'SGUA-RSS-Sync/1.0 (+https://sema.ac.gov.br)' },
+      signal: ctrl.signal
+    });
+    if (!response.ok) {
+      return { ok: false, error: `HTTP ${response.status}` };
+    }
+    const xml = await response.text();
+    const itemRegex = /<item\b[\s\S]*?<\/item>/gi;
+    const items = [];
+    let match;
+    while ((match = itemRegex.exec(xml)) !== null) {
+      const block = match[0];
+      const title = extractTag(block, 'title');
+      if (!title) continue;
+      const description = extractTag(block, 'description');
+      const link = extractTag(block, 'link');
+      const pubDate = extractTag(block, 'pubDate');
+      const category = extractTag(block, 'category');
+      items.push({
+        title,
+        description,
+        link,
+        date: normalizeDate(pubDate),
+        category: normalizeCategory(category || feed.categoria),
+        source: feed.nome
+      });
+      if (items.length >= 8) break;
+    }
+    return { ok: true, items };
+  } catch (error) {
+    return { ok: false, error: error.name === 'AbortError' ? 'timeout' : error.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function initDb() {
   await run('PRAGMA foreign_keys = ON');
 
@@ -489,6 +570,72 @@ app.use((err, _req, res, _next) => {
     return res.status(409).json({ ok: false, error: 'Operação violou uma restrição de dados.' });
   }
   res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
+});
+
+app.post('/api/feeds/sync', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const feeds = Array.isArray(body.feeds) ? body.feeds : [];
+    const currentNews = Array.isArray(body.news) ? body.news : [];
+    const activeFeeds = feeds.filter((feed) => feed && feed.ativo && typeof feed.url === 'string' && feed.url.trim());
+
+    if (!activeFeeds.length) {
+      return res.json({ ok: true, news: currentNews, feeds, added: 0, warnings: ['Nenhum feed ativo para sincronizar.'] });
+    }
+
+    const existingKeys = new Set(
+      currentNews.map((newsItem) => `${(newsItem.titulo || '').trim().toLowerCase()}|${newsItem.fonte || ''}`)
+    );
+
+    const warnings = [];
+    const imported = [];
+    const feedUpdates = new Map();
+
+    await Promise.all(
+      activeFeeds.map(async (feed) => {
+        const result = await fetchFeedItems(feed);
+        if (!result.ok) {
+          warnings.push(`Falha no feed "${feed.nome}": ${result.error}`);
+          return;
+        }
+        feedUpdates.set(feed.id, new Date().toISOString().split('T')[0]);
+        result.items.forEach((item) => {
+          const dedupeKey = `${item.title.trim().toLowerCase()}|${item.source}`;
+          if (existingKeys.has(dedupeKey)) return;
+          existingKeys.add(dedupeKey);
+          imported.push({
+            id: Date.now() + Math.floor(Math.random() * 100000),
+            titulo: item.title,
+            resumo: item.description.slice(0, 220),
+            conteudo: `<p>${item.description || item.title}</p>${item.link ? `<p><a href="${item.link}" target="_blank" rel="noreferrer">Fonte original</a></p>` : ''}`,
+            data: item.date,
+            categoria: item.category,
+            unidade: '',
+            destaque: false,
+            visivel: true,
+            fonte: item.source,
+            autor: 'Feed RSS'
+          });
+        });
+      })
+    );
+
+    imported.sort((a, b) => (a.data < b.data ? 1 : -1));
+    const mergedNews = imported.concat(currentNews).slice(0, 500);
+    const mergedFeeds = feeds.map((feed) =>
+      feedUpdates.has(feed.id) ? { ...feed, sync: feedUpdates.get(feed.id) } : feed
+    );
+
+    return res.json({
+      ok: true,
+      news: mergedNews,
+      feeds: mergedFeeds,
+      added: imported.length,
+      warnings
+    });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 app.get('*', (_req, res) => {
