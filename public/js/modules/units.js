@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, esc } from '../api.js';
 
 function numberOrNull(value) {
   if (value === '' || value == null) return null;
@@ -25,7 +25,7 @@ export async function renderUnits(root) {
       <div class="table-wrap">
         <table>
           <thead><tr><th>ID</th><th>Nome</th><th>Status</th><th>Capacidade</th><th>Ocupação</th><th>Ações</th></tr></thead>
-          <tbody>${units.map((u) => `<tr><td>${u.id}</td><td>${u.name}</td><td>${u.status}</td><td>${u.capacity}</td><td>${u.current_occupancy}</td><td><div class="actions"><button data-occ="${u.id}">Ocupar</button><button data-del="${u.id}" class="secondary">Excluir</button></div></td></tr>`).join('')}</tbody>
+          <tbody>${units.map((u) => `<tr><td>${u.id}</td><td>${esc(u.name)}</td><td>${esc(u.status)}</td><td>${u.capacity}</td><td>${u.current_occupancy}</td><td><div class="actions"><button data-occ="${u.id}">Ocupar</button><button data-del="${u.id}" class="secondary">Excluir</button></div></td></tr>`).join('')}</tbody>
         </table>
       </div>
     </section>
@@ -44,6 +44,7 @@ export async function renderUnits(root) {
 
   root.querySelectorAll('[data-del]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (!confirm('Confirmar exclusão desta unidade?')) return;
       await api.delete(`/api/units/${btn.dataset.del}`);
       renderUnits(root);
     });
@@ -51,9 +52,12 @@ export async function renderUnits(root) {
 
   root.querySelectorAll('[data-occ]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      const org = prompt('Nome da organização:');
+      if (!org || !org.trim()) return;
+      const type = prompt('Tipo de uso:') || 'Operacional';
       await api.post(`/api/units/${btn.dataset.occ}/occupancy`, {
-        organization_name: 'Órgão registrado via painel',
-        usage_type: 'Operacional'
+        organization_name: org.trim(),
+        usage_type: type.trim() || 'Operacional'
       });
       renderUnits(root);
     });

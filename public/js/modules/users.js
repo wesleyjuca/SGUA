@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, esc } from '../api.js';
 
 export async function renderUsers(root) {
   const users = await api.get('/api/users');
@@ -16,7 +16,7 @@ export async function renderUsers(root) {
       <div class="table-wrap">
         <table>
           <thead><tr><th>ID</th><th>Nome</th><th>Email</th><th>Perfil</th><th>Ações</th></tr></thead>
-          <tbody>${users.map((u) => `<tr><td>${u.id}</td><td>${u.name}</td><td>${u.email}</td><td>${u.role}</td><td><div class="actions"><button data-del="${u.id}" class="secondary">Excluir</button></div></td></tr>`).join('')}</tbody>
+          <tbody>${users.map((u) => `<tr><td>${u.id}</td><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.role)}</td><td><div class="actions"><button data-del="${u.id}" class="secondary">Excluir</button></div></td></tr>`).join('')}</tbody>
         </table>
       </div>
     </section>
@@ -26,13 +26,12 @@ export async function renderUsers(root) {
     event.preventDefault();
     const fd = new FormData(event.target);
     await api.post('/api/users', Object.fromEntries(fd.entries()));
-    location.hash = '#/usuarios';
-    location.hash = '#/dashboard';
-    location.hash = '#/usuarios';
+    renderUsers(root);
   });
 
   root.querySelectorAll('[data-del]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (!confirm('Confirmar exclusão deste usuário?')) return;
       await api.delete(`/api/users/${btn.dataset.del}`);
       renderUsers(root);
     });

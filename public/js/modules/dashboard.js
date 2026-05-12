@@ -20,7 +20,7 @@ export async function renderDashboard(root) {
       <ul>
         <li>Módulos independentes: Dashboard, Unidades, Mapa, Usuários, Notícias e Solicitações.</li>
         <li>API REST com CRUD para cada entidade principal.</li>
-        <li>Banco SQLite com relacionamentos e validação no servidor.</li>
+        <li>Banco PostgreSQL (Supabase) com relacionamentos e validação no servidor.</li>
       </ul>
     </article>
   `;
