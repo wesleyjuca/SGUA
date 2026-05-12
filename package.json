@@ -1,14 +1,17 @@
 {
   "name": "sgua",
-  "version": "4.2.0",
+  "version": "5.0.0",
   "private": true,
-  "description": "SEMA/AC - Sistema de Gestão CIMA & UGAI com persistência em SQLite",
+  "description": "SEMA/AC — Sistema de Gestão CIMA & UGAI com Supabase",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "validate:system": "node scripts/validate-system.js"
+    "seed": "node scripts/seed.js",
+    "migrate": "node scripts/migrate.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.105.4",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "sqlite3": "^5.1.7"
   }
