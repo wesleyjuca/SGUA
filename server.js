@@ -1,446 +1,252 @@
-'use strict';
-require('dotenv').config();
+const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const express = require('express');
-const { createClient } = require('@supabase/supabase-js');
-
-// ─── Config ────────────────────────────────────────────────────────────────
-const PORT = Number(process.env.PORT || 3000);
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
-
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error('❌ SUPABASE_URL e SUPABASE_KEY não definidos no .env');
-  process.exit(1);
-}
-
-const supa = createClient(SUPABASE_URL, SUPABASE_KEY, {
-  auth: { persistSession: false }
-});
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
-app.use(express.json({ limit: '50mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(__dirname));
+const PORT = Number(process.env.PORT || 3000);
+const DATA_DIR = path.join(__dirname, 'data');
+const DB_PATH = process.env.SGUA_DB_PATH
+  ? path.resolve(process.env.SGUA_DB_PATH)
+  : path.join(DATA_DIR, 'sgua.db');
+const PUBLIC_DIR = path.join(__dirname, 'public');
 
-// ─── Crypto ────────────────────────────────────────────────────────────────
-function genSalt()          { return crypto.randomBytes(16).toString('hex'); }
-function hashPwd(pwd, salt) { return crypto.pbkdf2Sync(pwd, salt, 100_000, 32, 'sha256').toString('hex'); }
-function verifyPwd(p, s, h) { return hashPwd(p, s) === h; }
-function genToken()         { return crypto.randomBytes(32).toString('hex'); }
-function today()            { return new Date().toISOString().split('T')[0]; }
-
-// ─── Error helper ──────────────────────────────────────────────────────────
-function err500(res, e) {
-  console.error('[SGUA]', e?.message || e);
-  res.status(500).json({ ok: false, error: e?.message || 'Erro interno' });
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// ─── Auth middleware ───────────────────────────────────────────────────────
-async function requireAuth(req, res, next) {
-  const hdr = req.headers.authorization || '';
-  const token = hdr.startsWith('Bearer ') ? hdr.slice(7) : null;
-  if (!token) return res.status(401).json({ ok: false, error: 'Não autenticado' });
+const db = new sqlite3.Database(DB_PATH);
 
-  const { data: sess, error } = await supa
-    .from('sessoes')
-    .select('usuario_id, expira_em, usuarios(id, nome, email, perfil, ativo, permissoes)')
-    .eq('token', token)
-    .gt('expira_em', new Date().toISOString())
-    .maybeSingle();
-
-  if (error || !sess || !sess.usuarios?.ativo)
-    return res.status(401).json({ ok: false, error: 'Sessão inválida ou expirada' });
-
-  const u = sess.usuarios;
-  req.user = { id: u.id, nome: u.nome, email: u.email, perfil: u.perfil, permissoes: u.permissoes || {} };
-  req.token = token;
-  next();
+function run(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function onRun(err) {
+      if (err) return reject(err);
+      resolve(this);
+    });
+  });
 }
 
-function requirePerm(key) {
-  return (req, res, next) => {
-    if (req.user.perfil === 'admin' || req.user.permissoes[key])
-      return next();
-    return res.status(403).json({ ok: false, error: 'Sem permissão para esta ação' });
-  };
+function all(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows);
+    });
+  });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AUTH
-// ═══════════════════════════════════════════════════════════════════════════
-app.post('/api/auth/login', async (req, res) => {
+function get(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row);
+    });
+  });
+}
+
+function validateEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ''));
+}
+
+function sanitizeText(value, max = 255) {
+  const v = String(value || '').trim();
+  return v.slice(0, max);
+}
+
+function parsePositiveId(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function decodeXmlEntities(input) {
+  if (!input || typeof input !== 'string') return '';
+  return input
+    .replace(/<!\[CDATA\[(.*?)\]\]>/gs, '$1')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractTag(block, tagName) {
+  const match = block.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+  return decodeXmlEntities(match ? match[1] : '');
+}
+
+function normalizeCategory(rawCategory) {
+  const category = (rawCategory || '').toLowerCase();
+  if (!category) return 'Monitoramento';
+  if (category.includes('fiscal')) return 'Fiscalização';
+  if (category.includes('legis')) return 'Legislação';
+  if (category.includes('parceria')) return 'Parceria';
+  if (category.includes('programa')) return 'Programa REM';
+  if (category.includes('evento')) return 'Evento';
+  if (category.includes('capac')) return 'Capacitação';
+  if (category.includes('gest')) return 'Gestão';
+  return 'Monitoramento';
+}
+
+function normalizeDate(rawDate) {
+  if (!rawDate) return new Date().toISOString().split('T')[0];
+  const parsed = new Date(rawDate);
+  if (Number.isNaN(parsed.getTime())) return new Date().toISOString().split('T')[0];
+  return parsed.toISOString().split('T')[0];
+}
+
+async function fetchFeedItems(feed) {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const { email, senha } = req.body || {};
-    if (!email || !senha) return res.status(400).json({ ok: false, error: 'Email e senha obrigatórios' });
-
-    const { data: u } = await supa.from('usuarios').select('*').eq('email', email.trim().toLowerCase()).eq('ativo', true).maybeSingle();
-    if (!u || !verifyPwd(senha, u.pwd_salt, u.pwd_hash))
-      return res.status(401).json({ ok: false, error: 'Credenciais inválidas' });
-
-    const token   = genToken();
-    const expira  = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
-    await supa.from('sessoes').insert({ token, usuario_id: u.id, expira_em: expira });
-
-    res.json({ ok: true, token, expira, usuario: { id: u.id, nome: u.nome, email: u.email, perfil: u.perfil, permissoes: u.permissoes || {} } });
-  } catch (e) { err500(res, e); }
-});
-
-app.post('/api/auth/logout', requireAuth, async (req, res) => {
-  await supa.from('sessoes').delete().eq('token', req.token);
-  res.json({ ok: true });
-});
-
-app.get('/api/auth/me', requireAuth, (req, res) => res.json({ ok: true, usuario: req.user }));
-
-// ═══════════════════════════════════════════════════════════════════════════
-// UNIDADES
-// ═══════════════════════════════════════════════════════════════════════════
-app.get('/api/unidades', async (req, res) => {
-  try {
-    let q = supa.from('unidades').select('*, orgaos_presentes(*)').order('tipo').order('nome');
-    if (req.query.tipo)     q = q.eq('tipo', req.query.tipo);
-    if (req.query.municipio) q = q.eq('municipio', req.query.municipio);
-    if (req.query.status)   q = q.eq('status', req.query.status);
-    if (req.query.visivel !== undefined) q = q.eq('visivel', req.query.visivel === 'true');
-
-    const { data, error } = await q;
-    if (error) throw error;
-    const unidades = (data || []).map(u => ({
-      ...u,
-      coords: u.lat && u.lng ? { lat: u.lat, lng: u.lng } : null,
-      taxaUso: u.taxa_uso,
-      orgaosPresentes: u.orgaos_presentes || [],
-      ocupacaoAtual: (u.orgaos_presentes || []).filter(o => o.ativo).length
-    }));
-    res.json({ ok: true, unidades });
-  } catch (e) { err500(res, e); }
-});
-
-app.get('/api/unidades/:id', async (req, res) => {
-  try {
-    const { data: u, error } = await supa.from('unidades').select('*, orgaos_presentes(*)').eq('id', req.params.id).maybeSingle();
-    if (error) throw error;
-    if (!u) return res.status(404).json({ ok: false, error: 'Unidade não encontrada' });
-    res.json({ ok: true, unidade: { ...u, coords: u.lat && u.lng ? { lat: u.lat, lng: u.lng } : null, taxaUso: u.taxa_uso, orgaosPresentes: u.orgaos_presentes || [], ocupacaoAtual: (u.orgaos_presentes || []).filter(o => o.ativo).length } });
-  } catch (e) { err500(res, e); }
-});
-
-app.post('/api/unidades', requireAuth, requirePerm('units'), async (req, res) => {
-  try {
-    const d = req.body;
-    if (!d.tipo || !d.nome || !d.municipio)
-      return res.status(400).json({ ok: false, error: 'tipo, nome e municipio são obrigatórios' });
-    const { data, error } = await supa.from('unidades').insert({
-      tipo: d.tipo, nome: d.nome, municipio: d.municipio, regional: d.regional || '',
-      lat: d.lat || null, lng: d.lng || null, status: d.status || 'ativo',
-      taxa_uso: d.taxaUso || 0, capacidade: d.capacidade || 0,
-      descricao: d.descricao || '', historia: d.historia || '', decreto: d.decreto || '',
-      orgaos: d.orgaos || [], quartos: d.quartos || 0, salas: d.salas || 0,
-      cozinha: !!d.cozinha, auditorio: !!d.auditorio, visivel: d.visivel !== false,
-      foto: d.foto || '', galeria: d.galeria || [], extras: d.extras || []
-    }).select().single();
-    if (error) throw error;
-    res.status(201).json({ ok: true, unidade: { ...data, coords: data.lat && data.lng ? { lat: data.lat, lng: data.lng } : null, taxaUso: data.taxa_uso, orgaosPresentes: [], ocupacaoAtual: 0 } });
-  } catch (e) { err500(res, e); }
-});
-
-app.put('/api/unidades/:id', requireAuth, requirePerm('units'), async (req, res) => {
-  try {
-    const d = req.body;
-    const { data, error } = await supa.from('unidades').update({
-      tipo: d.tipo, nome: d.nome, municipio: d.municipio, regional: d.regional || '',
-      lat: d.lat || null, lng: d.lng || null, status: d.status || 'ativo',
-      taxa_uso: d.taxaUso || 0, capacidade: d.capacidade || 0,
-      descricao: d.descricao || '', historia: d.historia || '', decreto: d.decreto || '',
-      orgaos: d.orgaos || [], quartos: d.quartos || 0, salas: d.salas || 0,
-      cozinha: !!d.cozinha, auditorio: !!d.auditorio, visivel: d.visivel !== false,
-      foto: d.foto || '', galeria: d.galeria || [], extras: d.extras || []
-    }).eq('id', req.params.id).select('*, orgaos_presentes(*)').single();
-    if (error) throw error;
-    res.json({ ok: true, unidade: { ...data, coords: data.lat && data.lng ? { lat: data.lat, lng: data.lng } : null, taxaUso: data.taxa_uso, orgaosPresentes: data.orgaos_presentes || [], ocupacaoAtual: (data.orgaos_presentes || []).filter(o => o.ativo).length } });
-  } catch (e) { err500(res, e); }
-});
-
-app.delete('/api/unidades/:id', requireAuth, requirePerm('units'), async (req, res) => {
-  try {
-    const { error } = await supa.from('unidades').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { err500(res, e); }
-});
-
-// ─── Órgãos presentes ──────────────────────────────────────────────────────
-app.get('/api/unidades/:id/orgaos', async (req, res) => {
-  try {
-    const { data, error } = await supa.from('orgaos_presentes').select('*').eq('unidade_id', req.params.id).order('data_entrada', { ascending: false });
-    if (error) throw error;
-    res.json({ ok: true, orgaos: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.post('/api/unidades/:id/orgaos', requireAuth, async (req, res) => {
-  try {
-    const { data: u } = await supa.from('unidades').select('status').eq('id', req.params.id).maybeSingle();
-    if (!u) return res.status(404).json({ ok: false, error: 'Unidade não encontrada' });
-    if (u.status === 'inativo') return res.status(400).json({ ok: false, error: 'Unidade inativa não pode receber órgãos' });
-
-    const { nome, tipo } = req.body || {};
-    if (!nome || !tipo) return res.status(400).json({ ok: false, error: 'nome e tipo são obrigatórios' });
-
-    const { data: dup } = await supa.from('orgaos_presentes').select('id').eq('unidade_id', req.params.id).eq('ativo', true).ilike('nome', nome).maybeSingle();
-    if (dup) return res.status(409).json({ ok: false, error: `Órgão "${nome}" já está ativo nesta unidade` });
-
-    const { data, error } = await supa.from('orgaos_presentes').insert({ unidade_id: req.params.id, nome, tipo, data_entrada: today(), ativo: true }).select().single();
-    if (error) throw error;
-    res.status(201).json({ ok: true, orgao: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.put('/api/unidades/:id/orgaos/:orgId', requireAuth, async (req, res) => {
-  try {
-    const ativo = req.body.ativo !== false && req.body.ativo !== 0;
-    const { data, error } = await supa.from('orgaos_presentes')
-      .update({ ativo, data_saida: ativo ? null : today() })
-      .eq('id', req.params.orgId).eq('unidade_id', req.params.id).select().single();
-    if (error) throw error;
-    res.json({ ok: true, orgao: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.delete('/api/unidades/:id/orgaos/:orgId', requireAuth, async (req, res) => {
-  try {
-    const { error } = await supa.from('orgaos_presentes')
-      .update({ ativo: false, data_saida: today() })
-      .eq('id', req.params.orgId).eq('unidade_id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { err500(res, e); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// NOTÍCIAS
-// ═══════════════════════════════════════════════════════════════════════════
-app.get('/api/noticias', async (req, res) => {
-  try {
-    let q = supa.from('noticias').select('*').order('data', { ascending: false }).order('id', { ascending: false });
-    if (req.query.visivel  !== undefined) q = q.eq('visivel', req.query.visivel === 'true');
-    if (req.query.destaque !== undefined) q = q.eq('destaque', req.query.destaque === 'true');
-    const { data, error } = await q;
-    if (error) throw error;
-    res.json({ ok: true, noticias: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.get('/api/noticias/:id', async (req, res) => {
-  try {
-    const { data, error } = await supa.from('noticias').select('*').eq('id', req.params.id).maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ ok: false, error: 'Notícia não encontrada' });
-    res.json({ ok: true, noticia: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.post('/api/noticias', requireAuth, requirePerm('news'), async (req, res) => {
-  try {
-    const d = req.body;
-    if (!d.titulo || !d.data) return res.status(400).json({ ok: false, error: 'titulo e data são obrigatórios' });
-    const { data, error } = await supa.from('noticias').insert({ titulo: d.titulo, resumo: d.resumo || '', conteudo: d.conteudo || '', data: d.data, categoria: d.categoria || '', unidade: d.unidade || '', destaque: !!d.destaque, visivel: d.visivel !== false, fonte: d.fonte || '', autor: d.autor || '' }).select().single();
-    if (error) throw error;
-    res.status(201).json({ ok: true, noticia: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.put('/api/noticias/:id', requireAuth, requirePerm('news'), async (req, res) => {
-  try {
-    const d = req.body;
-    const { data, error } = await supa.from('noticias').update({ titulo: d.titulo, resumo: d.resumo || '', conteudo: d.conteudo || '', data: d.data, categoria: d.categoria || '', unidade: d.unidade || '', destaque: !!d.destaque, visivel: d.visivel !== false, fonte: d.fonte || '', autor: d.autor || '' }).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    res.json({ ok: true, noticia: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.delete('/api/noticias/:id', requireAuth, requirePerm('news'), async (req, res) => {
-  try {
-    const { error } = await supa.from('noticias').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { err500(res, e); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// FEEDS
-// ═══════════════════════════════════════════════════════════════════════════
-app.get('/api/feeds', async (req, res) => {
-  try {
-    const { data, error } = await supa.from('feeds').select('*').order('nome');
-    if (error) throw error;
-    res.json({ ok: true, feeds: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.post('/api/feeds', requireAuth, requirePerm('feeds'), async (req, res) => {
-  try {
-    const { nome, url, ativo, categoria } = req.body || {};
-    if (!nome || !url) return res.status(400).json({ ok: false, error: 'nome e url são obrigatórios' });
-    const { data, error } = await supa.from('feeds').insert({ nome, url, ativo: ativo !== false, categoria: categoria || '' }).select().single();
-    if (error) throw error;
-    res.status(201).json({ ok: true, feed: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.put('/api/feeds/:id', requireAuth, requirePerm('feeds'), async (req, res) => {
-  try {
-    const { nome, url, ativo, categoria } = req.body || {};
-    const { data, error } = await supa.from('feeds').update({ nome, url, ativo: !!ativo, categoria: categoria || '' }).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    res.json({ ok: true, feed: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.delete('/api/feeds/:id', requireAuth, requirePerm('feeds'), async (req, res) => {
-  try {
-    const { error } = await supa.from('feeds').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { err500(res, e); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// SOLICITAÇÕES
-// ═══════════════════════════════════════════════════════════════════════════
-app.post('/api/solicitacoes', async (req, res) => {
-  try {
-    const d = req.body || {};
-    if (!d.solicitante || !d.unidade)
-      return res.status(400).json({ ok: false, error: 'solicitante e unidade são obrigatórios' });
-    const id = 'SOL-' + Date.now();
-    const { data, error } = await supa.from('solicitacoes').insert({ id, solicitante: d.solicitante, organizacao: d.organizacao || '', unidade: d.unidade, evento: d.evento || '', data_evento: d.dataEvento || null, status: 'pendente' }).select().single();
-    if (error) throw error;
-    res.status(201).json({ ok: true, solicitacao: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.get('/api/solicitacoes', requireAuth, async (req, res) => {
-  try {
-    const { data, error } = await supa.from('solicitacoes').select('*').order('criado_em', { ascending: false });
-    if (error) throw error;
-    res.json({ ok: true, solicitacoes: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.put('/api/solicitacoes/:id', requireAuth, requirePerm('sols'), async (req, res) => {
-  try {
-    const { status } = req.body || {};
-    if (!['pendente','aprovada','rejeitada'].includes(status))
-      return res.status(400).json({ ok: false, error: 'Status inválido' });
-
-    const { data: s } = await supa.from('solicitacoes').select('*').eq('id', req.params.id).maybeSingle();
-    if (!s) return res.status(404).json({ ok: false, error: 'Solicitação não encontrada' });
-
-    if (status === 'aprovada') {
-      const { data: un } = await supa.from('unidades').select('id, status').eq('nome', s.unidade).neq('status', 'inativo').maybeSingle();
-      if (!un) return res.status(400).json({ ok: false, error: `Unidade "${s.unidade}" não encontrada ou inativa` });
-
-      const { data: dup } = await supa.from('orgaos_presentes').select('id').eq('unidade_id', un.id).eq('ativo', true).ilike('nome', s.organizacao || s.solicitante).maybeSingle();
-      if (dup) return res.status(409).json({ ok: false, error: 'Órgão já está ativo nesta unidade' });
-
-      await supa.from('orgaos_presentes').insert({ unidade_id: un.id, nome: s.organizacao || s.solicitante, tipo: s.evento || 'Evento', data_entrada: s.data_evento || today(), ativo: true });
+    const response = await fetch(feed.url, {
+      headers: { 'User-Agent': 'SGUA-RSS-Sync/1.0 (+https://sema.ac.gov.br)' },
+      signal: ctrl.signal
+    });
+    if (!response.ok) {
+      return { ok: false, error: `HTTP ${response.status}` };
     }
+    const xml = await response.text();
+    const itemRegex = /<item\b[\s\S]*?<\/item>/gi;
+    const items = [];
+    let match;
+    while ((match = itemRegex.exec(xml)) !== null) {
+      const block = match[0];
+      const title = extractTag(block, 'title');
+      if (!title) continue;
+      const description = extractTag(block, 'description');
+      const link = extractTag(block, 'link');
+      const pubDate = extractTag(block, 'pubDate');
+      const category = extractTag(block, 'category');
+      items.push({
+        title,
+        description,
+        link,
+        date: normalizeDate(pubDate),
+        category: normalizeCategory(category || feed.categoria),
+        source: feed.nome
+      });
+      if (items.length >= 8) break;
+    }
+    return { ok: true, items };
+  } catch (error) {
+    return { ok: false, error: error.name === 'AbortError' ? 'timeout' : error.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
-    const { data, error } = await supa.from('solicitacoes').update({ status }).eq('id', req.params.id).select().single();
-    if (error) throw error;
-    res.json({ ok: true, solicitacao: data });
-  } catch (e) { err500(res, e); }
+async function initDb() {
+  await run('PRAGMA foreign_keys = ON');
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'manager', 'viewer')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS units (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      address TEXT,
+      latitude REAL,
+      longitude REAL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+      capacity INTEGER NOT NULL DEFAULT 0,
+      current_occupancy INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS occupancy_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      unit_id INTEGER NOT NULL,
+      user_id INTEGER,
+      organization_name TEXT NOT NULL,
+      usage_type TEXT NOT NULL,
+      start_date TEXT NOT NULL DEFAULT (date('now')),
+      end_date TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      FOREIGN KEY(unit_id) REFERENCES units(id) ON DELETE CASCADE,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS news (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      author_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(author_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      unit_id INTEGER NOT NULL,
+      requester_name TEXT NOT NULL,
+      requester_email TEXT,
+      usage_type TEXT NOT NULL,
+      notes TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(unit_id) REFERENCES units(id) ON DELETE CASCADE
+    )
+  `);
+
+  const admin = await get('SELECT id FROM users WHERE email = ?', ['admin@sema.ac.gov.br']);
+  if (!admin) {
+    await run('INSERT INTO users(name, email, role) VALUES (?, ?, ?)', [
+      'Administrador SGUA',
+      'admin@sema.ac.gov.br',
+      'admin'
+    ]);
+  }
+}
+
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+app.use(express.json({ limit: '2mb' }));
+app.use(express.static(PUBLIC_DIR));
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, dbPath: DB_PATH, now: new Date().toISOString() });
 });
 
-app.delete('/api/solicitacoes/:id', requireAuth, requirePerm('sols'), async (req, res) => {
-  try {
-    const { error } = await supa.from('solicitacoes').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { err500(res, e); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// USUÁRIOS
-// ═══════════════════════════════════════════════════════════════════════════
-app.get('/api/usuarios', requireAuth, requirePerm('users'), async (req, res) => {
-  try {
-    const { data, error } = await supa.from('usuarios').select('id,nome,email,perfil,ativo,permissoes,criado_em').order('nome');
-    if (error) throw error;
-    res.json({ ok: true, usuarios: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.post('/api/usuarios', requireAuth, requirePerm('users'), async (req, res) => {
-  try {
-    const d = req.body || {};
-    if (!d.nome || !d.email || !d.senha)
-      return res.status(400).json({ ok: false, error: 'nome, email e senha são obrigatórios' });
-    const { data: ex } = await supa.from('usuarios').select('id').eq('email', d.email.toLowerCase()).maybeSingle();
-    if (ex) return res.status(409).json({ ok: false, error: 'Email já cadastrado' });
-    const salt = genSalt();
-    const perfis = { admin:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true}, gestor:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,rel:true}, viewer:{} };
-    const { data, error } = await supa.from('usuarios').insert({ nome: d.nome, email: d.email.toLowerCase(), pwd_hash: hashPwd(d.senha, salt), pwd_salt: salt, perfil: d.perfil || 'viewer', ativo: d.ativo !== false, permissoes: d.permissoes || perfis[d.perfil] || {} }).select('id,nome,email,perfil,ativo,permissoes,criado_em').single();
-    if (error) throw error;
-    res.status(201).json({ ok: true, usuario: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.put('/api/usuarios/:id', requireAuth, requirePerm('users'), async (req, res) => {
-  try {
-    const d = req.body || {};
-    const update = { nome: d.nome, email: d.email?.toLowerCase(), perfil: d.perfil, ativo: d.ativo, permissoes: d.permissoes };
-    if (d.senha) { const salt = genSalt(); update.pwd_salt = salt; update.pwd_hash = hashPwd(d.senha, salt); }
-    const { data, error } = await supa.from('usuarios').update(update).eq('id', req.params.id).select('id,nome,email,perfil,ativo,permissoes,criado_em').single();
-    if (error) throw error;
-    res.json({ ok: true, usuario: data });
-  } catch (e) { err500(res, e); }
-});
-
-app.delete('/api/usuarios/:id', requireAuth, requirePerm('users'), async (req, res) => {
-  try {
-    if (req.user.id === Number(req.params.id))
-      return res.status(400).json({ ok: false, error: 'Não pode remover a si mesmo' });
-    const { error } = await supa.from('usuarios').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { err500(res, e); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// CONFIGURAÇÕES
-// ═══════════════════════════════════════════════════════════════════════════
-app.get('/api/configuracoes', async (req, res) => {
-  try {
-    const { data, error } = await supa.from('configuracoes').select('chave,valor');
-    if (error) throw error;
-    const cfg = {};
-    (data || []).forEach(r => { cfg[r.chave] = r.valor; });
-    res.json({ ok: true, configuracoes: cfg });
-  } catch (e) { err500(res, e); }
-});
-
-app.put('/api/configuracoes', requireAuth, requirePerm('cfg'), async (req, res) => {
-  try {
-    const d = req.body || {};
-    const rows = Object.entries(d).map(([chave, valor]) => ({ chave, valor }));
-    const { error } = await supa.from('configuracoes').upsert(rows, { onConflict: 'chave' });
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { err500(res, e); }
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// HEALTH + COMPATIBILIDADE /api/state
-// ═══════════════════════════════════════════════════════════════════════════
-app.get('/api/health', async (_req, res) => {
-  try {
-    const { error } = await supa.from('configuracoes').select('chave').limit(1);
-    res.json({ ok: !error, db: 'supabase', url: SUPABASE_URL, now: new Date().toISOString() });
-  } catch (e) { res.json({ ok: false, error: e.message }); }
+app.get('/api/meta/model', (_req, res) => {
+  res.json({
+    ok: true,
+    entities: {
+      users: ['id', 'name', 'email', 'role', 'created_at'],
+      units: ['id', 'name', 'address', 'latitude', 'longitude', 'status', 'capacity', 'current_occupancy', 'created_at', 'updated_at'],
+      occupancy_records: ['id', 'unit_id', 'user_id', 'organization_name', 'usage_type', 'start_date', 'end_date', 'active'],
+      news: ['id', 'title', 'content', 'author_id', 'created_at'],
+      requests: ['id', 'unit_id', 'requester_name', 'requester_email', 'usage_type', 'notes', 'status', 'created_at', 'updated_at']
+    },
+    relationships: [
+      'occupancy_records.unit_id -> units.id (N:1)',
+      'occupancy_records.user_id -> users.id (N:1)',
+      'news.author_id -> users.id (N:1)',
+      'requests.unit_id -> units.id (N:1)'
+    ]
+  });
 });
 
 // Users CRUD
@@ -609,43 +415,241 @@ app.post('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
 
   await run('BEGIN IMMEDIATE TRANSACTION');
   try {
-    const [{ data: uns }, { data: news }, { data: feeds }, { data: sols }, { data: users }, { data: cfgRows }] = await Promise.all([
-      supa.from('unidades').select('*, orgaos_presentes(*)').order('tipo').order('nome'),
-      supa.from('noticias').select('*').order('data', { ascending: false }),
-      supa.from('feeds').select('*').order('nome'),
-      supa.from('solicitacoes').select('*').order('criado_em', { ascending: false }),
-      supa.from('usuarios').select('id,nome,email,perfil,ativo,permissoes').order('nome'),
-      supa.from('configuracoes').select('chave,valor')
-    ]);
-    const secs = {};
-    (cfgRows || []).forEach(r => { secs[r.chave] = r.valor; });
+    await run(
+      `INSERT INTO occupancy_records(unit_id, user_id, organization_name, usage_type)
+       VALUES (?, ?, ?, ?)`,
+      [unitId, userId, organizationName, usageType]
+    );
+    await run('UPDATE units SET current_occupancy = current_occupancy + 1, updated_at = datetime(\'now\') WHERE id = ?', [unitId]);
+    await run('COMMIT');
+  } catch (error) {
+    await run('ROLLBACK');
+    throw error;
+  }
+  res.status(201).json({ ok: true });
+}));
 
-    const unsFull = (uns || []).map(u => ({
-      ...u, id: u.id,
-      coords: u.lat && u.lng ? { lat: u.lat, lng: u.lng } : null,
-      taxaUso: u.taxa_uso,
-      orgaosPresentes: u.orgaos_presentes || [],
-      ocupacaoAtual: (u.orgaos_presentes || []).filter(o => o.ativo).length
-    }));
+app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID de ocupação inválido.' });
+  const record = await get('SELECT * FROM occupancy_records WHERE id = ?', [id]);
+  if (!record) return res.status(404).json({ ok: false, error: 'Registro não encontrado.' });
+  if (!record.active) return res.status(400).json({ ok: false, error: 'Registro já inativo.' });
 
-    res.json({
+  await run('BEGIN IMMEDIATE TRANSACTION');
+  try {
+    await run('UPDATE occupancy_records SET active = 0, end_date = date(\'now\') WHERE id = ?', [id]);
+    await run(
+      `UPDATE units
+       SET current_occupancy = CASE WHEN current_occupancy > 0 THEN current_occupancy - 1 ELSE 0 END,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+      [record.unit_id]
+    );
+    await run('COMMIT');
+  } catch (error) {
+    await run('ROLLBACK');
+    throw error;
+  }
+
+  res.json({ ok: true });
+}));
+
+// News CRUD
+app.get('/api/news', asyncRoute(async (_req, res) => {
+  const rows = await all(
+    `SELECT n.*, u.name AS author_name
+     FROM news n
+     LEFT JOIN users u ON u.id = n.author_id
+     ORDER BY n.id DESC`
+  );
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/news', asyncRoute(async (req, res) => {
+  const title = sanitizeText(req.body.title, 180);
+  const content = sanitizeText(req.body.content, 4000);
+  const authorId = req.body.author_id ? Number(req.body.author_id) : null;
+  if (!title || !content) return res.status(400).json({ ok: false, error: 'Título e conteúdo são obrigatórios.' });
+
+  const result = await run('INSERT INTO news(title, content, author_id) VALUES (?, ?, ?)', [title, content, authorId]);
+  const created = await get('SELECT * FROM news WHERE id = ?', [result.lastID]);
+  res.status(201).json({ ok: true, data: created });
+}));
+
+app.put('/api/news/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await get('SELECT * FROM news WHERE id = ?', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Notícia não encontrada.' });
+
+  const title = sanitizeText(req.body.title ?? existing.title, 180);
+  const content = sanitizeText(req.body.content ?? existing.content, 4000);
+  await run('UPDATE news SET title = ?, content = ? WHERE id = ?', [title, content, id]);
+  const updated = await get('SELECT * FROM news WHERE id = ?', [id]);
+  res.json({ ok: true, data: updated });
+}));
+
+app.delete('/api/news/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  await run('DELETE FROM news WHERE id = ?', [id]);
+  res.json({ ok: true });
+}));
+
+// Requests CRUD
+app.get('/api/requests', asyncRoute(async (_req, res) => {
+  const rows = await all(
+    `SELECT r.*, un.name AS unit_name
+     FROM requests r
+     INNER JOIN units un ON un.id = r.unit_id
+     ORDER BY r.id DESC`
+  );
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/requests', asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.body.unit_id);
+  const requesterName = sanitizeText(req.body.requester_name, 120);
+  const requesterEmail = sanitizeText(req.body.requester_email, 160).toLowerCase();
+  const usageType = sanitizeText(req.body.usage_type, 120);
+  const notes = sanitizeText(req.body.notes, 1500);
+
+  if (!unitId || !requesterName || !usageType) {
+    return res.status(400).json({ ok: false, error: 'unit_id, requester_name e usage_type são obrigatórios.' });
+  }
+  if (requesterEmail && !validateEmail(requesterEmail)) {
+    return res.status(400).json({ ok: false, error: 'E-mail inválido.' });
+  }
+  const unit = await get('SELECT id FROM units WHERE id = ?', [unitId]);
+  if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada para solicitação.' });
+
+  const result = await run(
+    `INSERT INTO requests(unit_id, requester_name, requester_email, usage_type, notes)
+     VALUES (?, ?, ?, ?, ?)`,
+    [unitId, requesterName, requesterEmail || null, usageType, notes]
+  );
+
+  const created = await get('SELECT * FROM requests WHERE id = ?', [result.lastID]);
+  res.status(201).json({ ok: true, data: created });
+}));
+
+app.put('/api/requests/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await get('SELECT * FROM requests WHERE id = ?', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Solicitação não encontrada.' });
+
+  const status = req.body.status || existing.status;
+  const notes = sanitizeText(req.body.notes ?? existing.notes, 1500);
+  const unitId = req.body.unit_id == null ? existing.unit_id : parsePositiveId(req.body.unit_id);
+  if (!['pending', 'approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ ok: false, error: 'Status inválido.' });
+  }
+  if (!unitId) return res.status(400).json({ ok: false, error: 'unit_id inválido.' });
+  const unit = await get('SELECT id FROM units WHERE id = ?', [unitId]);
+  if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada para solicitação.' });
+
+  await run(
+    `UPDATE requests
+     SET status = ?, notes = ?, unit_id = ?, updated_at = datetime('now')
+     WHERE id = ?`,
+    [status, notes, unitId, id]
+  );
+
+  const updated = await get('SELECT * FROM requests WHERE id = ?', [id]);
+  res.json({ ok: true, data: updated });
+}));
+
+app.delete('/api/requests/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  await run('DELETE FROM requests WHERE id = ?', [id]);
+  res.json({ ok: true });
+}));
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  if (err && err.code === 'SQLITE_CONSTRAINT') {
+    return res.status(409).json({ ok: false, error: 'Operação violou uma restrição de dados.' });
+  }
+  res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
+});
+
+app.post('/api/feeds/sync', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const feeds = Array.isArray(body.feeds) ? body.feeds : [];
+    const currentNews = Array.isArray(body.news) ? body.news : [];
+    const activeFeeds = feeds.filter((feed) => feed && feed.ativo && typeof feed.url === 'string' && feed.url.trim());
+
+    if (!activeFeeds.length) {
+      return res.json({ ok: true, news: currentNews, feeds, added: 0, warnings: ['Nenhum feed ativo para sincronizar.'] });
+    }
+
+    const existingKeys = new Set(
+      currentNews.map((newsItem) => `${(newsItem.titulo || '').trim().toLowerCase()}|${newsItem.fonte || ''}`)
+    );
+
+    const warnings = [];
+    const imported = [];
+    const feedUpdates = new Map();
+
+    await Promise.all(
+      activeFeeds.map(async (feed) => {
+        const result = await fetchFeedItems(feed);
+        if (!result.ok) {
+          warnings.push(`Falha no feed "${feed.nome}": ${result.error}`);
+          return;
+        }
+        feedUpdates.set(feed.id, new Date().toISOString().split('T')[0]);
+        result.items.forEach((item) => {
+          const dedupeKey = `${item.title.trim().toLowerCase()}|${item.source}`;
+          if (existingKeys.has(dedupeKey)) return;
+          existingKeys.add(dedupeKey);
+          imported.push({
+            id: Date.now() + Math.floor(Math.random() * 100000),
+            titulo: item.title,
+            resumo: item.description.slice(0, 220),
+            conteudo: `<p>${item.description || item.title}</p>${item.link ? `<p><a href="${item.link}" target="_blank" rel="noreferrer">Fonte original</a></p>` : ''}`,
+            data: item.date,
+            categoria: item.category,
+            unidade: '',
+            destaque: false,
+            visivel: true,
+            fonte: item.source,
+            autor: 'Feed RSS'
+          });
+        });
+      })
+    );
+
+    imported.sort((a, b) => (a.data < b.data ? 1 : -1));
+    const mergedNews = imported.concat(currentNews).slice(0, 500);
+    const mergedFeeds = feeds.map((feed) =>
+      feedUpdates.has(feed.id) ? { ...feed, sync: feedUpdates.get(feed.id) } : feed
+    );
+
+    return res.json({
       ok: true,
-      uns: unsFull,
-      news: news || [],
-      feeds: feeds || [],
-      sols: (sols || []).map(s => ({ id: s.id, sol: s.solicitante, org: s.organizacao, un: s.unidade, ev: s.evento, dt: s.data_evento, st: s.status })),
-      users: users || [],
-      secs,
-      updatedAt: new Date().toISOString()
+      news: mergedNews,
+      feeds: mergedFeeds,
+      added: imported.length,
+      warnings
     });
-  } catch (e) { err500(res, e); }
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
-// SPA fallback
-app.get('*', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-
-// ─── Boot ──────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀 SGUA rodando em http://localhost:${PORT}`);
-  console.log(`   Supabase: ${SUPABASE_URL}\n`);
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
+
+initDb()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`SGUA executando em http://localhost:${PORT}`);
+      console.log(`Banco SQLite: ${DB_PATH}`);
+    });
+  })
+  .catch((error) => {
+    console.error('Falha ao inicializar aplicação:', error);
+    process.exit(1);
+  });
