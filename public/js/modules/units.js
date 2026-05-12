@@ -44,6 +44,7 @@ export async function renderUnits(root) {
 
   root.querySelectorAll('[data-del]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (!confirm('Confirmar exclusão desta unidade?')) return;
       await api.delete(`/api/units/${btn.dataset.del}`);
       renderUnits(root);
     });

@@ -146,10 +146,12 @@ async function fetchFeedItems(feed) {
     });
     if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
     const xml = await response.text();
-    const itemRegex = /<item\b[\s\S]*?<\/item>/gi;
     const items = [];
+
+    // RSS 2.0 — <item>
+    const itemRx = /<item\b[\s\S]*?<\/item>/gi;
     let match;
-    while ((match = itemRegex.exec(xml)) !== null) {
+    while ((match = itemRx.exec(xml)) !== null) {
       const block = match[0];
       const title = extractTag(block, 'title');
       if (!title) continue;
@@ -164,6 +166,29 @@ async function fetchFeedItems(feed) {
       });
       if (items.length >= 8) break;
     }
+
+    // Atom — <entry> fallback (feeds gov.br, etc.)
+    if (items.length === 0) {
+      const entryRx = /<entry\b[\s\S]*?<\/entry>/gi;
+      let em;
+      while ((em = entryRx.exec(xml)) !== null) {
+        const block = em[0];
+        const title = extractTag(block, 'title');
+        if (!title) continue;
+        const hrefMatch = block.match(/<link[^>]+href=["']([^"']+)["']/i);
+        const rawLink = hrefMatch ? hrefMatch[1] : extractTag(block, 'link');
+        items.push({
+          title,
+          description: extractTag(block, 'summary') || extractTag(block, 'content'),
+          link: isSafeUrl(rawLink) ? rawLink : '',
+          date: normalizeDate(extractTag(block, 'published') || extractTag(block, 'updated')),
+          category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
+          source: feed.nome
+        });
+        if (items.length >= 8) break;
+      }
+    }
+
     return { ok: true, items };
   } catch (error) {
     return { ok: false, error: error.name === 'AbortError' ? 'timeout' : error.message };
@@ -191,7 +216,7 @@ app.get('/api/meta/model', (_req, res) => {
       users: ['id', 'name', 'email', 'role', 'created_at'],
       units: ['id', 'name', 'address', 'latitude', 'longitude', 'status', 'capacity', 'current_occupancy', 'created_at', 'updated_at'],
       occupancy_records: ['id', 'unit_id', 'user_id', 'organization_name', 'usage_type', 'start_date', 'end_date', 'active'],
-      news: ['id', 'title', 'content', 'author_id', 'created_at'],
+      news: ['id', 'title', 'content', 'source', 'link', 'category', 'is_rss', 'author_id', 'created_at'],
       requests: ['id', 'unit_id', 'requester_name', 'requester_email', 'usage_type', 'notes', 'status', 'created_at', 'updated_at']
     },
     relationships: [
@@ -439,7 +464,8 @@ app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
 
 app.get('/api/news', asyncRoute(async (_req, res) => {
   const data = await query(
-    `SELECT n.*, u.name AS author_name
+    `SELECT n.id, n.title, n.content, n.source, n.link, n.category, n.is_rss,
+            n.created_at, u.name AS author_name
      FROM news n
      LEFT JOIN users u ON u.id = n.author_id
      ORDER BY n.id DESC`
@@ -562,20 +588,15 @@ app.delete('/api/requests/:id', asyncRoute(async (req, res) => {
 app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
   const body = req.body || {};
   const feeds = Array.isArray(body.feeds) ? body.feeds : [];
-  const currentNews = Array.isArray(body.news) ? body.news : [];
   const activeFeeds = feeds.filter((f) => f && f.ativo && typeof f.url === 'string' && f.url.trim());
 
   if (!activeFeeds.length) {
-    return res.json({ ok: true, news: currentNews, feeds, added: 0, warnings: ['Nenhum feed ativo para sincronizar.'] });
+    return res.json({ ok: true, feeds, added: 0, warnings: ['Nenhum feed ativo para sincronizar.'] });
   }
 
-  const existingKeys = new Set(
-    currentNews.map((n) => `${(n.titulo || '').trim().toLowerCase()}|${n.fonte || ''}`)
-  );
-
   const warnings = [];
-  const imported = [];
   const feedUpdates = new Map();
+  const toInsert = [];
 
   await Promise.all(
     activeFeeds.map(async (feed) => {
@@ -586,33 +607,33 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
       }
       feedUpdates.set(feed.id, today());
       result.items.forEach((item) => {
-        const dedupeKey = `${item.title.trim().toLowerCase()}|${item.source}`;
-        if (existingKeys.has(dedupeKey)) return;
-        existingKeys.add(dedupeKey);
-        imported.push({
-          id: Date.now() + Math.floor(Math.random() * 100000),
-          titulo: item.title,
-          resumo: item.description.slice(0, 220),
-          conteudo: `<p>${item.description || item.title}</p>${item.link ? `<p><a href="${item.link}" target="_blank" rel="noreferrer">Fonte original</a></p>` : ''}`,
-          data: item.date,
-          categoria: item.category,
-          unidade: '',
-          destaque: false,
-          visivel: true,
-          fonte: item.source,
-          autor: 'Feed RSS'
+        toInsert.push({
+          title: item.title.slice(0, 180),
+          content: (item.description || item.title).slice(0, 4000),
+          source: item.source,
+          link: item.link || null,
+          category: item.category
         });
       });
     })
   );
 
-  imported.sort((a, b) => (a.data < b.data ? 1 : -1));
-  const mergedNews = imported.concat(currentNews).slice(0, 500);
+  let added = 0;
+  for (const item of toInsert) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO news (title, content, source, link, category, is_rss)
+       VALUES ($1, $2, $3, $4, $5, true)
+       ON CONFLICT (title, source) DO NOTHING`,
+      [item.title, item.content, item.source, item.link, item.category]
+    );
+    added += rowCount;
+  }
+
   const mergedFeeds = feeds.map((f) =>
     feedUpdates.has(f.id) ? { ...f, sync: feedUpdates.get(f.id) } : f
   );
 
-  return res.json({ ok: true, news: mergedNews, feeds: mergedFeeds, added: imported.length, warnings });
+  return res.json({ ok: true, feeds: mergedFeeds, added, warnings });
 }));
 
 // ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────

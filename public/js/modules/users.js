@@ -31,6 +31,7 @@ export async function renderUsers(root) {
 
   root.querySelectorAll('[data-del]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (!confirm('Confirmar exclusão deste usuário?')) return;
       await api.delete(`/api/users/${btn.dataset.del}`);
       renderUsers(root);
     });
