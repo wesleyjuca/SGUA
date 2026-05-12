@@ -78,3 +78,14 @@ th, td {
 #map { height: 520px; border-radius: 8px; }
 .muted { color: #63707c; font-size: 0.9rem; }
 .actions { display: flex; gap: 0.4rem; }
+.feed-item {
+  display: flex;
+  align-items: flex-start;
+  gap: .5rem;
+  padding: .45rem .5rem;
+  border-radius: 6px;
+  font-size: .9rem;
+  cursor: pointer;
+}
+.feed-item:hover { background: var(--bg); }
+.feed-item input[type="checkbox"] { width: auto; margin-top: 2px; flex-shrink: 0; }
