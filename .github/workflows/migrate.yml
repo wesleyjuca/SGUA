@@ -3,6 +3,7 @@ name: Deploy — Supabase Migration + Seed
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   migrate:
