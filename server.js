@@ -15,7 +15,14 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000
+});
+
+pool.on('error', (err) => {
+  console.error('[Pool] Erro inesperado em cliente inativo:', err.message);
 });
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -119,12 +126,14 @@ function normalizeCategory(rawCategory) {
   return 'Monitoramento';
 }
 
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
 function normalizeDate(rawDate) {
-  if (!rawDate) return new Date().toISOString().split('T')[0];
+  if (!rawDate) return today();
   const parsed = new Date(rawDate);
-  return Number.isNaN(parsed.getTime())
-    ? new Date().toISOString().split('T')[0]
-    : parsed.toISOString().split('T')[0];
+  return Number.isNaN(parsed.getTime()) ? today() : parsed.toISOString().split('T')[0];
 }
 
 async function fetchFeedItems(feed) {
@@ -144,10 +153,11 @@ async function fetchFeedItems(feed) {
       const block = match[0];
       const title = extractTag(block, 'title');
       if (!title) continue;
+      const rawLink = extractTag(block, 'link');
       items.push({
         title,
         description: extractTag(block, 'description'),
-        link: isSafeUrl(extractTag(block, 'link')) ? extractTag(block, 'link') : '',
+        link: isSafeUrl(rawLink) ? rawLink : '',
         date: normalizeDate(extractTag(block, 'pubDate')),
         category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
         source: feed.nome
@@ -254,7 +264,7 @@ app.put('/api/users/:id', asyncRoute(async (req, res) => {
 app.delete('/api/users/:id', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
-  await pool.query('DELETE FROM users WHERE id = $1', [id]);
+  await query('DELETE FROM users WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
@@ -272,9 +282,12 @@ app.post('/api/units', asyncRoute(async (req, res) => {
   const latitude = payload.latitude == null || payload.latitude === '' ? null : Number(payload.latitude);
   const longitude = payload.longitude == null || payload.longitude === '' ? null : Number(payload.longitude);
   const status = payload.status === 'inactive' ? 'inactive' : 'active';
-  const capacity = Math.max(0, Number(payload.capacity || 0));
+  const capacity = Number(payload.capacity ?? 0);
 
   if (!name) return res.status(400).json({ ok: false, error: 'Nome da unidade é obrigatório.' });
+  if (!Number.isFinite(capacity) || capacity < 0) {
+    return res.status(400).json({ ok: false, error: 'Capacidade inválida.' });
+  }
   if (latitude != null && (Number.isNaN(latitude) || latitude < -90 || latitude > 90)) {
     return res.status(400).json({ ok: false, error: 'Latitude inválida.' });
   }
@@ -285,7 +298,7 @@ app.post('/api/units', asyncRoute(async (req, res) => {
   const data = await queryOne(
     `INSERT INTO units(name, address, latitude, longitude, status, capacity, current_occupancy)
      VALUES ($1, $2, $3, $4, $5, $6, 0) RETURNING *`,
-    [name, address, latitude, longitude, status, capacity]
+    [name, address, latitude, longitude, status, Math.floor(capacity)]
   );
   res.status(201).json({ ok: true, data });
 }));
@@ -303,27 +316,27 @@ app.put('/api/units/:id', asyncRoute(async (req, res) => {
   const latitude = payload.latitude == null ? existing.latitude : Number(payload.latitude);
   const longitude = payload.longitude == null ? existing.longitude : Number(payload.longitude);
   const status = payload.status ? sanitizeText(payload.status, 16) : existing.status;
-  const capacity = payload.capacity == null ? existing.capacity : Math.max(0, Number(payload.capacity));
+  const capacity = payload.capacity == null ? existing.capacity : Number(payload.capacity);
 
   if (!name) return res.status(400).json({ ok: false, error: 'Nome da unidade é obrigatório.' });
+  if (!['active', 'inactive'].includes(status)) {
+    return res.status(400).json({ ok: false, error: 'Status inválido.' });
+  }
+  if (!Number.isFinite(capacity) || capacity < 0) {
+    return res.status(400).json({ ok: false, error: 'Capacidade inválida.' });
+  }
   if (latitude != null && (Number.isNaN(latitude) || latitude < -90 || latitude > 90)) {
     return res.status(400).json({ ok: false, error: 'Latitude inválida.' });
   }
   if (longitude != null && (Number.isNaN(longitude) || longitude < -180 || longitude > 180)) {
     return res.status(400).json({ ok: false, error: 'Longitude inválida.' });
   }
-  if (!['active', 'inactive'].includes(status)) {
-    return res.status(400).json({ ok: false, error: 'Status inválido.' });
-  }
-  if (!Number.isFinite(capacity)) {
-    return res.status(400).json({ ok: false, error: 'Capacidade inválida.' });
-  }
 
   const data = await queryOne(
     `UPDATE units
      SET name = $1, address = $2, latitude = $3, longitude = $4, status = $5, capacity = $6
      WHERE id = $7 RETURNING *`,
-    [name, address, latitude, longitude, status, capacity, id]
+    [name, address, latitude, longitude, status, Math.floor(capacity), id]
   );
   res.json({ ok: true, data });
 }));
@@ -331,7 +344,7 @@ app.put('/api/units/:id', asyncRoute(async (req, res) => {
 app.delete('/api/units/:id', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
-  await pool.query('DELETE FROM units WHERE id = $1', [id]);
+  await query('DELETE FROM units WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
@@ -367,72 +380,59 @@ app.post('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
     return res.status(400).json({ ok: false, error: 'user_id inválido.' });
   }
 
-  await withTransaction(async (client) => {
-    const { rows: [unit] } = await client.query(
-      'SELECT * FROM units WHERE id = $1 FOR UPDATE',
-      [unitId]
-    );
-    if (!unit) {
-      const err = new Error('Unidade não encontrada.'); err.status = 404; throw err;
-    }
-    if (unit.status === 'inactive') {
-      const err = new Error('Unidade inativa.'); err.status = 400; throw err;
-    }
-    if (userId) {
-      const { rows } = await client.query('SELECT id FROM users WHERE id = $1', [userId]);
-      if (!rows.length) {
-        const err = new Error('Usuário não encontrado para vinculação.'); err.status = 404; throw err;
+  try {
+    await withTransaction(async (client) => {
+      const { rows: [unit] } = await client.query(
+        'SELECT * FROM units WHERE id = $1 FOR UPDATE', [unitId]
+      );
+      if (!unit) { const e = new Error('Unidade não encontrada.'); e.status = 404; throw e; }
+      if (unit.status === 'inactive') { const e = new Error('Unidade inativa.'); e.status = 400; throw e; }
+      if (userId) {
+        const { rows } = await client.query('SELECT id FROM users WHERE id = $1', [userId]);
+        if (!rows.length) { const e = new Error('Usuário não encontrado para vinculação.'); e.status = 404; throw e; }
       }
-    }
-    if (unit.capacity > 0 && unit.current_occupancy >= unit.capacity) {
-      const err = new Error('Capacidade máxima da unidade atingida.'); err.status = 400; throw err;
-    }
-    await client.query(
-      `INSERT INTO occupancy_records(unit_id, user_id, organization_name, usage_type)
-       VALUES ($1, $2, $3, $4)`,
-      [unitId, userId, organizationName, usageType]
-    );
-    await client.query(
-      'UPDATE units SET current_occupancy = current_occupancy + 1 WHERE id = $1',
-      [unitId]
-    );
-  }).catch((err) => {
+      if (unit.capacity > 0 && unit.current_occupancy >= unit.capacity) {
+        const e = new Error('Capacidade máxima da unidade atingida.'); e.status = 400; throw e;
+      }
+      await client.query(
+        'INSERT INTO occupancy_records(unit_id, user_id, organization_name, usage_type) VALUES ($1, $2, $3, $4)',
+        [unitId, userId, organizationName, usageType]
+      );
+      await client.query(
+        'UPDATE units SET current_occupancy = current_occupancy + 1 WHERE id = $1', [unitId]
+      );
+    });
+    res.status(201).json({ ok: true });
+  } catch (err) {
     if (err.status) return res.status(err.status).json({ ok: false, error: err.message });
     throw err;
-  });
-
-  if (!res.headersSent) res.status(201).json({ ok: true });
+  }
 }));
 
 app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID de ocupação inválido.' });
 
-  await withTransaction(async (client) => {
-    const { rows: [record] } = await client.query(
-      'SELECT * FROM occupancy_records WHERE id = $1 FOR UPDATE',
-      [id]
-    );
-    if (!record) {
-      const err = new Error('Registro não encontrado.'); err.status = 404; throw err;
-    }
-    if (!record.active) {
-      const err = new Error('Registro já inativo.'); err.status = 400; throw err;
-    }
-    await client.query(
-      'UPDATE occupancy_records SET active = FALSE, end_date = CURRENT_DATE WHERE id = $1',
-      [id]
-    );
-    await client.query(
-      'UPDATE units SET current_occupancy = GREATEST(0, current_occupancy - 1) WHERE id = $1',
-      [record.unit_id]
-    );
-  }).catch((err) => {
+  try {
+    await withTransaction(async (client) => {
+      const { rows: [record] } = await client.query(
+        'SELECT * FROM occupancy_records WHERE id = $1 FOR UPDATE', [id]
+      );
+      if (!record) { const e = new Error('Registro não encontrado.'); e.status = 404; throw e; }
+      if (!record.active) { const e = new Error('Registro já inativo.'); e.status = 400; throw e; }
+      await client.query(
+        'UPDATE occupancy_records SET active = FALSE, end_date = CURRENT_DATE WHERE id = $1', [id]
+      );
+      await client.query(
+        'UPDATE units SET current_occupancy = GREATEST(0, current_occupancy - 1) WHERE id = $1',
+        [record.unit_id]
+      );
+    });
+    res.json({ ok: true });
+  } catch (err) {
     if (err.status) return res.status(err.status).json({ ok: false, error: err.message });
     throw err;
-  });
-
-  if (!res.headersSent) res.json({ ok: true });
+  }
 }));
 
 // ─── News CRUD ────────────────────────────────────────────────────────────────
@@ -450,7 +450,7 @@ app.get('/api/news', asyncRoute(async (_req, res) => {
 app.post('/api/news', asyncRoute(async (req, res) => {
   const title = sanitizeText(req.body.title, 180);
   const content = sanitizeText(req.body.content, 4000);
-  const author_id = req.body.author_id ? Number(req.body.author_id) : null;
+  const author_id = parsePositiveId(req.body.author_id);
 
   if (!title || !content) {
     return res.status(400).json({ ok: false, error: 'Título e conteúdo são obrigatórios.' });
@@ -483,7 +483,7 @@ app.put('/api/news/:id', asyncRoute(async (req, res) => {
 app.delete('/api/news/:id', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
-  await pool.query('DELETE FROM news WHERE id = $1', [id]);
+  await query('DELETE FROM news WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
@@ -553,7 +553,7 @@ app.put('/api/requests/:id', asyncRoute(async (req, res) => {
 app.delete('/api/requests/:id', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
-  await pool.query('DELETE FROM requests WHERE id = $1', [id]);
+  await query('DELETE FROM requests WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
@@ -584,7 +584,7 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
         warnings.push(`Falha no feed "${feed.nome}": ${result.error}`);
         return;
       }
-      feedUpdates.set(feed.id, new Date().toISOString().split('T')[0]);
+      feedUpdates.set(feed.id, today());
       result.items.forEach((item) => {
         const dedupeKey = `${item.title.trim().toLowerCase()}|${item.source}`;
         if (existingKeys.has(dedupeKey)) return;
@@ -615,15 +615,19 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
   return res.json({ ok: true, news: mergedNews, feeds: mergedFeeds, added: imported.length, warnings });
 }));
 
-// ─── SPA fallback ─────────────────────────────────────────────────────────────
+// ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────
 
-app.get('*', (_req, res) => {
+app.get(/^(?!\/api\/).*/, (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
 // ─── Global error handler ─────────────────────────────────────────────────────
 
 app.use((err, _req, res, _next) => {
+  const code = err.code || '';
+  if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND') {
+    return res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.' });
+  }
   console.error(err);
   res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
 });

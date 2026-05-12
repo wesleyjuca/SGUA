@@ -1,5 +1,8 @@
 import { api, esc } from '../api.js';
 
+const STATUS_LABELS = { pending: 'Pendente', approved: 'Aprovada', rejected: 'Rejeitada' };
+const STATUS_COLORS = { pending: '#e67e22', approved: '#0f7a45', rejected: '#c0392b' };
+
 export async function renderRequests(root) {
   const requests = await api.get('/api/requests');
   const units = await api.get('/api/units');
@@ -30,11 +33,13 @@ export async function renderRequests(root) {
               <td>${esc(r.unit_name)}</td>
               <td>${esc(r.requester_name)}</td>
               <td>${esc(r.usage_type)}</td>
-              <td>${esc(r.status)}</td>
+              <td><span style="color:${STATUS_COLORS[r.status] ?? '#63707c'};font-weight:600;">${STATUS_LABELS[r.status] ?? esc(r.status)}</span></td>
               <td>
                 <div class="actions">
-                  <button data-status="approved" data-id="${r.id}">Aprovar</button>
-                  <button data-status="rejected" data-id="${r.id}" class="secondary">Rejeitar</button>
+                  ${r.status === 'pending'
+                    ? `<button data-status="approved" data-id="${r.id}" style="width:auto;padding:.3rem .7rem;">Aprovar</button>
+                       <button data-status="rejected" data-id="${r.id}" class="secondary" style="width:auto;padding:.3rem .7rem;">Rejeitar</button>`
+                    : '<span class="muted">—</span>'}
                 </div>
               </td>
             </tr>`).join('')}

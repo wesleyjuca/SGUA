@@ -16,11 +16,18 @@ const routes = {
   '/solicitacoes': renderRequests
 };
 
+function updateActiveNav(hash) {
+  document.querySelectorAll('.nav a').forEach((a) => {
+    a.classList.toggle('active', a.getAttribute('href') === hash);
+  });
+}
+
 async function renderRoute() {
   const hash = window.location.hash || '#/dashboard';
   const path = hash.replace('#', '');
   const page = routes[path] || renderDashboard;
 
+  updateActiveNav(path in routes ? hash : '#/dashboard');
   app.innerHTML = '<div class="card">Carregando...</div>';
   try {
     await page(app);

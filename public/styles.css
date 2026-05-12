@@ -35,6 +35,7 @@ body {
   padding: 0.35rem 0.8rem;
 }
 .nav a:hover { border-color: var(--primary); }
+.nav a.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .container { padding: 1rem; }
 .card {
   background: var(--card);
@@ -78,6 +79,7 @@ th, td {
 #map { height: 520px; border-radius: 8px; }
 .muted { color: #63707c; font-size: 0.9rem; }
 .actions { display: flex; gap: 0.4rem; }
+.actions button { width: auto; padding: 0.3rem 0.7rem; }
 .feed-item {
   display: flex;
   align-items: flex-start;
