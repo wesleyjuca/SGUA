@@ -1,12 +1,30 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
+const multer = require('multer');
 const { Pool } = require('pg');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const UPLOADS_DIR = path.join(PUBLIC_DIR, 'uploads', 'photos');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOADS_DIR,
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    }
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    cb(null, /^image\/(jpeg|png|webp|gif)$/.test(file.mimetype));
+  }
+});
 
 if (!process.env.DATABASE_URL) {
   console.error('Erro: DATABASE_URL é obrigatória no ambiente.');
@@ -335,13 +353,17 @@ app.put('/api/units/:id', asyncRoute(async (req, res) => {
   const existing = await queryOne('SELECT * FROM units WHERE id = $1', [id]);
   if (!existing) return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
 
-  const payload = req.body || {};
-  const name = sanitizeText(payload.name ?? existing.name, 140);
-  const address = sanitizeText(payload.address ?? existing.address ?? '', 255) || null;
-  const latitude = payload.latitude == null ? existing.latitude : Number(payload.latitude);
-  const longitude = payload.longitude == null ? existing.longitude : Number(payload.longitude);
-  const status = payload.status ? sanitizeText(payload.status, 16) : existing.status;
-  const capacity = payload.capacity == null ? existing.capacity : Number(payload.capacity);
+  const p = req.body || {};
+  const name          = sanitizeText(p.name ?? existing.name, 140);
+  const address       = sanitizeText(p.address ?? existing.address ?? '', 255) || null;
+  const latitude      = p.latitude == null ? existing.latitude : Number(p.latitude);
+  const longitude     = p.longitude == null ? existing.longitude : Number(p.longitude);
+  const status        = p.status ? sanitizeText(p.status, 16) : existing.status;
+  const capacity      = p.capacity == null ? existing.capacity : Number(p.capacity);
+  const description   = sanitizeText(p.description ?? existing.description ?? '', 1000) || null;
+  const contact_name  = sanitizeText(p.contact_name ?? existing.contact_name ?? '', 120) || null;
+  const contact_email = sanitizeText(p.contact_email ?? existing.contact_email ?? '', 160).toLowerCase() || null;
+  const contact_phone = sanitizeText(p.contact_phone ?? existing.contact_phone ?? '', 30) || null;
 
   if (!name) return res.status(400).json({ ok: false, error: 'Nome da unidade é obrigatório.' });
   if (!['active', 'inactive'].includes(status)) {
@@ -356,12 +378,17 @@ app.put('/api/units/:id', asyncRoute(async (req, res) => {
   if (longitude != null && (Number.isNaN(longitude) || longitude < -180 || longitude > 180)) {
     return res.status(400).json({ ok: false, error: 'Longitude inválida.' });
   }
+  if (contact_email && !validateEmail(contact_email)) {
+    return res.status(400).json({ ok: false, error: 'E-mail de contato inválido.' });
+  }
 
   const data = await queryOne(
     `UPDATE units
-     SET name = $1, address = $2, latitude = $3, longitude = $4, status = $5, capacity = $6
-     WHERE id = $7 RETURNING *`,
-    [name, address, latitude, longitude, status, Math.floor(capacity), id]
+     SET name=$1, address=$2, latitude=$3, longitude=$4, status=$5, capacity=$6,
+         description=$7, contact_name=$8, contact_email=$9, contact_phone=$10
+     WHERE id=$11 RETURNING *`,
+    [name, address, latitude, longitude, status, Math.floor(capacity),
+     description, contact_name, contact_email, contact_phone, id]
   );
   res.json({ ok: true, data });
 }));
@@ -634,6 +661,65 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
   );
 
   return res.json({ ok: true, feeds: mergedFeeds, added, warnings });
+}));
+
+// ─── Unit Photos ─────────────────────────────────────────────────────────────
+
+app.get('/api/units/:id/photos', asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const data = await query(
+    'SELECT * FROM unit_photos WHERE unit_id = $1 ORDER BY id DESC', [unitId]
+  );
+  res.json({ ok: true, data });
+}));
+
+app.post('/api/units/:id/photos', upload.single('photo'), asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId || !req.file) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ ok: false, error: 'Unidade ou arquivo inválido.' });
+  }
+  const unit = await queryOne('SELECT id FROM units WHERE id = $1', [unitId]);
+  if (!unit) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
+  }
+  const url = `/uploads/photos/${req.file.filename}`;
+  const caption = sanitizeText(req.body.caption || '', 200) || null;
+  const isBanner = req.body.is_banner === 'true';
+  const data = await queryOne(
+    'INSERT INTO unit_photos(unit_id, url, filename, caption, is_banner) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+    [unitId, url, req.file.filename, caption, isBanner]
+  );
+  if (isBanner) {
+    await query('UPDATE units SET banner_url = $1 WHERE id = $2', [url, unitId]);
+  }
+  res.status(201).json({ ok: true, data });
+}));
+
+app.delete('/api/photos/:id', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const photo = await queryOne('SELECT * FROM unit_photos WHERE id = $1', [id]);
+  if (!photo) return res.status(404).json({ ok: false, error: 'Foto não encontrada.' });
+  fs.unlink(path.join(UPLOADS_DIR, photo.filename), () => {});
+  if (photo.is_banner) {
+    await query('UPDATE units SET banner_url = NULL WHERE id = $1', [photo.unit_id]);
+  }
+  await query('DELETE FROM unit_photos WHERE id = $1', [id]);
+  res.json({ ok: true });
+}));
+
+app.put('/api/photos/:id/banner', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const photo = await queryOne('SELECT * FROM unit_photos WHERE id = $1', [id]);
+  if (!photo) return res.status(404).json({ ok: false, error: 'Foto não encontrada.' });
+  await query('UPDATE unit_photos SET is_banner = false WHERE unit_id = $1', [photo.unit_id]);
+  await query('UPDATE unit_photos SET is_banner = true WHERE id = $1', [id]);
+  await query('UPDATE units SET banner_url = $1 WHERE id = $2', [photo.url, photo.unit_id]);
+  res.json({ ok: true });
 }));
 
 // ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────

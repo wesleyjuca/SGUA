@@ -15,10 +15,18 @@ body {
 .header {
   background: var(--primary);
   color: #fff;
-  padding: 1rem 1.2rem;
+  padding: .8rem 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
 }
-.header h1 { margin: 0; }
-.header p { margin: 0.2rem 0 0; opacity: 0.85; }
+.sema-logo { display: flex; align-items: center; gap: .7rem; flex-shrink: 0; }
+.sema-abbr { font-size: 2rem; font-weight: 900; color: #fff; letter-spacing: 1px; line-height: 1; }
+.sema-sep  { width: 2px; height: 38px; background: rgba(255,255,255,.4); flex-shrink: 0; }
+.sema-name { font-size: .65rem; font-weight: 700; color: rgba(255,255,255,.92);
+             line-height: 1.5; text-transform: uppercase; letter-spacing: .5px; }
+.header-sys { margin-left: auto; text-align: right; color: rgba(255,255,255,.82); font-size: .82rem; }
+.header-sys strong { display: block; font-size: 1rem; color: #fff; font-weight: 700; }
 .nav {
   display: flex;
   flex-wrap: wrap;
@@ -80,6 +88,34 @@ th, td {
 .muted { color: #63707c; font-size: 0.9rem; }
 .actions { display: flex; gap: 0.4rem; }
 .actions button { width: auto; padding: 0.3rem 0.7rem; }
+/* ── Photo gallery ── */
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .75rem; margin-top: .75rem; }
+.photo-card { position: relative; border-radius: 8px; overflow: hidden; aspect-ratio: 4/3;
+              background: var(--line); cursor: pointer; }
+.photo-card img { width: 100%; height: 100%; object-fit: cover; transition: transform .2s; display: block; }
+.photo-card:hover img { transform: scale(1.06); }
+.photo-actions { position: absolute; bottom: 0; left: 0; right: 0; padding: .3rem .4rem;
+  background: linear-gradient(transparent, rgba(0,0,0,.6));
+  display: flex; gap: .3rem; opacity: 0; transition: opacity .18s; }
+.photo-card:hover .photo-actions { opacity: 1; }
+.photo-actions button { width: auto; padding: .18rem .5rem; font-size: .72rem; border-radius: 5px; }
+.photo-banner-badge { position: absolute; top: .3rem; left: .3rem;
+  background: var(--primary); color: #fff; font-size: .62rem; padding: .1rem .38rem;
+  border-radius: 999px; pointer-events: none; }
+/* ── Lightbox ── */
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.88); z-index: 9999;
+            display: flex; align-items: center; justify-content: center; }
+.lightbox img { max-width: 92vw; max-height: 88vh; border-radius: 10px; object-fit: contain;
+                box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+.lightbox-close { position: fixed; top: .8rem; right: 1.2rem; color: #fff; font-size: 2rem;
+                  cursor: pointer; background: none; border: none; line-height: 1; padding: .3rem; }
+/* ── Banner upload / edit panel ── */
+.banner-drop { border: 2px dashed var(--line); border-radius: 10px; padding: 1.2rem;
+               text-align: center; cursor: pointer; transition: border-color .2s; color: var(--muted); }
+.banner-drop:hover { border-color: var(--primary); }
+.banner-preview { width: 100%; max-height: 200px; object-fit: cover; border-radius: 8px; display: block; }
+.edit-panel { border: 2px solid var(--primary); border-radius: 12px; }
+
 .feed-item {
   display: flex;
   align-items: flex-start;
