@@ -1,167 +1,101 @@
-# SEMA/AC — Sistema de Gestão CIMA & UGAI  
-### v4.2 — Full-Stack: Domínio · Relatórios · Segurança · SQLite
+# SGUA — Sistema de Gestão CIMA & UGAI
 
----
+Aplicação full-stack com **Node.js + Express + SQLite + frontend modular em ES Modules**.
 
-## Novas funcionalidades (v4)
+## O que foi reestruturado
 
-### 0) Correções de confiabilidade (v4.2)
-- **Persistência de seções (`secs`) no cache local**: agora as preferências de layout também sobrevivem ao reload.
-- **Observabilidade de falhas no localStorage**: leituras inválidas e erros de gravação/limpeza agora geram `console.warn` controlado.
-- **Auto-recuperação de cache corrompido**: se um item JSON estiver inválido, o sistema remove apenas aquela chave e usa fallback seguro.
+- Backend reorganizado em API REST com validações, tratamento centralizado de erros e rotas por domínio.
+- Frontend dividido em módulos independentes:
+  - Dashboard
+  - Unidades
+  - Mapa
+  - Usuários
+  - Notícias
+  - Solicitações
+- Persistência em SQLite com modelagem relacional e chaves estrangeiras.
 
-### 1. Regra de domínio — `approveUso`
-- **Validação completa** com `validateFields()` + `sanitize()`
-- **Prevenção de duplicação**: mesmo órgão ativo na unidade é bloqueado
-- **`ocupacaoAtual++`**: contador atômico sincronizado com estado React
-- **Registro estruturado**: `{id, nome, tipo, dataEntrada, ativo: true}`
-- **Persistência imediata**: grava em localStorage + estado React atomicamente
-- **`leaveUso()`**: desativa órgão e registra `dataSaida` (checkout)
-- **Integrado automaticamente** ao fluxo de aprovação de solicitações
+## Modelagem de banco de dados
 
-### 2. Relatórios (aba exclusiva no Admin)
-| Recurso | Detalhe |
-|---------|---------|
-| Export CSV | Blob UTF-8 com BOM, RFC 4180, download direto |
-| Export XLSX | SheetJS, largura automática por coluna |
-| Import CSV | Parser RFC 4180 robusto (aspas, vírgulas, quebras) |
-| Import XLSX | Via SheetJS, mapeamento automático de colunas |
-| Validação | Regras por campo: tipo, lat/lng range, status enum, maxLen |
-| Deduplicação | Por nome (case-insensitive) — estratégia configurável |
-| Merge | Adiciona novas, ignora existentes |
-| Overwrite | Substitui por nome, mantém sem correspondência |
-| Preview | Tabela com status por linha antes de aplicar |
-| Datasets | Unidades, Notícias, Solicitações, Ocupação por Órgão |
+### Entidades
 
-### 3. Segurança
-| Recurso | Implementação |
-|---------|--------------|
-| SHA-256 | Pure JS sync (sem dependências) — `sha256()` |
-| Senhas | Hash com salt fixo `sagcu:` — nunca plaintext |
-| Sanitização | `sanitize(str, maxLen)` — remove HTML/scripts |
-| Validação | `validateFields(obj, rules)` — declarativa e reutilizável |
-| localStorage | Apenas dados de negócio — jamais senhas/tokens |
-| Cache | Versão `sagcu_v4_` — `lsClear()` disponível no admin |
-| Inputs | Todos sanitizados antes de persistir |
+- `users`: usuários do sistema.
+- `units`: unidades físicas/operacionais.
+- `occupancy_records`: registros de uso/ocupação por unidade.
+- `news`: notícias comunicadas no sistema.
+- `requests`: solicitações de uso.
 
----
+### Relacionamentos
 
-## Arquitetura das novas funções
+- `occupancy_records.unit_id -> units.id`
+- `occupancy_records.user_id -> users.id`
+- `news.author_id -> users.id`
+- `requests.unit_id -> units.id`
 
-```
-sha256(msg)                 → hex string (pure JS, sync)
-sanitize(str, maxLen?)      → string limpa
-validateFields(obj, rules)  → string[] de erros
+## Endpoints principais (CRUD)
 
-approveUso(uns, setUns, unidadeId, {nome, tipo})
-  → {ok: true,  orgao: {id, nome, tipo, dataEntrada, ativo}}
-  → {ok: false, err: "mensagem de erro"}
+- `GET/POST/PUT/DELETE /api/users`
+- `GET/POST/PUT/DELETE /api/units`
+- `GET /api/units/:id/occupancy`
+- `POST /api/units/:id/occupancy`
+- `PUT /api/occupancy/:id/checkout`
+- `GET/POST/PUT/DELETE /api/news`
+- `GET/POST/PUT/DELETE /api/requests`
+- `GET /api/meta/model` (documentação de entidades e relacionamentos)
+- `GET /api/health`
 
-leaveUso(uns, setUns, unidadeId, orgaoId)
-  → {ok: true}  | {ok: false, err: string}
-
-exportCSV(rows, cols, filename)   → download automático
-exportXLSX(rows, cols, filename)  → download (requer SheetJS)
-parseCSV(text)                    → {headers, rows}
-parseCSVLine(line)                → string[]
-applyImport(uns, parsedRows, strategy: 'merge'|'overwrite') → Unit[]
-```
-
----
-
-## Persistência (localStorage + SQLite)
-
-```
-sagcu_v4_uns    → unidades (cache local, fallback offline)
-sagcu_v4_news   → notícias (cache local, fallback offline)
-sagcu_v4_feeds  → feeds RSS (cache local, fallback offline)
-sagcu_v4_sols   → solicitações (cache local, fallback offline)
-sagcu_v4_users  → usuários (cache local, fallback offline)
-```
-Quando o app roda via `node server.js`, o front sincroniza automaticamente com:
-- `GET /api/state` (carrega estado salvo no SQLite)
-- `PUT /api/state` (salva alterações do app no SQLite)
-
-Banco local padrão: `data/sgua.db`.
-
-> **Senhas NÃO são armazenadas em plaintext.** O sistema mantém hash no estado de usuários.
-
----
-
-## Credenciais de demonstração
-
-| Perfil | E-mail | Senha |
-|--------|--------|-------|
-| Admin | admin@sema.ac.gov.br | admin123 |
-| Gestor | gestor@sema.ac.gov.br | gestor123 |
-| Visualizador | viewer@sema.ac.gov.br | viewer123 |
-
----
-
-## Como testar as novas features
-
-### approveUso via interface
-1. Menu **Solicitação** → preencha o formulário e envie
-2. Acesse **Admin** → **Solicitações**
-3. Clique **Aprovar** — `approveUso` é chamado automaticamente
-4. Acesse a unidade → aba **Ocupação** para ver o órgão registrado
-
-### approveUso direto (console)
-```javascript
-// Na aba Ocupação de qualquer unidade (botão "+ Registrar")
-// preencha Nome do órgão e Tipo de uso → clique Registrar
-// testa: validação, deduplicação, persistência
-```
-
-### Relatórios
-1. Admin → **Relatórios** → aba **Exportar**
-2. Selecione dataset e formato → baixe o arquivo
-3. Edite o CSV/XLSX e reimporte na aba **Importar**
-4. Escolha estratégia **Merge** ou **Overwrite** → veja o preview → confirme
-
----
-
-## Tecnologias
-
-| Lib | Versão | CDN |
-|-----|--------|-----|
-| React | 18.2 | cdnjs |
-| ReactDOM | 18.2 | cdnjs |
-| Leaflet | 1.9.4 | cdnjs |
-| MarkerCluster | 1.5.3 | cdnjs |
-| SheetJS (xlsx) | 0.18.5 | cdnjs |
-| Express | 4.x | backend local |
-| SQLite3 | 5.x | backend local |
-
-> SHA-256 implementado em pure JS — zero dependências para segurança.
-
----
-
-## Executar com banco de dados (SQLite)
+## Execução
 
 ```bash
 npm install
 npm start
 ```
 
-A aplicação ficará disponível em `http://localhost:3000` com API e front-end no mesmo servidor.
+Acesse: `http://localhost:3000`.
 
----
+## Validação automatizada (API + banco SQLite)
 
-© 2026 SEMA/AC — Governo do Estado do Acre
+```bash
+npm run validate:system
+```
 
----
+Esse comando sobe o servidor em porta temporária, cria um banco isolado e valida operações de CRUD + fluxos de ocupação com persistência real.
 
-## Publicação no GitHub Pages (site estático)
+## Publicação (produção)
 
-Se o site `https://wesleyjuca.github.io/SGUA/` não refletir alterações, o motivo mais comum é que o deploy do Pages não foi executado após o push.
+- Defina variáveis de ambiente:
+  - `PORT` (ex.: `3000`)
+  - `SGUA_DB_PATH` (ex.: `/var/lib/sgua/sgua.db`)
+- Inicie com:
 
-Este repositório agora inclui workflow em `.github/workflows/deploy-pages.yml` que publica automaticamente o `index.html` quando houver push em `main`, `master` ou `work`.
+```bash
+npm ci --omit=dev
+npm start
+```
 
-### Checklist rápido quando "não atualiza"
-1. Confirme que o commit foi enviado para o GitHub (`git push`).
-2. Abra a aba **Actions** do repositório e verifique a execução **Deploy GitHub Pages**.
-3. Aguarde o status **success** e depois faça reload forçado no navegador (`Ctrl+F5`).
-4. Se ainda houver versão antiga, em **Settings > Pages** confirme se a origem está como **GitHub Actions**.
+- Exponha a aplicação atrás de um proxy (Nginx/Caddy) e mantenha o diretório do SQLite em volume persistente.
 
-> Observação: o backend `server.js` (SQLite/API) não roda no GitHub Pages. No Pages é publicado apenas o front-end estático (`index.html`).
+## Estrutura de pastas
+
+```text
+server.js
+public/
+  index.html
+  styles.css
+  js/
+    app.js
+    api.js
+    modules/
+      dashboard.js
+      map.js
+      news.js
+      requests.js
+      units.js
+      users.js
+data/
+  sgua.db
+```
+
+## Observações
+
+- O sistema agora está preparado para evolução incremental com páginas/módulos desacoplados.
+- O banco é criado automaticamente na primeira execução.

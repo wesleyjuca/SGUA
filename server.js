@@ -443,7 +443,171 @@ app.get('/api/health', async (_req, res) => {
   } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
-app.get('/api/state', async (_req, res) => {
+// Users CRUD
+app.get('/api/users', asyncRoute(async (_req, res) => {
+  const rows = await all('SELECT * FROM users ORDER BY id DESC');
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/users', asyncRoute(async (req, res) => {
+  const name = sanitizeText(req.body.name, 120);
+  const email = sanitizeText(req.body.email, 160).toLowerCase();
+  const role = sanitizeText(req.body.role, 20) || 'viewer';
+
+  if (!name) return res.status(400).json({ ok: false, error: 'Nome é obrigatório.' });
+  if (!validateEmail(email)) return res.status(400).json({ ok: false, error: 'E-mail inválido.' });
+  if (!['admin', 'manager', 'viewer'].includes(role)) {
+    return res.status(400).json({ ok: false, error: 'Perfil inválido.' });
+  }
+
+  const result = await run('INSERT INTO users(name, email, role) VALUES (?, ?, ?)', [name, email, role]);
+  const created = await get('SELECT * FROM users WHERE id = ?', [result.lastID]);
+  res.status(201).json({ ok: true, data: created });
+}));
+
+app.put('/api/users/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await get('SELECT * FROM users WHERE id = ?', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Usuário não encontrado.' });
+
+  const name = sanitizeText(req.body.name ?? existing.name, 120);
+  const email = sanitizeText(req.body.email ?? existing.email, 160).toLowerCase();
+  const role = sanitizeText(req.body.role ?? existing.role, 20);
+
+  if (!name || !validateEmail(email)) {
+    return res.status(400).json({ ok: false, error: 'Dados de usuário inválidos.' });
+  }
+  if (!['admin', 'manager', 'viewer'].includes(role)) {
+    return res.status(400).json({ ok: false, error: 'Perfil inválido.' });
+  }
+
+  await run('UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?', [name, email, role, id]);
+  const updated = await get('SELECT * FROM users WHERE id = ?', [id]);
+  res.json({ ok: true, data: updated });
+}));
+
+app.delete('/api/users/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  await run('DELETE FROM users WHERE id = ?', [id]);
+  res.json({ ok: true });
+}));
+
+// Units CRUD
+app.get('/api/units', asyncRoute(async (_req, res) => {
+  const rows = await all('SELECT * FROM units ORDER BY id DESC');
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/units', asyncRoute(async (req, res) => {
+  const payload = req.body || {};
+  const name = sanitizeText(payload.name, 140);
+  const address = sanitizeText(payload.address, 255);
+  const latitude = payload.latitude == null || payload.latitude === '' ? null : Number(payload.latitude);
+  const longitude = payload.longitude == null || payload.longitude === '' ? null : Number(payload.longitude);
+  const status = payload.status === 'inactive' ? 'inactive' : 'active';
+  const capacity = Math.max(0, Number(payload.capacity || 0));
+
+  if (!name) return res.status(400).json({ ok: false, error: 'Nome da unidade é obrigatório.' });
+  if (latitude != null && (Number.isNaN(latitude) || latitude < -90 || latitude > 90)) {
+    return res.status(400).json({ ok: false, error: 'Latitude inválida.' });
+  }
+  if (longitude != null && (Number.isNaN(longitude) || longitude < -180 || longitude > 180)) {
+    return res.status(400).json({ ok: false, error: 'Longitude inválida.' });
+  }
+
+  const result = await run(
+    `INSERT INTO units(name, address, latitude, longitude, status, capacity, current_occupancy)
+     VALUES (?, ?, ?, ?, ?, ?, 0)`,
+    [name, address, latitude, longitude, status, capacity]
+  );
+
+  const created = await get('SELECT * FROM units WHERE id = ?', [result.lastID]);
+  res.status(201).json({ ok: true, data: created });
+}));
+
+app.put('/api/units/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await get('SELECT * FROM units WHERE id = ?', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
+
+  const payload = req.body || {};
+  const name = sanitizeText(payload.name ?? existing.name, 140);
+  const address = sanitizeText(payload.address ?? existing.address, 255);
+  const latitude = payload.latitude == null ? existing.latitude : Number(payload.latitude);
+  const longitude = payload.longitude == null ? existing.longitude : Number(payload.longitude);
+  const status = payload.status ? sanitizeText(payload.status, 16) : existing.status;
+  const capacity = payload.capacity == null ? existing.capacity : Math.max(0, Number(payload.capacity));
+
+  if (!name) return res.status(400).json({ ok: false, error: 'Nome da unidade é obrigatório.' });
+  if (latitude != null && (Number.isNaN(latitude) || latitude < -90 || latitude > 90)) {
+    return res.status(400).json({ ok: false, error: 'Latitude inválida.' });
+  }
+  if (longitude != null && (Number.isNaN(longitude) || longitude < -180 || longitude > 180)) {
+    return res.status(400).json({ ok: false, error: 'Longitude inválida.' });
+  }
+  if (!['active', 'inactive'].includes(status)) {
+    return res.status(400).json({ ok: false, error: 'Status inválido.' });
+  }
+  if (!Number.isFinite(capacity)) {
+    return res.status(400).json({ ok: false, error: 'Capacidade inválida.' });
+  }
+
+  await run(
+    `UPDATE units
+     SET name = ?, address = ?, latitude = ?, longitude = ?, status = ?, capacity = ?, updated_at = datetime('now')
+     WHERE id = ?`,
+    [name, address, latitude, longitude, status, capacity, id]
+  );
+
+  const updated = await get('SELECT * FROM units WHERE id = ?', [id]);
+  res.json({ ok: true, data: updated });
+}));
+
+app.delete('/api/units/:id', asyncRoute(async (req, res) => {
+  const id = Number(req.params.id);
+  await run('DELETE FROM units WHERE id = ?', [id]);
+  res.json({ ok: true });
+}));
+
+// Occupancy operations
+app.get('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
+  const unitId = Number(req.params.id);
+  const rows = await all(
+    `SELECT o.*, u.name AS user_name FROM occupancy_records o
+     LEFT JOIN users u ON u.id = o.user_id
+     WHERE o.unit_id = ?
+     ORDER BY o.id DESC`,
+    [unitId]
+  );
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId) return res.status(400).json({ ok: false, error: 'ID da unidade inválido.' });
+  const unit = await get('SELECT * FROM units WHERE id = ?', [unitId]);
+  if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
+  if (unit.status === 'inactive') return res.status(400).json({ ok: false, error: 'Unidade inativa.' });
+
+  const organizationName = sanitizeText(req.body.organization_name, 120);
+  const usageType = sanitizeText(req.body.usage_type, 120);
+  const userId = req.body.user_id ? parsePositiveId(req.body.user_id) : null;
+  if (!organizationName || !usageType) {
+    return res.status(400).json({ ok: false, error: 'organization_name e usage_type são obrigatórios.' });
+  }
+  if (req.body.user_id && !userId) {
+    return res.status(400).json({ ok: false, error: 'user_id inválido.' });
+  }
+  if (userId) {
+    const user = await get('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!user) return res.status(404).json({ ok: false, error: 'Usuário não encontrado para vinculação.' });
+  }
+
+  if (unit.capacity > 0 && unit.current_occupancy >= unit.capacity) {
+    return res.status(400).json({ ok: false, error: 'Capacidade máxima da unidade atingida.' });
+  }
+
+  await run('BEGIN IMMEDIATE TRANSACTION');
   try {
     const [{ data: uns }, { data: news }, { data: feeds }, { data: sols }, { data: users }, { data: cfgRows }] = await Promise.all([
       supa.from('unidades').select('*, orgaos_presentes(*)').order('tipo').order('nome'),
