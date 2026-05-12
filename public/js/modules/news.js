@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, esc } from '../api.js';
 
 export async function renderNews(root) {
   const news = await api.get('/api/news');
@@ -12,7 +12,7 @@ export async function renderNews(root) {
         <label>Autor
           <select name="author_id">
             <option value="">Sem autor</option>
-            ${users.map((u) => `<option value="${u.id}">${u.name}</option>`).join('')}
+            ${users.map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join('')}
           </select>
         </label>
         <label>Conteúdo<textarea name="content" rows="3" required></textarea></label>
@@ -21,7 +21,7 @@ export async function renderNews(root) {
       <div class="table-wrap">
         <table>
           <thead><tr><th>ID</th><th>Título</th><th>Autor</th><th>Criado em</th><th>Ações</th></tr></thead>
-          <tbody>${news.map((n) => `<tr><td>${n.id}</td><td>${n.title}</td><td>${n.author_name || '-'}</td><td>${n.created_at}</td><td><button data-del="${n.id}" class="secondary">Excluir</button></td></tr>`).join('')}</tbody>
+          <tbody>${news.map((n) => `<tr><td>${n.id}</td><td>${esc(n.title)}</td><td>${esc(n.author_name || '-')}</td><td>${esc(n.created_at)}</td><td><button data-del="${n.id}" class="secondary">Excluir</button></td></tr>`).join('')}</tbody>
         </table>
       </div>
     </section>

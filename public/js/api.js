@@ -14,3 +14,12 @@ export const api = {
   put: (url, body) => fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) }).then(handle),
   delete: (url) => fetch(url, { method: 'DELETE' }).then(handle)
 };
+
+export function esc(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}

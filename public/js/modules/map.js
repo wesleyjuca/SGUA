@@ -1,4 +1,4 @@
-import { api } from '../api.js';
+import { api, esc } from '../api.js';
 
 let mapRef;
 
@@ -28,6 +28,6 @@ export async function renderMap(root) {
     .forEach((u) => {
       L.marker([u.latitude, u.longitude])
         .addTo(mapRef)
-        .bindPopup(`<strong>${u.name}</strong><br>Status: ${u.status}<br>Ocupação: ${u.current_occupancy}/${u.capacity}`);
+        .bindPopup(`<strong>${esc(u.name)}</strong><br>Status: ${esc(u.status)}<br>Ocupação: ${u.current_occupancy}/${u.capacity}`);
     });
 }
