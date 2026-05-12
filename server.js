@@ -725,6 +725,7 @@ app.put('/api/photos/:id/banner', asyncRoute(async (req, res) => {
 // ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────
 
 app.get(/^(?!\/api\/).*/, (_req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
