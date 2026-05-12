@@ -113,4 +113,25 @@ export async function renderNews(root) {
       renderNews(root);
     });
   });
+
+  // Auto-sync on first load (only if no feed has been synced yet this session)
+  const neverSynced = feedState.feeds.every((f) => !f.sync);
+  if (neverSynced) {
+    syncStatus.textContent = 'Sincronizando automaticamente…';
+    syncBtn.disabled = true;
+    try {
+      const result = await api.post('/api/feeds/sync', { feeds: feedState.feeds });
+      feedState.feeds = result.feeds ?? feedState.feeds;
+      const added = result.added ?? 0;
+      if (added > 0) {
+        renderNews(root);
+      } else {
+        syncStatus.textContent = '✓ Feeds verificados.';
+        syncBtn.disabled = false;
+      }
+    } catch {
+      syncBtn.disabled = false;
+      syncStatus.textContent = '';
+    }
+  }
 }
