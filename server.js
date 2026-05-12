@@ -733,7 +733,10 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
 
 app.use((err, _req, res, _next) => {
   const code = err.code || '';
-  if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND') {
+  const msg = err.message || '';
+  const isDbErr = code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND'
+    || msg.includes('timeout') || msg.includes('terminated') || msg.includes('connect');
+  if (isDbErr) {
     return res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.' });
   }
   console.error(err);
