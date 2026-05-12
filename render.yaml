@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sgua
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: PORT
+        value: "3000"
+    autoDeploy: true
