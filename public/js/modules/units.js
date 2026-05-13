@@ -214,6 +214,12 @@ function renderEditPanel(root, unit, photos) {
     try {
       await api.put(`/api/units/${unit.id}`, payload);
       saveStatus.textContent = '✓ Salvo';
+      const units = await api.get('/api/units');
+      const updated = units.find((u) => u.id === unit.id);
+      if (updated) {
+        const photos = await api.get(`/api/units/${updated.id}/photos`);
+        renderEditPanel(root, updated, photos);
+      }
     } catch (err) {
       saveStatus.textContent = `✗ ${err.message}`;
     } finally {
@@ -253,6 +259,10 @@ export async function renderUnits(root) {
         <button type="submit">+ Criar unidade</button>
       </form>
 
+      <div style="margin:.75rem 0 .5rem;">
+        <input id="unit-search" type="search" placeholder="Filtrar por nome…" style="max-width:320px;" />
+      </div>
+
       <div class="table-wrap">
         <table>
           <thead>
@@ -260,7 +270,7 @@ export async function renderUnits(root) {
           </thead>
           <tbody>
             ${units.length
-              ? units.map((u) => `<tr>
+              ? units.map((u) => `<tr data-name="${esc(u.name.toLowerCase())}">
                   <td style="width:56px;">
                     ${u.banner_url
                       ? `<img src="${esc(u.banner_url)}" style="width:52px;height:36px;object-fit:cover;border-radius:4px;display:block;" alt="">`
@@ -300,6 +310,15 @@ export async function renderUnits(root) {
     await api.post('/api/units', payload);
     renderUnits(root);
   });
+
+  const searchInput = root.querySelector('#unit-search');
+  if (searchInput) {
+    const rows = Array.from(root.querySelectorAll('tbody tr[data-name]'));
+    searchInput.addEventListener('input', () => {
+      const q = searchInput.value.toLowerCase();
+      rows.forEach((row) => { row.style.display = row.dataset.name.includes(q) ? '' : 'none'; });
+    });
+  }
 
   root.querySelectorAll('[data-edit]').forEach((btn) => {
     btn.addEventListener('click', () => {

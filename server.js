@@ -36,7 +36,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000
+  connectionTimeoutMillis: 10_000
 });
 
 pool.on('error', (err) => {
@@ -396,6 +396,10 @@ app.put('/api/units/:id', asyncRoute(async (req, res) => {
 app.delete('/api/units/:id', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const photos = await query('SELECT filename FROM unit_photos WHERE unit_id = $1', [id]);
+  photos.forEach((p) => {
+    try { fs.unlinkSync(path.join(UPLOADS_DIR, p.filename)); } catch {}
+  });
   await query('DELETE FROM units WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
@@ -748,4 +752,7 @@ app.use((err, _req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`SGUA executando em http://localhost:${PORT}`);
   console.log(`Banco: PostgreSQL (Supabase)`);
+  if (process.env.RENDER) {
+    console.warn('[Aviso] Render.com free tier: uploads de fotos em disco são temporários e serão perdidos a cada redeploy. Configure um Persistent Disk ou migre para Supabase Storage para fotos permanentes.');
+  }
 });

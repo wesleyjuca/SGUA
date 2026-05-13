@@ -9,11 +9,21 @@ export async function renderDashboard(root) {
   ]);
 
   const recent = news.slice(0, 5);
+  const activeUnits = units.filter((u) => u.status === 'active').length;
+  const inactiveUnits = units.length - activeUnits;
 
   root.innerHTML = `
     <section class="grid" style="margin-bottom:1rem;">
       <article class="card"><h3>Usuários</h3><p><strong>${users.length}</strong></p></article>
-      <article class="card"><h3>Unidades</h3><p><strong>${units.length}</strong></p></article>
+      <article class="card">
+        <h3>Unidades</h3>
+        <p><strong>${units.length}</strong></p>
+        <p style="font-size:.82rem;color:#63707c;margin:.25rem 0 0;">
+          <span style="color:#0f7a45;">${activeUnits} ativa${activeUnits !== 1 ? 's' : ''}</span>
+          &nbsp;/&nbsp;
+          <span style="color:#5f6b76;">${inactiveUnits} inativa${inactiveUnits !== 1 ? 's' : ''}</span>
+        </p>
+      </article>
       <article class="card"><h3>Notícias</h3><p><strong>${news.length}</strong></p></article>
       <article class="card"><h3>Solicitações</h3><p><strong>${requests.length}</strong></p></article>
     </section>
