@@ -235,12 +235,18 @@ app.use(express.static(PUBLIC_DIR));
 
 // ─── Utility routes ───────────────────────────────────────────────────────────
 
-app.get('/api/health', async (_req, res) => {
+// Healthcheck leve — Railway/Render precisam de 200 para considerar o deploy bem-sucedido
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
+// Status detalhado do banco (não bloqueia o deploy)
+app.get('/api/health/db', async (_req, res) => {
   try {
     await pool.query('SELECT 1');
     res.json({ ok: true, db: 'postgresql', now: new Date().toISOString() });
   } catch (err) {
-    console.error('[Health]', err.message);
+    console.error('[Health/DB]', err.message);
     res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.', detail: err.message });
   }
 });
