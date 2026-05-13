@@ -1,6 +1,6 @@
-// Quando rodando no GitHub Pages, as chamadas de API vão para o Render.com
+// Quando rodando no GitHub Pages, as chamadas de API vão para o Railway
 const BASE = window.location.hostname === 'wesleyjuca.github.io'
-  ? 'https://sgua.onrender.com'
+  ? 'https://sgua-production.up.railway.app'
   : '';
 
 const headers = { 'Content-Type': 'application/json' };
