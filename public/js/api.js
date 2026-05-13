@@ -1,3 +1,8 @@
+// Quando rodando no GitHub Pages, as chamadas de API vão para o Render.com
+const BASE = window.location.hostname === 'wesleyjuca.github.io'
+  ? 'https://sgua.onrender.com'
+  : '';
+
 const headers = { 'Content-Type': 'application/json' };
 
 async function handle(res) {
@@ -11,10 +16,10 @@ async function handle(res) {
 const timeout = () => ({ signal: AbortSignal.timeout(15_000) });
 
 export const api = {
-  get: (url) => fetch(url, timeout()).then(handle),
-  post: (url, body) => fetch(url, { ...timeout(), method: 'POST', headers, body: JSON.stringify(body) }).then(handle),
-  put: (url, body) => fetch(url, { ...timeout(), method: 'PUT', headers, body: JSON.stringify(body) }).then(handle),
-  delete: (url) => fetch(url, { ...timeout(), method: 'DELETE' }).then(handle)
+  get: (url) => fetch(BASE + url, timeout()).then(handle),
+  post: (url, body) => fetch(BASE + url, { ...timeout(), method: 'POST', headers, body: JSON.stringify(body) }).then(handle),
+  put: (url, body) => fetch(BASE + url, { ...timeout(), method: 'PUT', headers, body: JSON.stringify(body) }).then(handle),
+  delete: (url) => fetch(BASE + url, { ...timeout(), method: 'DELETE' }).then(handle)
 };
 
 export function esc(value) {
