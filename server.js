@@ -217,6 +217,19 @@ async function fetchFeedItems(feed) {
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
+// CORS para GitHub Pages (frontend estático em wesleyjuca.github.io)
+app.use((req, res, next) => {
+  const allowed = ['https://wesleyjuca.github.io', 'http://localhost:3000'];
+  const origin = req.headers.origin;
+  if (origin && allowed.includes(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(PUBLIC_DIR));
 
