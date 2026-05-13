@@ -245,6 +245,22 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+// Diagnóstico de conexão — mostra host/usuário sem expor a senha
+app.get('/api/debug/db', (_req, res) => {
+  try {
+    const url = new URL(process.env.DATABASE_URL || '');
+    res.json({
+      host: url.hostname,
+      port: url.port,
+      user: url.username,
+      database: url.pathname.replace('/', ''),
+      ssl: 'rejectUnauthorized=false'
+    });
+  } catch {
+    res.status(500).json({ error: 'DATABASE_URL inválida ou ausente', raw_prefix: (process.env.DATABASE_URL || '').slice(0, 30) });
+  }
+});
+
 app.get('/api/meta/model', (_req, res) => {
   res.json({
     ok: true,
