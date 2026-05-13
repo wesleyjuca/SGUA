@@ -235,10 +235,15 @@ app.use(express.static(PUBLIC_DIR));
 
 // ─── Utility routes ───────────────────────────────────────────────────────────
 
-app.get('/api/health', asyncRoute(async (_req, res) => {
-  await pool.query('SELECT 1');
-  res.json({ ok: true, db: 'postgresql', now: new Date().toISOString() });
-}));
+app.get('/api/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ ok: true, db: 'postgresql', now: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Health]', err.message);
+    res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.', detail: err.message });
+  }
+});
 
 app.get('/api/meta/model', (_req, res) => {
   res.json({
@@ -750,10 +755,15 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
 
 app.use((err, _req, res, _next) => {
   const code = err.code || '';
-  const msg = err.message || '';
+  const msg = (err.message || '').toLowerCase();
+  const severity = err.severity || '';
   const isDbErr = code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND'
-    || msg.includes('timeout') || msg.includes('terminated') || msg.includes('connect');
+    || severity === 'FATAL' || severity === 'ERROR'
+    || msg.includes('timeout') || msg.includes('terminated') || msg.includes('connect')
+    || msg.includes('tenant') || msg.includes('user not found')
+    || msg.includes('password') || msg.includes('ssl') || msg.includes('database');
   if (isDbErr) {
+    console.error('[DB]', err.message);
     return res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.' });
   }
   console.error(err);
