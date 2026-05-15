@@ -654,6 +654,106 @@ app.delete('/api/requests/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ─── App State (full JSON blob for React SPA) ─────────────────────────────────
+
+app.get('/api/state', asyncRoute(async (_req, res) => {
+  const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua'");
+  if (row) return res.json(row.value);
+
+  // Bootstrap from existing tables on first call
+  const [units, newsRows, reqs, userRows] = await Promise.all([
+    query('SELECT * FROM units ORDER BY id'),
+    query('SELECT n.*, u.name AS author_name FROM news n LEFT JOIN users u ON u.id = n.author_id ORDER BY n.created_at DESC'),
+    query('SELECT r.*, u.name AS unit_name FROM requests r JOIN units u ON u.id = r.unit_id ORDER BY r.created_at DESC'),
+    query('SELECT * FROM users ORDER BY id'),
+  ]);
+
+  const uns = units.map((u) => ({
+    id: u.id,
+    tipo: /^UGAI/i.test(u.name) ? 'UGAI' : 'CIMA',
+    nome: u.name,
+    municipio: u.address || '',
+    regional: '',
+    coords: { lat: u.latitude ?? -9.97, lng: u.longitude ?? -67.81 },
+    status: u.status === 'active' ? 'ativo' : u.status === 'inactive' ? 'inativo' : 'manutencao',
+    taxaUso: u.capacity > 0 ? Math.round((u.current_occupancy / u.capacity) * 100) : 0,
+    ag: u.current_occupancy || 0,
+    descricao: u.description || '',
+    historia: '',
+    decreto: '',
+    orgaos: [],
+    quartos: 0,
+    salas: 0,
+    cozinha: false,
+    auditorio: false,
+    foto: u.banner_url || '',
+    galeria: [],
+    extras: [],
+    visivel: true,
+    orgaosPresentes: [],
+    ocupacaoAtual: u.current_occupancy || 0,
+  }));
+
+  const news = newsRows.map((n) => ({
+    id: n.id,
+    titulo: n.title,
+    resumo: (n.content || '').replace(/<[^>]+>/g, '').slice(0, 120),
+    conteudo: n.content || '',
+    data: (n.created_at || '').slice(0, 10),
+    categoria: n.category || 'Gestão',
+    unidade: '',
+    destaque: false,
+    visivel: true,
+    fonte: n.source || '',
+    autor: n.author_name || '',
+    link: n.link || '',
+  }));
+
+  const sols = reqs.map((r) => ({
+    id: r.id,
+    sol: r.requester_name,
+    org: r.requester_name,
+    un: r.unit_name,
+    ev: r.usage_type,
+    dt: (r.created_at || '').slice(0, 10),
+    st: r.status === 'approved' ? 'aprovada' : r.status === 'rejected' ? 'rejeitada' : 'pendente',
+    notes: r.notes || '',
+  }));
+
+  const users = userRows.map((u) => ({
+    id: u.id,
+    nome: u.name,
+    email: u.email,
+    perfil: u.role === 'admin' ? 'admin' : 'viewer',
+    ativo: true,
+    criadoEm: (u.created_at || '').slice(0, 10),
+  }));
+
+  const state = {
+    uns,
+    news,
+    feeds: [
+      { id: 1, nome: 'Portal SEMA/AC', url: 'https://sema.ac.gov.br/feed', ativo: true, categoria: 'Gestão', sync: '—' },
+      { id: 2, nome: 'INPE — Amazônia', url: 'https://www.inpe.br/rss/noticias.php', ativo: true, categoria: 'Monitoramento', sync: '—' },
+      { id: 3, nome: 'MMA', url: 'https://www.gov.br/mma/pt-br/RSS', ativo: false, categoria: 'Legislação', sync: '—' },
+    ],
+    sols,
+    users,
+    secs: { hero: true, alert: true, bloco: true, mapa: true, dash: true, acesso: true, news: true, ia: false },
+  };
+  res.json(state);
+}));
+
+app.put('/api/state', asyncRoute(async (req, res) => {
+  const state = req.body;
+  if (!state || typeof state !== 'object') return res.status(400).json({ ok: false, error: 'Payload inválido.' });
+  await query(
+    "INSERT INTO app_state (key, value, updated_at) VALUES ('sgua', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
+    [JSON.stringify(state)]
+  );
+  res.json({ ok: true });
+}));
+
 // ─── RSS Feed sync ────────────────────────────────────────────────────────────
 
 app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
