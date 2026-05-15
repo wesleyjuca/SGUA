@@ -1086,7 +1086,7 @@ function PgMapa(p){
     setSelId(unitId);var u=uns.find(function(x){return x.id===unitId;});if(u)onVerUnidade(u);
   },[uns,onVerUnidade]);
 
-  return h("div",{style:{display:"flex",flexDirection:"column",height:isMobile?"calc(100vh - 46px)":"calc(100vh - 52px)"}},
+  return h("div",{style:{display:"flex",flexDirection:"column",height:isMobile?"calc(100vh - 66px)":"calc(100vh - 72px)"}},
     // Toolbar
     h("div",{style:{background:"#fff",borderBottom:"1px solid "+C.cl,padding:"10px 16px",display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",flexShrink:0,zIndex:10}},
       h("div",{style:{position:"relative",flex:1,minWidth:160}},
@@ -1126,7 +1126,7 @@ function PgMapa(p){
         )
       ),
       // Mapa Leaflet
-      h("div",{style:fullscreen?{position:"fixed",inset:0,zIndex:9998,background:"#fff",display:"flex",flexDirection:"column"}:{flex:1,overflow:"hidden"}},
+      h("div",{style:fullscreen?{position:"fixed",inset:0,zIndex:9998,background:"#fff",display:"flex",flexDirection:"column"}:{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}},
         fullscreen&&h("div",{style:{padding:"8px 12px",background:"#fff",borderBottom:"1px solid "+C.cl,display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,zIndex:9999}},
           h("span",{style:{fontSize:13,fontWeight:600,color:C.cd}},"Mapa — Tela cheia"),
           h("button",{onClick:function(){setFullscreen(false);},style:{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.cl,background:"none",color:C.cm,fontSize:12,cursor:"pointer"}},"⊡ Fechar")
