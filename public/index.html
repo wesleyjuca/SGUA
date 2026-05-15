@@ -48,6 +48,7 @@ code{font-family:monospace}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
@@ -170,38 +171,30 @@ function lsClear(){
   }
 }
 
-// Backend API (opcional): quando disponível, sincroniza dados com SQLite via /api/state
-var API_BASE=window.location.hostname==='wesleyjuca.github.io'?'https://sgua-production.up.railway.app':(window.SAGCU_API_BASE||'').replace(/\/$/,'');
-var API_ENABLED=typeof window!=='undefined'&&window.location&&window.location.protocol.indexOf('http')===0;
-function apiUrl(path){return(API_BASE||'')+path;}
+// ── Supabase (direto, sem backend) ───────────────────────────────────────────
+var _supa=null;
+try{
+  if(typeof supabase!=='undefined'){
+    _supa=supabase.createClient(
+      'https://ylbhtjpbejwqgxudrikz.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlsYmh0anBiZWp3cWd4dWRyaWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2MjY3NjMsImV4cCI6MjA5NDIwMjc2M30.FoWdYCpfI8NWavxrXvIqjc2IU7Kxz6NVuWXNKqHBATk'
+    );
+  }else{
+    console.warn('[SGUA] supabase.js não carregou — modo offline (localStorage)');
+  }
+}catch(e){console.warn('[SGUA] Erro ao inicializar Supabase:',e.message);}
 function apiFetchState(){
-  if(!API_ENABLED) return Promise.resolve(null);
-  return fetch(apiUrl('/api/state'),{headers:{'Accept':'application/json'}}).then(function(r){
-    if(!r.ok) throw new Error('Falha ao carregar estado remoto ('+r.status+')');
-    return r.json();
-  });
+  if(!_supa) return Promise.resolve(null);
+  return _supa.from('app_state').select('value').eq('key','sgua').maybeSingle()
+    .then(function(r){return r.data?r.data.value:null;});
 }
 function apiSaveState(payload){
-  if(!API_ENABLED) return Promise.resolve();
-  return fetch(apiUrl('/api/state'),{
-    method:'PUT',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(payload)
-  }).then(function(r){
-    if(!r.ok) throw new Error('Falha ao salvar estado remoto ('+r.status+')');
-    return r.json();
-  });
+  if(!_supa) return Promise.resolve();
+  return _supa.from('app_state')
+    .upsert({key:'sgua',value:payload,updated_at:new Date().toISOString()},{onConflict:'key'});
 }
-function apiSyncFeeds(feeds,news){
-  if(!API_ENABLED) return Promise.resolve({ok:false,error:'Sincronização requer servidor HTTP ativo.'});
-  return fetch(apiUrl('/api/feeds/sync'),{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({feeds:feeds,news:news})
-  }).then(function(r){
-    if(!r.ok) throw new Error('Falha ao sincronizar feeds ('+r.status+')');
-    return r.json();
-  });
+function apiSyncFeeds(){
+  return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Sincronização RSS não disponível nesta versão. Adicione notícias manualmente.']});
 }
 
 
@@ -252,7 +245,10 @@ function approveUso(uns, setUns, unidadeId, orgaoData){
       if(un.id!==unidadeId) return un;
       var novaLista=(un.orgaosPresentes||[]).concat([novoOrgao]);
       var ativos=novaLista.filter(function(o){return o.ativo;}).length;
-      return Object.assign({},un,{orgaosPresentes:novaLista, ocupacaoAtual:ativos});
+      var novaOcupacao={id:novoOrgao.id,orgao:nome,tipo:'temp',espacos:1,
+        dataInicio:novoOrgao.dataEntrada,dataFim:null,motivo:tipo,ativo:true};
+      var novasOcupacoes=(un.ocupacoes||[]).concat([novaOcupacao]);
+      return Object.assign({},un,{orgaosPresentes:novaLista,ocupacaoAtual:ativos,ocupacoes:novasOcupacoes});
     });
     lsSet('uns',atualizadas); // persistência imediata
     return atualizadas;
@@ -281,6 +277,39 @@ function leaveUso(uns, setUns, unidadeId, orgaoId){
     return atualizadas;
   });
   return {ok:true};
+}
+
+function getOcupacoesEm(un,dateStr){
+  var d=dateStr||new Date().toISOString().split('T')[0];
+  return (un.ocupacoes||[]).filter(function(o){
+    if(!o.ativo) return false;
+    if(o.dataInicio>d) return false;
+    if(o.dataFim&&o.dataFim<d) return false;
+    return true;
+  });
+}
+function getDisponibilidade(un,dateStr){
+  var cap=un.capacidade||((un.quartos||0)+(un.salas||0))||1;
+  var ativas=getOcupacoesEm(un,dateStr);
+  var usados=ativas.reduce(function(a,o){return a+(o.espacos||1);},0);
+  var livre=Math.max(0,cap-usados);
+  return {total:cap,usados:Math.min(usados,cap),livre:livre,pct:Math.round((usados/cap)*100)};
+}
+function temConflito(un,novaOc){
+  var cap=un.capacidade||((un.quartos||0)+(un.salas||0))||1;
+  var ini=novaOc.dataInicio,fim=novaOc.dataFim;
+  if(!ini) return false;
+  var dataTeste=ini,iteracoes=0;
+  while(true){
+    var d=getDisponibilidade(un,dataTeste);
+    if(d.livre<(novaOc.espacos||1)) return true;
+    if(!fim||dataTeste>=fim) break;
+    var dt=new Date(dataTeste+'T12:00:00');
+    dt.setDate(dt.getDate()+1);
+    dataTeste=dt.toISOString().split('T')[0];
+    if(++iteracoes>365) break;
+  }
+  return false;
 }
 
 
@@ -856,14 +885,14 @@ var USERS=[
 ];
 
 var UNS=[
-  {id:1,tipo:"CIMA",nome:"CIMA Cruzeiro do Sul",municipio:"Cruzeiro do Sul",regional:"Vale do Juruá",coords:{lat:-7.6278,lng:-72.6656},status:"ativo",taxaUso:78,ag:34,descricao:"Principal centro integrado do Vale do Juruá, atendendo toda a região oeste do estado com estrutura completa para capacitações e eventos.",historia:"Fundado em 2012 como parte do Programa de Fortalecimento Ambiental do Acre, o CIMA Cruzeiro do Sul foi idealizado para centralizar as ações de gestão ambiental no Vale do Juruá.",decreto:"Decreto Estadual nº 4.821/2012",orgaos:["SEMA","SEPLAN","SESACRE"],quartos:12,salas:8,cozinha:true,auditorio:true,foto:"https://placehold.co/800x300/0F5C3A/fff?text=CIMA+Cruzeiro+do+Sul",galeria:[{url:"https://placehold.co/400x280/1A7A4A/fff?text=Auditório",leg:"Auditório principal"},{url:"https://placehold.co/400x280/2E9E63/fff?text=Salas",leg:"Salas de reunião"}],extras:[{id:1,k:"Área total",v:"2.400 m²"},{id:2,k:"Energia solar",v:"Sim — 48 painéis"}],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
-  {id:2,tipo:"CIMA",nome:"CIMA Brasiléia",municipio:"Brasiléia",regional:"Alto Acre",coords:{lat:-11.0047,lng:-68.7422},status:"ativo",taxaUso:31,ag:9,descricao:"Unidade estratégica na fronteira boliviana, suporte a ações ambientais no Alto Acre e região fronteiriça.",historia:"Inaugurado em 2015 para apoiar as ações de fiscalização e monitoramento ambiental na fronteira com a Bolívia.",decreto:"Decreto Estadual nº 5.103/2015",orgaos:["SEMA","SEE","SEAGRI"],quartos:0,salas:6,cozinha:false,auditorio:true,foto:"https://placehold.co/800x300/1565A8/fff?text=CIMA+Brasiléia",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
-  {id:3,tipo:"CIMA",nome:"CIMA Feijó",municipio:"Feijó",regional:"Vale do Envira",coords:{lat:-8.1728,lng:-70.3536},status:"ativo",taxaUso:55,ag:18,descricao:"Centro de apoio ao monitoramento ambiental do Vale do Envira e Tarauacá.",historia:"Criado em 2014 para apoiar operações no Vale do Envira.",decreto:"Decreto Estadual nº 4.950/2014",orgaos:["SEMA","SEINFRA"],quartos:8,salas:6,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/2E9E63/fff?text=CIMA+Feijó",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
-  {id:4,tipo:"CIMA",nome:"CIMA Rio Branco",municipio:"Rio Branco",regional:"Vale do Acre",coords:{lat:-9.9747,lng:-67.8092},status:"ativo",taxaUso:88,ag:52,descricao:"Sede central da rede CIMAs do estado, polo de capacitação ambiental do Acre.",historia:"Inaugurado em 2010, é o maior centro integrado do estado e sede da coordenação da rede CIMA.",decreto:"Decreto Estadual nº 4.100/2010",orgaos:["SEMA","Casa Civil","SEPLAN"],quartos:0,salas:10,cozinha:true,auditorio:true,foto:"https://placehold.co/800x300/0A3D2B/fff?text=CIMA+Rio+Branco",galeria:[],extras:[{id:1,k:"Área total",v:"3.200 m²"}],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
-  {id:5,tipo:"UGAI",nome:"UGAI Tarauacá",municipio:"Tarauacá",regional:"Vale do Juruá",coords:{lat:-8.1601,lng:-70.7689},status:"ativo",taxaUso:62,ag:14,descricao:"Base operacional no Vale do Envira, monitoramento de Áreas de Preservação Permanente.",historia:"Estabelecida em 2018 como base avançada para o monitoramento ambiental no Alto Juruá.",decreto:"Decreto Estadual nº 6.240/2018",orgaos:["SEMA","IBAMA"],quartos:4,salas:3,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/5B3FA8/fff?text=UGAI+Tarauacá",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
-  {id:6,tipo:"UGAI",nome:"UGAI Sena Madureira",municipio:"Sena Madureira",regional:"Vale do Purus",coords:{lat:-9.0658,lng:-68.6589},status:"manutencao",taxaUso:20,ag:3,descricao:"Em processo de modernização com instalação de energia solar e sistema de reúso de água.",historia:"Criada em 2016, em processo de modernização e ampliação desde 2025.",decreto:"Decreto Estadual nº 5.580/2016",orgaos:["SEMA"],quartos:3,salas:2,cozinha:false,auditorio:false,foto:"https://placehold.co/800x300/C4832A/fff?text=UGAI+Sena+Madureira",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
-  {id:7,tipo:"UGAI",nome:"UGAI Jordão",municipio:"Jordão",regional:"Vale do Juruá",coords:{lat:-9.1669,lng:-71.8969},status:"ativo",taxaUso:45,ag:7,descricao:"Apoio a territórios indígenas e áreas de proteção integral no extremo sul do estado.",historia:"Criada em 2019 para apoio a territórios indígenas e áreas protegidas.",decreto:"Decreto Estadual nº 6.580/2019",orgaos:["SEMA","FUNAI"],quartos:6,salas:2,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/1565A8/fff?text=UGAI+Jordão",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0},
-  {id:8,tipo:"UGAI",nome:"UGAI Mâncio Lima",municipio:"Mâncio Lima",regional:"Vale do Juruá",coords:{lat:-7.6133,lng:-72.8969},status:"ativo",taxaUso:58,ag:11,descricao:"Suporte ao monitoramento do Parque Nacional da Serra do Divisor.",historia:"Estabelecida em 2017 para apoiar o Parque Nacional da Serra do Divisor.",decreto:"Decreto Estadual nº 5.900/2017",orgaos:["SEMA","ICMBio"],quartos:5,salas:3,cozinha:true,auditorio:false,foto:"https://placehold.co/800x300/0F5C3A/fff?text=UGAI+Mâncio+Lima",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0}
+  {id:1,tipo:"CIMA",nome:"CIMA Cruzeiro do Sul",municipio:"Cruzeiro do Sul",regional:"Vale do Juruá",coords:{lat:-7.6278,lng:-72.6656},status:"ativo",taxaUso:78,ag:34,descricao:"Principal centro integrado do Vale do Juruá, atendendo toda a região oeste do estado com estrutura completa para capacitações e eventos.",historia:"Fundado em 2012 como parte do Programa de Fortalecimento Ambiental do Acre, o CIMA Cruzeiro do Sul foi idealizado para centralizar as ações de gestão ambiental no Vale do Juruá.",decreto:"Decreto Estadual nº 4.821/2012",orgaos:["SEMA","SEPLAN","SESACRE"],quartos:12,salas:8,cozinha:true,auditorio:true,capacidade:20,foto:"https://placehold.co/800x300/0F5C3A/fff?text=CIMA+Cruzeiro+do+Sul",galeria:[{url:"https://placehold.co/400x280/1A7A4A/fff?text=Auditório",leg:"Auditório principal"},{url:"https://placehold.co/400x280/2E9E63/fff?text=Salas",leg:"Salas de reunião"}],extras:[{id:1,k:"Área total",v:"2.400 m²"},{id:2,k:"Energia solar",v:"Sim — 48 painéis"}],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]},
+  {id:2,tipo:"CIMA",nome:"CIMA Brasiléia",municipio:"Brasiléia",regional:"Alto Acre",coords:{lat:-11.0047,lng:-68.7422},status:"ativo",taxaUso:31,ag:9,descricao:"Unidade estratégica na fronteira boliviana, suporte a ações ambientais no Alto Acre e região fronteiriça.",historia:"Inaugurado em 2015 para apoiar as ações de fiscalização e monitoramento ambiental na fronteira com a Bolívia.",decreto:"Decreto Estadual nº 5.103/2015",orgaos:["SEMA","SEE","SEAGRI"],quartos:0,salas:6,cozinha:false,auditorio:true,capacidade:6,foto:"https://placehold.co/800x300/1565A8/fff?text=CIMA+Brasiléia",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]},
+  {id:3,tipo:"CIMA",nome:"CIMA Feijó",municipio:"Feijó",regional:"Vale do Envira",coords:{lat:-8.1728,lng:-70.3536},status:"ativo",taxaUso:55,ag:18,descricao:"Centro de apoio ao monitoramento ambiental do Vale do Envira e Tarauacá.",historia:"Criado em 2014 para apoiar operações no Vale do Envira.",decreto:"Decreto Estadual nº 4.950/2014",orgaos:["SEMA","SEINFRA"],quartos:8,salas:6,cozinha:true,auditorio:false,capacidade:14,foto:"https://placehold.co/800x300/2E9E63/fff?text=CIMA+Feijó",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]},
+  {id:4,tipo:"CIMA",nome:"CIMA Rio Branco",municipio:"Rio Branco",regional:"Vale do Acre",coords:{lat:-9.9747,lng:-67.8092},status:"ativo",taxaUso:88,ag:52,descricao:"Sede central da rede CIMAs do estado, polo de capacitação ambiental do Acre.",historia:"Inaugurado em 2010, é o maior centro integrado do estado e sede da coordenação da rede CIMA.",decreto:"Decreto Estadual nº 4.100/2010",orgaos:["SEMA","Casa Civil","SEPLAN"],quartos:0,salas:10,cozinha:true,auditorio:true,capacidade:10,foto:"https://placehold.co/800x300/0A3D2B/fff?text=CIMA+Rio+Branco",galeria:[],extras:[{id:1,k:"Área total",v:"3.200 m²"}],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]},
+  {id:5,tipo:"UGAI",nome:"UGAI Tarauacá",municipio:"Tarauacá",regional:"Vale do Juruá",coords:{lat:-8.1601,lng:-70.7689},status:"ativo",taxaUso:62,ag:14,descricao:"Base operacional no Vale do Envira, monitoramento de Áreas de Preservação Permanente.",historia:"Estabelecida em 2018 como base avançada para o monitoramento ambiental no Alto Juruá.",decreto:"Decreto Estadual nº 6.240/2018",orgaos:["SEMA","IBAMA"],quartos:4,salas:3,cozinha:true,auditorio:false,capacidade:7,foto:"https://placehold.co/800x300/5B3FA8/fff?text=UGAI+Tarauacá",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]},
+  {id:6,tipo:"UGAI",nome:"UGAI Sena Madureira",municipio:"Sena Madureira",regional:"Vale do Purus",coords:{lat:-9.0658,lng:-68.6589},status:"manutencao",taxaUso:20,ag:3,descricao:"Em processo de modernização com instalação de energia solar e sistema de reúso de água.",historia:"Criada em 2016, em processo de modernização e ampliação desde 2025.",decreto:"Decreto Estadual nº 5.580/2016",orgaos:["SEMA"],quartos:3,salas:2,cozinha:false,auditorio:false,capacidade:5,foto:"https://placehold.co/800x300/C4832A/fff?text=UGAI+Sena+Madureira",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]},
+  {id:7,tipo:"UGAI",nome:"UGAI Jordão",municipio:"Jordão",regional:"Vale do Juruá",coords:{lat:-9.1669,lng:-71.8969},status:"ativo",taxaUso:45,ag:7,descricao:"Apoio a territórios indígenas e áreas de proteção integral no extremo sul do estado.",historia:"Criada em 2019 para apoio a territórios indígenas e áreas protegidas.",decreto:"Decreto Estadual nº 6.580/2019",orgaos:["SEMA","FUNAI"],quartos:6,salas:2,cozinha:true,auditorio:false,capacidade:8,foto:"https://placehold.co/800x300/1565A8/fff?text=UGAI+Jordão",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]},
+  {id:8,tipo:"UGAI",nome:"UGAI Mâncio Lima",municipio:"Mâncio Lima",regional:"Vale do Juruá",coords:{lat:-7.6133,lng:-72.8969},status:"ativo",taxaUso:58,ag:11,descricao:"Suporte ao monitoramento do Parque Nacional da Serra do Divisor.",historia:"Estabelecida em 2017 para apoiar o Parque Nacional da Serra do Divisor.",decreto:"Decreto Estadual nº 5.900/2017",orgaos:["SEMA","ICMBio"],quartos:5,salas:3,cozinha:true,auditorio:false,capacidade:8,foto:"https://placehold.co/800x300/0F5C3A/fff?text=UGAI+Mâncio+Lima",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[]}
 ];
 
 var NWS=[
@@ -1313,9 +1342,162 @@ function TelaLogin(p){
   );
 }
 
+// ─── CALENDÁRIO DE DISPONIBILIDADE ───────────────────────────────────────────
+function CalendarioSol(p){
+  var hoje=new Date();
+  var sM=useState(hoje.getMonth());var mes=sM[0],setMes=sM[1];
+  var sY=useState(hoje.getFullYear());var ano=sY[0],setAno=sY[1];
+  var un=p.uns&&p.uns.find(function(u){return u.nome===p.unId;});
+  function navMes(d){
+    var nm=mes+d;
+    if(nm<0){setMes(11);setAno(function(y){return y-1;});}
+    else if(nm>11){setMes(0);setAno(function(y){return y+1;});}
+    else setMes(nm);
+  }
+  var MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+  var DIAS=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+  var primeiroDia=new Date(ano,mes,1).getDay();
+  var ultimoDia=new Date(ano,mes+1,0).getDate();
+  var hojeStr=hoje.toISOString().split('T')[0];
+  var cells=[];
+  for(var i=0;i<primeiroDia;i++) cells.push(null);
+  for(var d=1;d<=ultimoDia;d++) cells.push(d);
+  function getDayStyle(d){
+    var dateStr=ano+'-'+String(mes+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    if(dateStr<hojeStr) return {bg:'#F7F8F5',c:'#9BA88F',cursor:'default'};
+    if(!un) return {bg:'#F7F8F5',c:'#6B7260',cursor:'pointer'};
+    if(un.status==='manutencao') return {bg:'#FFF3E0',c:'#C4832A',cursor:'not-allowed'};
+    var disp=getDisponibilidade(un,dateStr);
+    if(disp.livre===0) return {bg:'#FCEBEB',c:'#A32D2D',cursor:'not-allowed'};
+    if(disp.pct>=70) return {bg:'#FFF3E0',c:'#C4832A',cursor:'pointer'};
+    return {bg:'#EAF7EE',c:'#1A7A4A',cursor:'pointer'};
+  }
+  return h("div",{style:{border:"1px solid #DEE2D8",borderRadius:12,overflow:"hidden",background:"#fff"}},
+    h("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",background:"#0F5C3A"}},
+      h("button",{onClick:function(){navMes(-1);},style:{background:"none",border:"none",color:"#fff",fontSize:18,cursor:"pointer",padding:"0 8px"}},"‹"),
+      h("span",{style:{color:"#fff",fontWeight:700,fontSize:14}},MESES[mes]+" "+ano),
+      h("button",{onClick:function(){navMes(1);},style:{background:"none",border:"none",color:"#fff",fontSize:18,cursor:"pointer",padding:"0 8px"}},"›")
+    ),
+    h("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",background:"#EAF7EE",borderBottom:"1px solid #DEE2D8"}},
+      DIAS.map(function(d){return h("div",{key:d,style:{textAlign:"center",padding:"6px 0",fontSize:11,fontWeight:700,color:"#6B7260"}},d);})),
+    h("div",{style:{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,padding:6}},
+      cells.map(function(d,i){
+        if(!d) return h("div",{key:"e"+i});
+        var dc=getDayStyle(d);
+        var dateStr=ano+'-'+String(mes+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
+        var isSel=p.selectedDate===dateStr;
+        return h("div",{key:d,onClick:function(){if(dc.cursor==='pointer')p.onSelectDate(dateStr);},
+          style:{textAlign:"center",padding:"7px 4px",borderRadius:8,cursor:dc.cursor,
+            background:isSel?'#1A7A4A':dc.bg,color:isSel?'#fff':dc.c,
+            fontWeight:isSel?700:400,fontSize:13,
+            border:isSel?'2px solid #0F5C3A':'2px solid transparent',transition:'all .1s'}},d);
+      })
+    ),
+    h("div",{style:{display:"flex",gap:16,padding:"8px 12px",borderTop:"1px solid #DEE2D8",fontSize:11,color:"#6B7260",flexWrap:"wrap"}},
+      [["#EAF7EE","Disponível"],["#FFF3E0","Parcial"],["#FCEBEB","Ocupado"],["#F7F8F5","Bloqueado"]].map(function(it){
+        return h("span",{key:it[1],style:{display:"flex",alignItems:"center",gap:4}},
+          h("span",{style:{width:10,height:10,borderRadius:3,background:it[0],border:"1px solid #DEE2D8",display:"inline-block"}}),it[1]);
+      })
+    )
+  );
+}
+
+// ─── FORMULÁRIO DE OCUPAÇÃO ADMIN ─────────────────────────────────────────────
+function AdminOcupacaoForm(p){
+  var f=p.f,sv=p.sv,C=p.C;
+  var DEFoc={orgao:"",tipo:"temp",espacos:1,dataInicio:new Date().toISOString().split('T')[0],dataFim:"",indefinido:false,motivo:"",ativo:true};
+  var sNoc=useState(DEFoc);var noc=sNoc[0],setNoc=sNoc[1];
+  var sErr=useState("");var erroOc=sErr[0],setErroOc=sErr[1];
+  var lbl={fontSize:11,color:C.cm,display:"block",marginBottom:4};
+  var ocupacoes=f.ocupacoes||[];
+  var cap=f.capacidade||((f.quartos||0)+(f.salas||0))||1;
+  var ativas=ocupacoes.filter(function(o){return o.ativo;});
+  var usados=ativas.reduce(function(a,o){return a+(o.espacos||1);},0);
+  function addOcupacao(){
+    setErroOc("");
+    if(!noc.orgao.trim()){setErroOc("Informe o órgão.");return;}
+    if(noc.tipo!=='manut'&&!noc.motivo.trim()){setErroOc("Informe o motivo.");return;}
+    var novaOc=Object.assign({},noc,{
+      id:String(Date.now())+'_'+Math.random().toString(36).slice(2,5),
+      dataFim:noc.indefinido?null:noc.dataFim||null
+    });
+    var un=Object.assign({},f,{ocupacoes:ocupacoes});
+    if(temConflito(un,novaOc)){setErroOc("Conflito de capacidade: espaços insuficientes no período indicado.");return;}
+    sv("ocupacoes",ocupacoes.concat([novaOc]));
+    setNoc(DEFoc);
+  }
+  function removeOcupacao(id){
+    sv("ocupacoes",ocupacoes.map(function(o){
+      return o.id===id?Object.assign({},o,{ativo:false,dataFim:new Date().toISOString().split('T')[0]}):o;
+    }));
+  }
+  var TIPO_LABELS={temp:"Temporária",perm:"Permanente",cessao:"Cessão",manut:"Manutenção"};
+  var TIPO_CORES={temp:C.b1,perm:C.g2,cessao:C.pm,manut:C.am};
+  return h("div",null,
+    h("div",{style:{display:"flex",gap:12,marginBottom:16}},
+      h(StatBox,{label:"Capacidade total",value:cap,color:C.g2}),
+      h(StatBox,{label:"Em uso",value:Math.min(usados,cap),color:usados>=cap?C.rm:C.am}),
+      h(StatBox,{label:"Disponível",value:Math.max(0,cap-usados),color:C.g2})
+    ),
+    ativas.length>0&&h(Card,{style:{padding:"14px 18px",marginBottom:14}},
+      h("div",{style:{fontSize:11,fontWeight:700,color:C.cm,marginBottom:10}},"OCUPAÇÕES ATIVAS"),
+      ativas.map(function(o){
+        var cor=TIPO_CORES[o.tipo]||C.cm;
+        return h("div",{key:o.id,style:{display:"flex",justifyContent:"space-between",alignItems:"center",
+            padding:"8px 0",borderBottom:"0.5px solid "+C.cl,gap:8,flexWrap:"wrap"}},
+          h("div",null,
+            h("div",{style:{display:"flex",gap:6,alignItems:"center",marginBottom:3}},
+              h(Pill,{t:TIPO_LABELS[o.tipo]||o.tipo,c:cor,b:cor+"20"}),
+              h("span",{style:{fontSize:13,fontWeight:600,color:C.cd}},o.orgao)
+            ),
+            h("div",{style:{fontSize:11,color:C.cm}},
+              o.motivo+" · "+o.espacos+" espaço(s) · "+formatData(o.dataInicio)+" → "+(o.dataFim?formatData(o.dataFim):"Indeterminado"))
+          ),
+          h("button",{onClick:function(){removeOcupacao(o.id);},
+            style:{padding:"4px 12px",borderRadius:7,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:11,cursor:"pointer"}},"Encerrar")
+        );
+      })
+    ),
+    h(Card,{style:{padding:"14px 18px"}},
+      h("div",{style:{fontSize:11,fontWeight:700,color:C.cm,marginBottom:12}},"REGISTRAR OCUPAÇÃO"),
+      erroOc&&h("div",{style:{background:C.rl,color:C.rm,borderRadius:8,padding:"8px 12px",fontSize:12,marginBottom:10}},erroOc),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}},
+        h("div",null,h("label",{style:lbl},"Órgão *"),
+          h("input",{value:noc.orgao,onChange:function(e){setNoc(function(n){return Object.assign({},n,{orgao:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Tipo *"),
+          h("select",{value:noc.tipo,onChange:function(e){setNoc(function(n){return Object.assign({},n,{tipo:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}},
+            h("option",{value:"temp"},"Temporária"),
+            h("option",{value:"perm"},"Permanente"),
+            h("option",{value:"cessao"},"Cessão"),
+            h("option",{value:"manut"},"Manutenção")
+          )),
+        h("div",null,h("label",{style:lbl},"Espaços (salas/quartos)"),
+          h("input",{type:"number",min:1,max:cap,value:noc.espacos,
+            onChange:function(e){setNoc(function(n){return Object.assign({},n,{espacos:Math.max(1,+e.target.value)});});},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Data início *"),
+          h("input",{type:"date",value:noc.dataInicio,
+            onChange:function(e){setNoc(function(n){return Object.assign({},n,{dataInicio:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
+        !noc.indefinido&&h("div",null,h("label",{style:lbl},"Data fim"),
+          h("input",{type:"date",value:noc.dataFim,
+            onChange:function(e){setNoc(function(n){return Object.assign({},n,{dataFim:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:12,cursor:"pointer",paddingTop:16}},
+          h("input",{type:"checkbox",checked:noc.indefinido,
+            onChange:function(e){setNoc(function(n){return Object.assign({},n,{indefinido:e.target.checked,dataFim:""});});},
+            style:{accentColor:C.g2,width:14,height:14}}),"Prazo indeterminado")),
+        h("div",{style:{gridColumn:"1/-1"}},h("label",{style:lbl},"Motivo/observação *"),
+          h("input",{value:noc.motivo,
+            onChange:function(e){setNoc(function(n){return Object.assign({},n,{motivo:e.target.value});});},
+            placeholder:"Ex: Capacitação ambiental, cessão para SEPLAN, reforma parcial...",
+            style:{width:"100%",boxSizing:"border-box"}}))
+      ),
+      h("button",{onClick:addOcupacao,style:{marginTop:12,padding:"8px 20px",borderRadius:9,border:"none",background:C.g2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"Registrar ocupação")
+    )
+  );
+}
+
 // ─── FORMULÁRIOS ADMIN ────────────────────────────────────────────────────────
 function FmUn(p){
-  var DEF={id:null,tipo:"CIMA",nome:"",municipio:"",regional:"Vale do Juruá",coords:{lat:-9.0,lng:-70.0},status:"ativo",descricao:"",historia:"",decreto:"",orgaos:[],quartos:0,salas:0,cozinha:false,auditorio:false,taxaUso:0,ag:0,foto:"",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0};
+  var DEF={id:null,tipo:"CIMA",nome:"",municipio:"",regional:"Vale do Juruá",coords:{lat:-9.0,lng:-70.0},status:"ativo",descricao:"",historia:"",decreto:"",orgaos:[],quartos:0,salas:0,cozinha:false,auditorio:false,taxaUso:0,ag:0,foto:"",galeria:[],extras:[],visivel:true,orgaosPresentes:[],ocupacaoAtual:0,ocupacoes:[],capacidade:0};
   var sF=useState(p.init||DEF);var f=sF[0],setF=sF[1];
   var sA=useState("dados");var ab=sA[0],setAb=sA[1];
   var sUp=useState(false);var galUploading=sUp[0],setGalUploading=sUp[1];
@@ -1335,7 +1517,7 @@ function FmUn(p){
   }
   var lbl={fontSize:11,color:C.cm,display:"block",marginBottom:4};
   var REGS=["Vale do Juruá","Vale do Acre","Vale do Purus","Vale do Envira","Alto Acre"];
-  var ABAS=[["dados","Dados"],["historia","História"],["galeria","Fotos"],["extras","Extras"]];
+  var ABAS=[["dados","Dados"],["historia","História"],["galeria","Fotos"],["extras","Extras"],["ocupacao","Ocupação"]];
 
   return h("div",null,
     h("div",{style:{display:"flex",gap:4,marginBottom:16,borderBottom:"1px solid "+C.cl}},
@@ -1355,6 +1537,7 @@ function FmUn(p){
       h("div",null,h("label",{style:lbl},"Taxa de uso (%)"),h("input",{type:"number",min:0,max:100,value:f.taxaUso,onChange:function(e){sv("taxaUso",+e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
       h("div",null,h("label",{style:lbl},"Quartos"),h("input",{type:"number",min:0,value:f.quartos,onChange:function(e){sv("quartos",+e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
       h("div",null,h("label",{style:lbl},"Salas"),h("input",{type:"number",min:0,value:f.salas,onChange:function(e){sv("salas",+e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+      h("div",null,h("label",{style:lbl},"Capacidade total (espaços)"),h("input",{type:"number",min:1,value:f.capacidade||((f.quartos||0)+(f.salas||0)),onChange:function(e){sv("capacidade",+e.target.value||1);},style:{width:"100%",boxSizing:"border-box"}})),
       h("div",{style:{gridColumn:"1/-1",display:"flex",gap:20}},
         [["cozinha","🍽 Cozinha"],["auditorio","🎤 Auditório"],["visivel","👁 Visível"]].map(function(pr){
           return h("label",{key:pr[0],style:{display:"flex",alignItems:"center",gap:6,fontSize:13,cursor:"pointer"}},
@@ -1402,6 +1585,7 @@ function FmUn(p){
         );
       })
     ),
+    ab==="ocupacao"&&h(AdminOcupacaoForm,{f:f,sv:sv,C:C}),
     h("div",{style:{display:"flex",gap:8,justifyContent:"flex-end",paddingTop:16,marginTop:16,borderTop:"1px solid "+C.cl}},
       h("button",{onClick:p.onClose,style:{padding:"9px 20px",borderRadius:8,border:"1px solid "+C.cl,background:"none",fontSize:13,cursor:"pointer"}},"Cancelar"),
       h("button",{onClick:function(){if(!f.nome||!f.municipio){alert("Nome e município obrigatórios.");return;}p.onSave(f);},style:{padding:"9px 22px",borderRadius:8,border:"none",background:C.g2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"Salvar")
@@ -2178,11 +2362,20 @@ function App(){
             )
           ),
           h(Card,{style:{padding:"20px 22px"}},
+            h("div",{style:{fontSize:13,fontWeight:700,color:C.g2,marginBottom:14}},"Disponibilidade"),
+            h("div",{style:{marginBottom:12}},
+              h("label",{style:lbl11},"Selecione a unidade *"),
+              h("select",{value:sf.un,onChange:function(e){setSf(function(f){return Object.assign({},f,{un:e.target.value,dt:""});});},style:{width:"100%",boxSizing:"border-box",marginBottom:12}},
+                h("option",{value:""},"Selecione"),
+                uns.filter(function(u){return u.visivel;}).map(function(u){return h("option",{key:u.id},u.nome);}))
+            ),
+            h(CalendarioSol,{uns:uns,unId:sf.un,selectedDate:sf.dt,onSelectDate:function(d){setSf(function(f){return Object.assign({},f,{dt:d});});}}),
+            sf.dt&&sf.un&&h("div",{style:{marginTop:10,fontSize:13,color:C.g2,fontWeight:600}},"✓ Data selecionada: "+formatData(sf.dt))
+          ),
+          h(Card,{style:{padding:"20px 22px"}},
             h("div",{style:{fontSize:13,fontWeight:700,color:C.g2,marginBottom:14}},"Dados da solicitação"),
             h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:12}},
-              h("div",null,h("label",{style:lbl11},"Unidade *"),h("select",{value:sf.un,onChange:function(e){setSf(function(f){return Object.assign({},f,{un:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}},h("option",{value:""},"Selecione"),uns.filter(function(u){return u.visivel;}).map(function(u){return h("option",{key:u.id},u.nome);}))),
               h("div",null,h("label",{style:lbl11},"Tipo de evento *"),h("select",{value:sf.ev,onChange:function(e){setSf(function(f){return Object.assign({},f,{ev:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}},h("option",{value:""},"Selecione"),["Reunião técnica","Capacitação","Evento institucional","Hospedagem","Fiscalização","Outro"].map(function(o){return h("option",{key:o},o);}))),
-              h("div",null,h("label",{style:lbl11},"Data *"),h("input",{type:"date",value:sf.dt,onChange:function(e){setSf(function(f){return Object.assign({},f,{dt:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
               h("div",null,h("label",{style:lbl11},"Horário"),h("input",{type:"time",value:sf.hr,onChange:function(e){setSf(function(f){return Object.assign({},f,{hr:e.target.value});});},style:{width:"100%",boxSizing:"border-box"}})),
               h("div",{style:{gridColumn:"1/-1"}},h("label",{style:lbl11},"Justificativa"),h("textarea",{value:sf.just,onChange:function(e){setSf(function(f){return Object.assign({},f,{just:e.target.value});});},rows:3,style:{width:"100%",boxSizing:"border-box",resize:"vertical",fontFamily:"sans-serif",fontSize:13,borderRadius:8,border:"0.5px solid #ccc",padding:"8px 12px"}}))
             )
@@ -2208,9 +2401,15 @@ function App(){
       h(Card,{style:{padding:"18px 20px"}},
         uns.filter(function(u){return u.visivel;}).map(function(u){
           var scr=scMap[u.status]||[C.cm,C.cx];var sc=scr[0],sbg=scr[1];
+          var disp=getDisponibilidade(u,null);
           return h("div",{key:u.id,style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"0.5px solid "+C.cl,flexWrap:"wrap",gap:8}},
             h("div",null,h("div",{style:{fontSize:13,fontWeight:600,color:C.cd}},u.nome),h("div",{style:{fontSize:11,color:C.cm}},"📍 "+u.coords.lat.toFixed(4)+", "+u.coords.lng.toFixed(4)+" · "+u.municipio)),
-            h("div",{style:{display:"flex",gap:8,alignItems:"center"}},h(Pill,{t:slabel(u.status),c:sc,b:sbg}),h("span",{style:{fontSize:12,color:C.cm}},u.taxaUso+"%"),h("button",{onClick:function(){setUVista(u);},style:{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.g2,background:"none",color:C.g2,fontSize:11,cursor:"pointer"}},"Ver"))
+            h("div",{style:{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}},
+              h(Pill,{t:slabel(u.status),c:sc,b:sbg}),
+              h("span",{style:{fontSize:11,color:C.cm}},disp.livre+"/"+disp.total+" livres"),
+              h("div",{style:{width:60,height:6,borderRadius:3,background:C.cl,overflow:"hidden"}},
+                h("div",{style:{height:"100%",width:disp.pct+"%",background:disp.pct>=90?C.rm:disp.pct>=60?C.am:C.g2,borderRadius:3}})),
+              h("button",{onClick:function(){setUVista(u);},style:{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.g2,background:"none",color:C.g2,fontSize:11,cursor:"pointer"}},"Ver"))
           );
         })
       )
