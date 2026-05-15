@@ -915,7 +915,7 @@ var PD={admin:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel
 
 // ─── DADOS ────────────────────────────────────────────────────────────────────
 var USERS=[
-  {id:1,nome:"Administrador SEMA",email:"admin@sema.ac.gov.br",pwdHash:hashPwd("admin123"),perfil:"admin",ativo:true,criadoEm:"2024-01-10",permissoes:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true}},
+  {id:1,nome:"Administrador SEMA",email:"admin@sema.ac.gov.br",pwdHash:hashPwd("SemaAC@2026"),perfil:"admin",ativo:true,criadoEm:"2024-01-10",permissoes:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true}},
   {id:2,nome:"Carlos Mendes",email:"gestor@sema.ac.gov.br",pwdHash:hashPwd("gestor123"),perfil:"gestor",ativo:true,criadoEm:"2024-03-15",permissoes:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,rel:true}},
   {id:3,nome:"Ana Rodrigues",email:"viewer@sema.ac.gov.br",pwdHash:hashPwd("viewer123"),perfil:"viewer",ativo:true,criadoEm:"2024-06-01",permissoes:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,rel:false}}
 ];
@@ -1106,7 +1106,7 @@ function PgMapa(p){
     // Layout
     h("div",{style:{display:"flex",flex:1,overflow:"hidden",flexDirection:isMobile?"column":"row"}},
       // Lista lateral
-      h("div",{style:{width:isMobile?"100%":256,height:isMobile?190:"auto",flexShrink:0,background:"#fff",borderRight:isMobile?"none":"1px solid "+C.cl,borderBottom:isMobile?"1px solid "+C.cl:"none",display:"flex",flexDirection:"column",overflow:"hidden"}},
+      h("div",{style:{width:isMobile?"100%":220,height:isMobile?150:"auto",flexShrink:0,background:"#fff",borderRight:isMobile?"none":"1px solid "+C.cl,borderBottom:isMobile?"1px solid "+C.cl:"none",display:"flex",flexDirection:"column",overflow:"hidden"}},
         h("div",{style:{padding:"11px 14px 8px",borderBottom:"0.5px solid "+C.cl,fontSize:11,fontWeight:700,color:C.cm,letterSpacing:.5,flexShrink:0}},"UNIDADES NO MAPA"),
         h("div",{style:{flex:1,overflowY:"auto",padding:8}},
           filtradas.length===0&&h("div",{style:{textAlign:"center",padding:"28px 12px",color:C.cm,fontSize:13}},"Nenhuma unidade encontrada."),
@@ -1131,7 +1131,7 @@ function PgMapa(p){
           h("span",{style:{fontSize:13,fontWeight:600,color:C.cd}},"Mapa — Tela cheia"),
           h("button",{onClick:function(){setFullscreen(false);},style:{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.cl,background:"none",color:C.cm,fontSize:12,cursor:"pointer"}},"⊡ Fechar")
         ),
-        h("div",{style:{flex:1,overflow:"hidden"}},
+        h("div",{style:{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}},
           h(MapView,{units:filtradas,height:"100%",compact:false,singleUnit:false,onSelectUnit:handleSelectUnit})
         )
       )
@@ -2297,7 +2297,7 @@ function App(){
   var sNws=useState(function(){return lsGet("news",NWS);});var news=sNws[0],setNews=sNws[1];
   var sFds=useState(function(){return lsGet("feeds",FDS);});var feeds=sFds[0],setFeeds=sFds[1];
   var sUsr=useState(function(){return lsGet("users",USERS);});var users=sUsr[0],setUsers=sUsr[1];
-  var sCU=useState(null);var curUser=sCU[0],setCurUser=sCU[1];
+  var sCU=useState(function(){return lsGet('curUser',null);});var curUser=sCU[0],setCurUser=sCU[1];
   var sSL=useState(false);var showLogin=sSL[0],setShowLogin=sSL[1];
   var sAT=useState("dash");var atab=sAT[0],setAtab=sAT[1];
   var sTt=useState(null);var toast=sTt[0],setToast=sTt[1];
@@ -2622,7 +2622,7 @@ function App(){
             h("div",{style:{fontSize:10}},PL[curUser.perfil])
           ),
           h("button",{onClick:function(){if(curUser)go("admin");else setShowLogin(true);},style:{background:page==="admin"?"rgba(255,255,255,.15)":"rgba(255,255,255,.07)",border:"0.5px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.75)",padding:isMobile?"6px 8px":"6px 12px",borderRadius:8,fontSize:12,cursor:"pointer"}},isMobile?"⚙":"⚙ Admin"),
-          curUser&&h("button",{onClick:function(){setCurUser(null);if(page==="admin")go("home");},style:{background:"none",border:"0.5px solid rgba(255,255,255,.15)",color:"rgba(255,255,255,.45)",padding:"6px 10px",borderRadius:8,fontSize:11,cursor:"pointer"}},"Sair")
+          curUser&&h("button",{onClick:function(){lsSet('curUser',null);setCurUser(null);if(page==="admin")go("home");},style:{background:"none",border:"0.5px solid rgba(255,255,255,.15)",color:"rgba(255,255,255,.45)",padding:"6px 10px",borderRadius:8,fontSize:11,cursor:"pointer"}},"Sair")
         )
       )
     );
@@ -2632,7 +2632,7 @@ function App(){
 
   return h("div",{style:{fontFamily:"sans-serif",background:"#fff",minHeight:"100vh"}},
 
-    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,onLogin:function(u){setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);},onAuthFail:addLog}),
+    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,onLogin:function(u){lsSet('curUser',u);setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);},onAuthFail:addLog}),
     toast&&h(Toast,{msg:toast.m,color:toast.c,onDone:function(){setToast(null);}}),
     conf&&h(Confirm,{nome:conf.nome,onConfirm:conf.fn,onClose:function(){setConf(null);}}),
     dbOffline&&h("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",background:"#fff",border:"1.5px solid "+C.am,borderRadius:10,padding:"10px 20px",fontSize:13,color:C.am,boxShadow:"0 2px 16px rgba(0,0,0,.15)",zIndex:9999,display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}},
