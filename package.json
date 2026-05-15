@@ -1,15 +1,22 @@
 {
   "name": "sgua",
-  "version": "4.2.0",
+  "version": "5.0.0",
   "private": true,
-  "description": "SEMA/AC - Sistema de Gestão CIMA & UGAI com persistência em SQLite",
+  "description": "SEMA/AC - Sistema de Gestão CIMA & UGAI com persistência em Supabase (PostgreSQL)",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "validate:system": "node scripts/validate-system.js"
+    "start": "node --dns-result-order=ipv4first server.js",
+    "dev": "node --env-file=.env server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "dependencies": {
     "express": "^4.21.2",
-    "sqlite3": "^5.1.7"
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "pdfkit": "^0.18.0"
   }
 }

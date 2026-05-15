@@ -1,3 +1,8 @@
+// Quando rodando no GitHub Pages, as chamadas de API vão para o Railway
+export const BASE = window.location.hostname === 'wesleyjuca.github.io'
+  ? 'https://sgua-production.up.railway.app'
+  : '';
+
 const headers = { 'Content-Type': 'application/json' };
 
 async function handle(res) {
@@ -8,9 +13,20 @@ async function handle(res) {
   return payload.data ?? payload;
 }
 
+const timeout = () => ({ signal: AbortSignal.timeout(15_000) });
+
 export const api = {
-  get: (url) => fetch(url).then(handle),
-  post: (url, body) => fetch(url, { method: 'POST', headers, body: JSON.stringify(body) }).then(handle),
-  put: (url, body) => fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) }).then(handle),
-  delete: (url) => fetch(url, { method: 'DELETE' }).then(handle)
+  get: (url) => fetch(BASE + url, timeout()).then(handle),
+  post: (url, body) => fetch(BASE + url, { ...timeout(), method: 'POST', headers, body: JSON.stringify(body) }).then(handle),
+  put: (url, body) => fetch(BASE + url, { ...timeout(), method: 'PUT', headers, body: JSON.stringify(body) }).then(handle),
+  delete: (url) => fetch(BASE + url, { ...timeout(), method: 'DELETE' }).then(handle)
 };
+
+export function esc(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}

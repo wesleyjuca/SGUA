@@ -1,63 +1,115 @@
-const fs = require('fs');
+'use strict';
+
 const path = require('path');
+const fs = require('fs');
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const multer = require('multer');
+const { Pool } = require('pg');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_PATH = process.env.SGUA_DB_PATH
-  ? path.resolve(process.env.SGUA_DB_PATH)
-  : path.join(DATA_DIR, 'sgua.db');
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const UPLOADS_DIR = path.join(PUBLIC_DIR, 'uploads', 'photos');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOADS_DIR,
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.jpg';
+      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+    }
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    cb(null, /^image\/(jpeg|png|webp|gif)$/.test(file.mimetype));
+  }
+});
+
+if (!process.env.DATABASE_URL) {
+  console.error('Erro: DATABASE_URL é obrigatória no ambiente.');
+  process.exit(1);
 }
 
-const db = new sqlite3.Database(DB_PATH);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000
+});
 
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function onRun(err) {
-      if (err) return reject(err);
-      resolve(this);
-    });
-  });
+pool.on('error', (err) => {
+  console.error('[Pool] Erro inesperado em cliente inativo:', err.message);
+});
+
+// ─── DB helpers ───────────────────────────────────────────────────────────────
+
+async function query(sql, params = []) {
+  const { rows } = await pool.query(sql, params);
+  return rows;
 }
 
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
-  });
+async function queryOne(sql, params = []) {
+  const { rows } = await pool.query(sql, params);
+  return rows[0] ?? null;
 }
 
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row);
-    });
-  });
+async function withTransaction(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
+
+// ─── General helpers ──────────────────────────────────────────────────────────
 
 function validateEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ''));
 }
 
 function sanitizeText(value, max = 255) {
-  const v = String(value || '').trim();
-  return v.slice(0, max);
+  return String(value || '').trim().slice(0, max);
 }
 
 function parsePositiveId(value) {
   const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) return null;
-  return parsed;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
+
+function isSafeUrl(url) {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function pgError(err, res) {
+  if (err.code === '23505') {
+    return res.status(409).json({ ok: false, error: 'Operação violou uma restrição de dados.' });
+  }
+  if (err.code === '23503') {
+    return res.status(400).json({ ok: false, error: 'Referência inválida.' });
+  }
+  console.error('[DB]', err.message);
+  return res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
+}
+
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+}
+
+// ─── RSS helpers ─────────────────────────────────────────────────────────────
 
 function decodeXmlEntities(input) {
   if (!input || typeof input !== 'string') return '';
@@ -92,11 +144,14 @@ function normalizeCategory(rawCategory) {
   return 'Monitoramento';
 }
 
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
 function normalizeDate(rawDate) {
-  if (!rawDate) return new Date().toISOString().split('T')[0];
+  if (!rawDate) return today();
   const parsed = new Date(rawDate);
-  if (Number.isNaN(parsed.getTime())) return new Date().toISOString().split('T')[0];
-  return parsed.toISOString().split('T')[0];
+  return Number.isNaN(parsed.getTime()) ? today() : parsed.toISOString().split('T')[0];
 }
 
 async function fetchFeedItems(feed) {
@@ -107,31 +162,51 @@ async function fetchFeedItems(feed) {
       headers: { 'User-Agent': 'SGUA-RSS-Sync/1.0 (+https://sema.ac.gov.br)' },
       signal: ctrl.signal
     });
-    if (!response.ok) {
-      return { ok: false, error: `HTTP ${response.status}` };
-    }
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
     const xml = await response.text();
-    const itemRegex = /<item\b[\s\S]*?<\/item>/gi;
     const items = [];
+
+    // RSS 2.0 — <item>
+    const itemRx = /<item\b[\s\S]*?<\/item>/gi;
     let match;
-    while ((match = itemRegex.exec(xml)) !== null) {
+    while ((match = itemRx.exec(xml)) !== null) {
       const block = match[0];
       const title = extractTag(block, 'title');
       if (!title) continue;
-      const description = extractTag(block, 'description');
-      const link = extractTag(block, 'link');
-      const pubDate = extractTag(block, 'pubDate');
-      const category = extractTag(block, 'category');
+      const rawLink = extractTag(block, 'link');
       items.push({
         title,
-        description,
-        link,
-        date: normalizeDate(pubDate),
-        category: normalizeCategory(category || feed.categoria),
+        description: extractTag(block, 'description'),
+        link: isSafeUrl(rawLink) ? rawLink : '',
+        date: normalizeDate(extractTag(block, 'pubDate')),
+        category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
         source: feed.nome
       });
       if (items.length >= 8) break;
     }
+
+    // Atom — <entry> fallback (feeds gov.br, etc.)
+    if (items.length === 0) {
+      const entryRx = /<entry\b[\s\S]*?<\/entry>/gi;
+      let em;
+      while ((em = entryRx.exec(xml)) !== null) {
+        const block = em[0];
+        const title = extractTag(block, 'title');
+        if (!title) continue;
+        const hrefMatch = block.match(/<link[^>]+href=["']([^"']+)["']/i);
+        const rawLink = hrefMatch ? hrefMatch[1] : extractTag(block, 'link');
+        items.push({
+          title,
+          description: extractTag(block, 'summary') || extractTag(block, 'content'),
+          link: isSafeUrl(rawLink) ? rawLink : '',
+          date: normalizeDate(extractTag(block, 'published') || extractTag(block, 'updated')),
+          category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
+          source: feed.nome
+        });
+        if (items.length >= 8) break;
+      }
+    }
+
     return { ok: true, items };
   } catch (error) {
     return { ok: false, error: error.name === 'AbortError' ? 'timeout' : error.message };
@@ -140,94 +215,56 @@ async function fetchFeedItems(feed) {
   }
 }
 
-async function initDb() {
-  await run('PRAGMA foreign_keys = ON');
+// ─── Middleware ───────────────────────────────────────────────────────────────
 
-  await run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL UNIQUE,
-      role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'manager', 'viewer')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS units (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      address TEXT,
-      latitude REAL,
-      longitude REAL,
-      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
-      capacity INTEGER NOT NULL DEFAULT 0,
-      current_occupancy INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS occupancy_records (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      unit_id INTEGER NOT NULL,
-      user_id INTEGER,
-      organization_name TEXT NOT NULL,
-      usage_type TEXT NOT NULL,
-      start_date TEXT NOT NULL DEFAULT (date('now')),
-      end_date TEXT,
-      active INTEGER NOT NULL DEFAULT 1,
-      FOREIGN KEY(unit_id) REFERENCES units(id) ON DELETE CASCADE,
-      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS news (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      author_id INTEGER,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(author_id) REFERENCES users(id) ON DELETE SET NULL
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      unit_id INTEGER NOT NULL,
-      requester_name TEXT NOT NULL,
-      requester_email TEXT,
-      usage_type TEXT NOT NULL,
-      notes TEXT,
-      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(unit_id) REFERENCES units(id) ON DELETE CASCADE
-    )
-  `);
-
-  const admin = await get('SELECT id FROM users WHERE email = ?', ['admin@sema.ac.gov.br']);
-  if (!admin) {
-    await run('INSERT INTO users(name, email, role) VALUES (?, ?, ?)', [
-      'Administrador SGUA',
-      'admin@sema.ac.gov.br',
-      'admin'
-    ]);
+// CORS para GitHub Pages (frontend estático em wesleyjuca.github.io)
+app.use((req, res, next) => {
+  const allowed = ['https://wesleyjuca.github.io', 'http://localhost:3000'];
+  const origin = req.headers.origin;
+  if (origin && allowed.includes(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
   }
-}
-
-function asyncRoute(handler) {
-  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
-}
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(PUBLIC_DIR));
 
+// ─── Utility routes ───────────────────────────────────────────────────────────
+
+// Healthcheck leve — Railway/Render precisam de 200 para considerar o deploy bem-sucedido
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, dbPath: DB_PATH, now: new Date().toISOString() });
+  res.json({ ok: true, uptime: process.uptime() });
+});
+
+// Status detalhado do banco (não bloqueia o deploy)
+app.get('/api/health/db', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ ok: true, db: 'postgresql', now: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Health/DB]', err.message);
+    res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.', detail: err.message });
+  }
+});
+
+// Diagnóstico de conexão — mostra host/usuário sem expor a senha
+app.get('/api/debug/db', (_req, res) => {
+  try {
+    const url = new URL(process.env.DATABASE_URL || '');
+    res.json({
+      host: url.hostname,
+      port: url.port,
+      user: url.username,
+      database: url.pathname.replace('/', ''),
+      ssl: 'rejectUnauthorized=false'
+    });
+  } catch {
+    res.status(500).json({ error: 'DATABASE_URL inválida ou ausente', raw_prefix: (process.env.DATABASE_URL || '').slice(0, 30) });
+  }
 });
 
 app.get('/api/meta/model', (_req, res) => {
@@ -237,7 +274,7 @@ app.get('/api/meta/model', (_req, res) => {
       users: ['id', 'name', 'email', 'role', 'created_at'],
       units: ['id', 'name', 'address', 'latitude', 'longitude', 'status', 'capacity', 'current_occupancy', 'created_at', 'updated_at'],
       occupancy_records: ['id', 'unit_id', 'user_id', 'organization_name', 'usage_type', 'start_date', 'end_date', 'active'],
-      news: ['id', 'title', 'content', 'author_id', 'created_at'],
+      news: ['id', 'title', 'content', 'source', 'link', 'category', 'is_rss', 'author_id', 'created_at'],
       requests: ['id', 'unit_id', 'requester_name', 'requester_email', 'usage_type', 'notes', 'status', 'created_at', 'updated_at']
     },
     relationships: [
@@ -249,10 +286,11 @@ app.get('/api/meta/model', (_req, res) => {
   });
 });
 
-// Users CRUD
+// ─── Users CRUD ───────────────────────────────────────────────────────────────
+
 app.get('/api/users', asyncRoute(async (_req, res) => {
-  const rows = await all('SELECT * FROM users ORDER BY id DESC');
-  res.json({ ok: true, data: rows });
+  const data = await query('SELECT * FROM users ORDER BY id DESC');
+  res.json({ ok: true, data });
 }));
 
 app.post('/api/users', asyncRoute(async (req, res) => {
@@ -266,14 +304,22 @@ app.post('/api/users', asyncRoute(async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Perfil inválido.' });
   }
 
-  const result = await run('INSERT INTO users(name, email, role) VALUES (?, ?, ?)', [name, email, role]);
-  const created = await get('SELECT * FROM users WHERE id = ?', [result.lastID]);
-  res.status(201).json({ ok: true, data: created });
+  try {
+    const data = await queryOne(
+      'INSERT INTO users(name, email, role) VALUES ($1, $2, $3) RETURNING *',
+      [name, email, role]
+    );
+    res.status(201).json({ ok: true, data });
+  } catch (err) {
+    return pgError(err, res);
+  }
 }));
 
 app.put('/api/users/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  const existing = await get('SELECT * FROM users WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+
+  const existing = await queryOne('SELECT * FROM users WHERE id = $1', [id]);
   if (!existing) return res.status(404).json({ ok: false, error: 'Usuário não encontrado.' });
 
   const name = sanitizeText(req.body.name ?? existing.name, 120);
@@ -287,33 +333,44 @@ app.put('/api/users/:id', asyncRoute(async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Perfil inválido.' });
   }
 
-  await run('UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?', [name, email, role, id]);
-  const updated = await get('SELECT * FROM users WHERE id = ?', [id]);
-  res.json({ ok: true, data: updated });
+  try {
+    const data = await queryOne(
+      'UPDATE users SET name = $1, email = $2, role = $3 WHERE id = $4 RETURNING *',
+      [name, email, role, id]
+    );
+    res.json({ ok: true, data });
+  } catch (err) {
+    return pgError(err, res);
+  }
 }));
 
 app.delete('/api/users/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  await run('DELETE FROM users WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  await query('DELETE FROM users WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
-// Units CRUD
+// ─── Units CRUD ───────────────────────────────────────────────────────────────
+
 app.get('/api/units', asyncRoute(async (_req, res) => {
-  const rows = await all('SELECT * FROM units ORDER BY id DESC');
-  res.json({ ok: true, data: rows });
+  const data = await query('SELECT * FROM units ORDER BY id DESC');
+  res.json({ ok: true, data });
 }));
 
 app.post('/api/units', asyncRoute(async (req, res) => {
   const payload = req.body || {};
   const name = sanitizeText(payload.name, 140);
-  const address = sanitizeText(payload.address, 255);
+  const address = sanitizeText(payload.address, 255) || null;
   const latitude = payload.latitude == null || payload.latitude === '' ? null : Number(payload.latitude);
   const longitude = payload.longitude == null || payload.longitude === '' ? null : Number(payload.longitude);
   const status = payload.status === 'inactive' ? 'inactive' : 'active';
-  const capacity = Math.max(0, Number(payload.capacity || 0));
+  const capacity = Number(payload.capacity ?? 0);
 
   if (!name) return res.status(400).json({ ok: false, error: 'Nome da unidade é obrigatório.' });
+  if (!Number.isFinite(capacity) || capacity < 0) {
+    return res.status(400).json({ ok: false, error: 'Capacidade inválida.' });
+  }
   if (latitude != null && (Number.isNaN(latitude) || latitude < -90 || latitude > 90)) {
     return res.status(400).json({ ok: false, error: 'Latitude inválida.' });
   }
@@ -321,335 +378,526 @@ app.post('/api/units', asyncRoute(async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Longitude inválida.' });
   }
 
-  const result = await run(
+  const data = await queryOne(
     `INSERT INTO units(name, address, latitude, longitude, status, capacity, current_occupancy)
-     VALUES (?, ?, ?, ?, ?, ?, 0)`,
-    [name, address, latitude, longitude, status, capacity]
+     VALUES ($1, $2, $3, $4, $5, $6, 0) RETURNING *`,
+    [name, address, latitude, longitude, status, Math.floor(capacity)]
   );
-
-  const created = await get('SELECT * FROM units WHERE id = ?', [result.lastID]);
-  res.status(201).json({ ok: true, data: created });
+  res.status(201).json({ ok: true, data });
 }));
 
 app.put('/api/units/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  const existing = await get('SELECT * FROM units WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+
+  const existing = await queryOne('SELECT * FROM units WHERE id = $1', [id]);
   if (!existing) return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
 
-  const payload = req.body || {};
-  const name = sanitizeText(payload.name ?? existing.name, 140);
-  const address = sanitizeText(payload.address ?? existing.address, 255);
-  const latitude = payload.latitude == null ? existing.latitude : Number(payload.latitude);
-  const longitude = payload.longitude == null ? existing.longitude : Number(payload.longitude);
-  const status = payload.status ? sanitizeText(payload.status, 16) : existing.status;
-  const capacity = payload.capacity == null ? existing.capacity : Math.max(0, Number(payload.capacity));
+  const p = req.body || {};
+  const name          = sanitizeText(p.name ?? existing.name, 140);
+  const address       = sanitizeText(p.address ?? existing.address ?? '', 255) || null;
+  const latitude      = p.latitude == null ? existing.latitude : Number(p.latitude);
+  const longitude     = p.longitude == null ? existing.longitude : Number(p.longitude);
+  const status        = p.status ? sanitizeText(p.status, 16) : existing.status;
+  const capacity      = p.capacity == null ? existing.capacity : Number(p.capacity);
+  const description   = sanitizeText(p.description ?? existing.description ?? '', 1000) || null;
+  const contact_name  = sanitizeText(p.contact_name ?? existing.contact_name ?? '', 120) || null;
+  const contact_email = sanitizeText(p.contact_email ?? existing.contact_email ?? '', 160).toLowerCase() || null;
+  const contact_phone = sanitizeText(p.contact_phone ?? existing.contact_phone ?? '', 30) || null;
 
   if (!name) return res.status(400).json({ ok: false, error: 'Nome da unidade é obrigatório.' });
+  if (!['active', 'inactive'].includes(status)) {
+    return res.status(400).json({ ok: false, error: 'Status inválido.' });
+  }
+  if (!Number.isFinite(capacity) || capacity < 0) {
+    return res.status(400).json({ ok: false, error: 'Capacidade inválida.' });
+  }
   if (latitude != null && (Number.isNaN(latitude) || latitude < -90 || latitude > 90)) {
     return res.status(400).json({ ok: false, error: 'Latitude inválida.' });
   }
   if (longitude != null && (Number.isNaN(longitude) || longitude < -180 || longitude > 180)) {
     return res.status(400).json({ ok: false, error: 'Longitude inválida.' });
   }
-  if (!['active', 'inactive'].includes(status)) {
-    return res.status(400).json({ ok: false, error: 'Status inválido.' });
-  }
-  if (!Number.isFinite(capacity)) {
-    return res.status(400).json({ ok: false, error: 'Capacidade inválida.' });
+  if (contact_email && !validateEmail(contact_email)) {
+    return res.status(400).json({ ok: false, error: 'E-mail de contato inválido.' });
   }
 
-  await run(
+  const data = await queryOne(
     `UPDATE units
-     SET name = ?, address = ?, latitude = ?, longitude = ?, status = ?, capacity = ?, updated_at = datetime('now')
-     WHERE id = ?`,
-    [name, address, latitude, longitude, status, capacity, id]
+     SET name=$1, address=$2, latitude=$3, longitude=$4, status=$5, capacity=$6,
+         description=$7, contact_name=$8, contact_email=$9, contact_phone=$10
+     WHERE id=$11 RETURNING *`,
+    [name, address, latitude, longitude, status, Math.floor(capacity),
+     description, contact_name, contact_email, contact_phone, id]
   );
-
-  const updated = await get('SELECT * FROM units WHERE id = ?', [id]);
-  res.json({ ok: true, data: updated });
+  res.json({ ok: true, data });
 }));
 
 app.delete('/api/units/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  await run('DELETE FROM units WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const photos = await query('SELECT filename FROM unit_photos WHERE unit_id = $1', [id]);
+  photos.forEach((p) => {
+    try { fs.unlinkSync(path.join(UPLOADS_DIR, p.filename)); } catch {}
+  });
+  await query('DELETE FROM units WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
-// Occupancy operations
+// ─── Occupancy operations ─────────────────────────────────────────────────────
+
 app.get('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
-  const unitId = Number(req.params.id);
-  const rows = await all(
-    `SELECT o.*, u.name AS user_name FROM occupancy_records o
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId) return res.status(400).json({ ok: false, error: 'ID da unidade inválido.' });
+
+  const data = await query(
+    `SELECT o.*, u.name AS user_name
+     FROM occupancy_records o
      LEFT JOIN users u ON u.id = o.user_id
-     WHERE o.unit_id = ?
+     WHERE o.unit_id = $1
      ORDER BY o.id DESC`,
     [unitId]
   );
-  res.json({ ok: true, data: rows });
+  res.json({ ok: true, data });
 }));
 
 app.post('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
   const unitId = parsePositiveId(req.params.id);
   if (!unitId) return res.status(400).json({ ok: false, error: 'ID da unidade inválido.' });
-  const unit = await get('SELECT * FROM units WHERE id = ?', [unitId]);
-  if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
-  if (unit.status === 'inactive') return res.status(400).json({ ok: false, error: 'Unidade inativa.' });
 
   const organizationName = sanitizeText(req.body.organization_name, 120);
   const usageType = sanitizeText(req.body.usage_type, 120);
   const userId = req.body.user_id ? parsePositiveId(req.body.user_id) : null;
+
   if (!organizationName || !usageType) {
     return res.status(400).json({ ok: false, error: 'organization_name e usage_type são obrigatórios.' });
   }
   if (req.body.user_id && !userId) {
     return res.status(400).json({ ok: false, error: 'user_id inválido.' });
   }
-  if (userId) {
-    const user = await get('SELECT id FROM users WHERE id = ?', [userId]);
-    if (!user) return res.status(404).json({ ok: false, error: 'Usuário não encontrado para vinculação.' });
-  }
 
-  if (unit.capacity > 0 && unit.current_occupancy >= unit.capacity) {
-    return res.status(400).json({ ok: false, error: 'Capacidade máxima da unidade atingida.' });
-  }
-
-  await run('BEGIN IMMEDIATE TRANSACTION');
   try {
-    await run(
-      `INSERT INTO occupancy_records(unit_id, user_id, organization_name, usage_type)
-       VALUES (?, ?, ?, ?)`,
-      [unitId, userId, organizationName, usageType]
-    );
-    await run('UPDATE units SET current_occupancy = current_occupancy + 1, updated_at = datetime(\'now\') WHERE id = ?', [unitId]);
-    await run('COMMIT');
-  } catch (error) {
-    await run('ROLLBACK');
-    throw error;
+    await withTransaction(async (client) => {
+      const { rows: [unit] } = await client.query(
+        'SELECT * FROM units WHERE id = $1 FOR UPDATE', [unitId]
+      );
+      if (!unit) { const e = new Error('Unidade não encontrada.'); e.status = 404; throw e; }
+      if (unit.status === 'inactive') { const e = new Error('Unidade inativa.'); e.status = 400; throw e; }
+      if (userId) {
+        const { rows } = await client.query('SELECT id FROM users WHERE id = $1', [userId]);
+        if (!rows.length) { const e = new Error('Usuário não encontrado para vinculação.'); e.status = 404; throw e; }
+      }
+      if (unit.capacity > 0 && unit.current_occupancy >= unit.capacity) {
+        const e = new Error('Capacidade máxima da unidade atingida.'); e.status = 400; throw e;
+      }
+      await client.query(
+        'INSERT INTO occupancy_records(unit_id, user_id, organization_name, usage_type) VALUES ($1, $2, $3, $4)',
+        [unitId, userId, organizationName, usageType]
+      );
+      await client.query(
+        'UPDATE units SET current_occupancy = current_occupancy + 1 WHERE id = $1', [unitId]
+      );
+    });
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ ok: false, error: err.message });
+    throw err;
   }
-  res.status(201).json({ ok: true });
 }));
 
 app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID de ocupação inválido.' });
-  const record = await get('SELECT * FROM occupancy_records WHERE id = ?', [id]);
-  if (!record) return res.status(404).json({ ok: false, error: 'Registro não encontrado.' });
-  if (!record.active) return res.status(400).json({ ok: false, error: 'Registro já inativo.' });
 
-  await run('BEGIN IMMEDIATE TRANSACTION');
   try {
-    await run('UPDATE occupancy_records SET active = 0, end_date = date(\'now\') WHERE id = ?', [id]);
-    await run(
-      `UPDATE units
-       SET current_occupancy = CASE WHEN current_occupancy > 0 THEN current_occupancy - 1 ELSE 0 END,
-           updated_at = datetime('now')
-       WHERE id = ?`,
-      [record.unit_id]
-    );
-    await run('COMMIT');
-  } catch (error) {
-    await run('ROLLBACK');
-    throw error;
+    await withTransaction(async (client) => {
+      const { rows: [record] } = await client.query(
+        'SELECT * FROM occupancy_records WHERE id = $1 FOR UPDATE', [id]
+      );
+      if (!record) { const e = new Error('Registro não encontrado.'); e.status = 404; throw e; }
+      if (!record.active) { const e = new Error('Registro já inativo.'); e.status = 400; throw e; }
+      await client.query(
+        'UPDATE occupancy_records SET active = FALSE, end_date = CURRENT_DATE WHERE id = $1', [id]
+      );
+      await client.query(
+        'UPDATE units SET current_occupancy = GREATEST(0, current_occupancy - 1) WHERE id = $1',
+        [record.unit_id]
+      );
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ ok: false, error: err.message });
+    throw err;
   }
-
-  res.json({ ok: true });
 }));
 
-// News CRUD
+// ─── News CRUD ────────────────────────────────────────────────────────────────
+
 app.get('/api/news', asyncRoute(async (_req, res) => {
-  const rows = await all(
-    `SELECT n.*, u.name AS author_name
+  const data = await query(
+    `SELECT n.id, n.title, n.content, n.source, n.link, n.category, n.is_rss,
+            n.created_at, u.name AS author_name
      FROM news n
      LEFT JOIN users u ON u.id = n.author_id
      ORDER BY n.id DESC`
   );
-  res.json({ ok: true, data: rows });
+  res.json({ ok: true, data });
 }));
 
 app.post('/api/news', asyncRoute(async (req, res) => {
   const title = sanitizeText(req.body.title, 180);
   const content = sanitizeText(req.body.content, 4000);
-  const authorId = req.body.author_id ? Number(req.body.author_id) : null;
-  if (!title || !content) return res.status(400).json({ ok: false, error: 'Título e conteúdo são obrigatórios.' });
+  const author_id = parsePositiveId(req.body.author_id);
 
-  const result = await run('INSERT INTO news(title, content, author_id) VALUES (?, ?, ?)', [title, content, authorId]);
-  const created = await get('SELECT * FROM news WHERE id = ?', [result.lastID]);
-  res.status(201).json({ ok: true, data: created });
+  if (!title || !content) {
+    return res.status(400).json({ ok: false, error: 'Título e conteúdo são obrigatórios.' });
+  }
+
+  const data = await queryOne(
+    'INSERT INTO news(title, content, author_id) VALUES ($1, $2, $3) RETURNING *',
+    [title, content, author_id]
+  );
+  res.status(201).json({ ok: true, data });
 }));
 
 app.put('/api/news/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  const existing = await get('SELECT * FROM news WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+
+  const existing = await queryOne('SELECT * FROM news WHERE id = $1', [id]);
   if (!existing) return res.status(404).json({ ok: false, error: 'Notícia não encontrada.' });
 
   const title = sanitizeText(req.body.title ?? existing.title, 180);
   const content = sanitizeText(req.body.content ?? existing.content, 4000);
-  await run('UPDATE news SET title = ?, content = ? WHERE id = ?', [title, content, id]);
-  const updated = await get('SELECT * FROM news WHERE id = ?', [id]);
-  res.json({ ok: true, data: updated });
+
+  const data = await queryOne(
+    'UPDATE news SET title = $1, content = $2 WHERE id = $3 RETURNING *',
+    [title, content, id]
+  );
+  res.json({ ok: true, data });
 }));
 
 app.delete('/api/news/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  await run('DELETE FROM news WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  await query('DELETE FROM news WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
-// Requests CRUD
+// ─── Requests CRUD ────────────────────────────────────────────────────────────
+
 app.get('/api/requests', asyncRoute(async (_req, res) => {
-  const rows = await all(
+  const data = await query(
     `SELECT r.*, un.name AS unit_name
      FROM requests r
      INNER JOIN units un ON un.id = r.unit_id
      ORDER BY r.id DESC`
   );
-  res.json({ ok: true, data: rows });
+  res.json({ ok: true, data });
 }));
 
 app.post('/api/requests', asyncRoute(async (req, res) => {
-  const unitId = parsePositiveId(req.body.unit_id);
-  const requesterName = sanitizeText(req.body.requester_name, 120);
-  const requesterEmail = sanitizeText(req.body.requester_email, 160).toLowerCase();
-  const usageType = sanitizeText(req.body.usage_type, 120);
-  const notes = sanitizeText(req.body.notes, 1500);
+  const unit_id = parsePositiveId(req.body.unit_id);
+  const requester_name = sanitizeText(req.body.requester_name, 120);
+  const requester_email = sanitizeText(req.body.requester_email, 160).toLowerCase() || null;
+  const usage_type = sanitizeText(req.body.usage_type, 120);
+  const notes = sanitizeText(req.body.notes, 1500) || null;
 
-  if (!unitId || !requesterName || !usageType) {
+  if (!unit_id || !requester_name || !usage_type) {
     return res.status(400).json({ ok: false, error: 'unit_id, requester_name e usage_type são obrigatórios.' });
   }
-  if (requesterEmail && !validateEmail(requesterEmail)) {
+  if (requester_email && !validateEmail(requester_email)) {
     return res.status(400).json({ ok: false, error: 'E-mail inválido.' });
   }
-  const unit = await get('SELECT id FROM units WHERE id = ?', [unitId]);
+
+  const unit = await queryOne('SELECT id FROM units WHERE id = $1', [unit_id]);
   if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada para solicitação.' });
 
-  const result = await run(
+  const data = await queryOne(
     `INSERT INTO requests(unit_id, requester_name, requester_email, usage_type, notes)
-     VALUES (?, ?, ?, ?, ?)`,
-    [unitId, requesterName, requesterEmail || null, usageType, notes]
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [unit_id, requester_name, requester_email, usage_type, notes]
   );
-
-  const created = await get('SELECT * FROM requests WHERE id = ?', [result.lastID]);
-  res.status(201).json({ ok: true, data: created });
+  res.status(201).json({ ok: true, data });
 }));
 
 app.put('/api/requests/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  const existing = await get('SELECT * FROM requests WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+
+  const existing = await queryOne('SELECT * FROM requests WHERE id = $1', [id]);
   if (!existing) return res.status(404).json({ ok: false, error: 'Solicitação não encontrada.' });
 
   const status = req.body.status || existing.status;
-  const notes = sanitizeText(req.body.notes ?? existing.notes, 1500);
-  const unitId = req.body.unit_id == null ? existing.unit_id : parsePositiveId(req.body.unit_id);
+  const notes = sanitizeText(req.body.notes ?? existing.notes, 1500) || null;
+  const unit_id = req.body.unit_id == null ? existing.unit_id : parsePositiveId(req.body.unit_id);
+
   if (!['pending', 'approved', 'rejected'].includes(status)) {
     return res.status(400).json({ ok: false, error: 'Status inválido.' });
   }
-  if (!unitId) return res.status(400).json({ ok: false, error: 'unit_id inválido.' });
-  const unit = await get('SELECT id FROM units WHERE id = ?', [unitId]);
+  if (!unit_id) return res.status(400).json({ ok: false, error: 'unit_id inválido.' });
+
+  const unit = await queryOne('SELECT id FROM units WHERE id = $1', [unit_id]);
   if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada para solicitação.' });
 
-  await run(
-    `UPDATE requests
-     SET status = ?, notes = ?, unit_id = ?, updated_at = datetime('now')
-     WHERE id = ?`,
-    [status, notes, unitId, id]
+  const data = await queryOne(
+    'UPDATE requests SET status = $1, notes = $2, unit_id = $3 WHERE id = $4 RETURNING *',
+    [status, notes, unit_id, id]
   );
-
-  const updated = await get('SELECT * FROM requests WHERE id = ?', [id]);
-  res.json({ ok: true, data: updated });
+  res.json({ ok: true, data });
 }));
 
 app.delete('/api/requests/:id', asyncRoute(async (req, res) => {
-  const id = Number(req.params.id);
-  await run('DELETE FROM requests WHERE id = ?', [id]);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  await query('DELETE FROM requests WHERE id = $1', [id]);
   res.json({ ok: true });
 }));
 
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  if (err && err.code === 'SQLITE_CONSTRAINT') {
-    return res.status(409).json({ ok: false, error: 'Operação violou uma restrição de dados.' });
+// ─── App State (full JSON blob for React SPA) ─────────────────────────────────
+
+app.get('/api/state', asyncRoute(async (_req, res) => {
+  const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua'");
+  if (row) return res.json(row.value);
+
+  // Bootstrap from existing tables on first call
+  const [units, newsRows, reqs, userRows] = await Promise.all([
+    query('SELECT * FROM units ORDER BY id'),
+    query('SELECT n.*, u.name AS author_name FROM news n LEFT JOIN users u ON u.id = n.author_id ORDER BY n.created_at DESC'),
+    query('SELECT r.*, u.name AS unit_name FROM requests r JOIN units u ON u.id = r.unit_id ORDER BY r.created_at DESC'),
+    query('SELECT * FROM users ORDER BY id'),
+  ]);
+
+  const uns = units.map((u) => ({
+    id: u.id,
+    tipo: /^UGAI/i.test(u.name) ? 'UGAI' : 'CIMA',
+    nome: u.name,
+    municipio: u.address || '',
+    regional: '',
+    coords: { lat: u.latitude ?? -9.97, lng: u.longitude ?? -67.81 },
+    status: u.status === 'active' ? 'ativo' : u.status === 'inactive' ? 'inativo' : 'manutencao',
+    taxaUso: u.capacity > 0 ? Math.round((u.current_occupancy / u.capacity) * 100) : 0,
+    ag: u.current_occupancy || 0,
+    descricao: u.description || '',
+    historia: '',
+    decreto: '',
+    orgaos: [],
+    quartos: 0,
+    salas: 0,
+    cozinha: false,
+    auditorio: false,
+    foto: u.banner_url || '',
+    galeria: [],
+    extras: [],
+    visivel: true,
+    orgaosPresentes: [],
+    ocupacaoAtual: u.current_occupancy || 0,
+  }));
+
+  const news = newsRows.map((n) => ({
+    id: n.id,
+    titulo: n.title,
+    resumo: (n.content || '').replace(/<[^>]+>/g, '').slice(0, 120),
+    conteudo: n.content || '',
+    data: (n.created_at || '').slice(0, 10),
+    categoria: n.category || 'Gestão',
+    unidade: '',
+    destaque: false,
+    visivel: true,
+    fonte: n.source || '',
+    autor: n.author_name || '',
+    link: n.link || '',
+  }));
+
+  const sols = reqs.map((r) => ({
+    id: r.id,
+    sol: r.requester_name,
+    org: r.requester_name,
+    un: r.unit_name,
+    ev: r.usage_type,
+    dt: (r.created_at || '').slice(0, 10),
+    st: r.status === 'approved' ? 'aprovada' : r.status === 'rejected' ? 'rejeitada' : 'pendente',
+    notes: r.notes || '',
+  }));
+
+  const users = userRows.map((u) => ({
+    id: u.id,
+    nome: u.name,
+    email: u.email,
+    perfil: u.role === 'admin' ? 'admin' : 'viewer',
+    ativo: true,
+    criadoEm: (u.created_at || '').slice(0, 10),
+  }));
+
+  const state = {
+    uns,
+    news,
+    feeds: [
+      { id: 1, nome: 'Portal SEMA/AC', url: 'https://sema.ac.gov.br/feed', ativo: true, categoria: 'Gestão', sync: '—' },
+      { id: 2, nome: 'INPE — Amazônia', url: 'https://www.inpe.br/rss/noticias.php', ativo: true, categoria: 'Monitoramento', sync: '—' },
+      { id: 3, nome: 'MMA', url: 'https://www.gov.br/mma/pt-br/RSS', ativo: false, categoria: 'Legislação', sync: '—' },
+    ],
+    sols,
+    users,
+    secs: { hero: true, alert: true, bloco: true, mapa: true, dash: true, acesso: true, news: true, ia: false },
+  };
+  res.json(state);
+}));
+
+app.put('/api/state', asyncRoute(async (req, res) => {
+  const state = req.body;
+  if (!state || typeof state !== 'object') return res.status(400).json({ ok: false, error: 'Payload inválido.' });
+  await query(
+    "INSERT INTO app_state (key, value, updated_at) VALUES ('sgua', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
+    [JSON.stringify(state)]
+  );
+  res.json({ ok: true });
+}));
+
+// ─── RSS Feed sync ────────────────────────────────────────────────────────────
+
+app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const feeds = Array.isArray(body.feeds) ? body.feeds : [];
+  const activeFeeds = feeds.filter((f) => f && f.ativo && typeof f.url === 'string' && f.url.trim());
+
+  if (!activeFeeds.length) {
+    return res.json({ ok: true, feeds, added: 0, warnings: ['Nenhum feed ativo para sincronizar.'] });
   }
-  res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
-});
 
-app.post('/api/feeds/sync', async (req, res) => {
-  try {
-    const body = req.body || {};
-    const feeds = Array.isArray(body.feeds) ? body.feeds : [];
-    const currentNews = Array.isArray(body.news) ? body.news : [];
-    const activeFeeds = feeds.filter((feed) => feed && feed.ativo && typeof feed.url === 'string' && feed.url.trim());
+  const warnings = [];
+  const feedUpdates = new Map();
+  const toInsert = [];
 
-    if (!activeFeeds.length) {
-      return res.json({ ok: true, news: currentNews, feeds, added: 0, warnings: ['Nenhum feed ativo para sincronizar.'] });
-    }
-
-    const existingKeys = new Set(
-      currentNews.map((newsItem) => `${(newsItem.titulo || '').trim().toLowerCase()}|${newsItem.fonte || ''}`)
-    );
-
-    const warnings = [];
-    const imported = [];
-    const feedUpdates = new Map();
-
-    await Promise.all(
-      activeFeeds.map(async (feed) => {
-        const result = await fetchFeedItems(feed);
-        if (!result.ok) {
-          warnings.push(`Falha no feed "${feed.nome}": ${result.error}`);
-          return;
-        }
-        feedUpdates.set(feed.id, new Date().toISOString().split('T')[0]);
-        result.items.forEach((item) => {
-          const dedupeKey = `${item.title.trim().toLowerCase()}|${item.source}`;
-          if (existingKeys.has(dedupeKey)) return;
-          existingKeys.add(dedupeKey);
-          imported.push({
-            id: Date.now() + Math.floor(Math.random() * 100000),
-            titulo: item.title,
-            resumo: item.description.slice(0, 220),
-            conteudo: `<p>${item.description || item.title}</p>${item.link ? `<p><a href="${item.link}" target="_blank" rel="noreferrer">Fonte original</a></p>` : ''}`,
-            data: item.date,
-            categoria: item.category,
-            unidade: '',
-            destaque: false,
-            visivel: true,
-            fonte: item.source,
-            autor: 'Feed RSS'
-          });
+  await Promise.all(
+    activeFeeds.map(async (feed) => {
+      const result = await fetchFeedItems(feed);
+      if (!result.ok) {
+        warnings.push(`Falha no feed "${feed.nome}": ${result.error}`);
+        return;
+      }
+      feedUpdates.set(feed.id, today());
+      result.items.forEach((item) => {
+        toInsert.push({
+          title: item.title.slice(0, 180),
+          content: (item.description || item.title).slice(0, 4000),
+          source: item.source,
+          link: item.link || null,
+          category: item.category
         });
-      })
-    );
+      });
+    })
+  );
 
-    imported.sort((a, b) => (a.data < b.data ? 1 : -1));
-    const mergedNews = imported.concat(currentNews).slice(0, 500);
-    const mergedFeeds = feeds.map((feed) =>
-      feedUpdates.has(feed.id) ? { ...feed, sync: feedUpdates.get(feed.id) } : feed
+  let added = 0;
+  for (const item of toInsert) {
+    const { rowCount } = await pool.query(
+      `INSERT INTO news (title, content, source, link, category, is_rss)
+       VALUES ($1, $2, $3, $4, $5, true)
+       ON CONFLICT (title, source) DO NOTHING`,
+      [item.title, item.content, item.source, item.link, item.category]
     );
-
-    return res.json({
-      ok: true,
-      news: mergedNews,
-      feeds: mergedFeeds,
-      added: imported.length,
-      warnings
-    });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: error.message });
+    added += rowCount;
   }
-});
 
-app.get('*', (_req, res) => {
+  const mergedFeeds = feeds.map((f) =>
+    feedUpdates.has(f.id) ? { ...f, sync: feedUpdates.get(f.id) } : f
+  );
+
+  return res.json({ ok: true, feeds: mergedFeeds, added, warnings });
+}));
+
+// ─── Unit Photos ─────────────────────────────────────────────────────────────
+
+app.get('/api/units/:id/photos', asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const data = await query(
+    'SELECT * FROM unit_photos WHERE unit_id = $1 ORDER BY id DESC', [unitId]
+  );
+  res.json({ ok: true, data });
+}));
+
+app.post('/api/units/:id/photos', upload.single('photo'), asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId || !req.file) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ ok: false, error: 'Unidade ou arquivo inválido.' });
+  }
+  const unit = await queryOne('SELECT id FROM units WHERE id = $1', [unitId]);
+  if (!unit) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
+  }
+  const url = `/uploads/photos/${req.file.filename}`;
+  const caption = sanitizeText(req.body.caption || '', 200) || null;
+  const isBanner = req.body.is_banner === 'true';
+  const data = await queryOne(
+    'INSERT INTO unit_photos(unit_id, url, filename, caption, is_banner) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+    [unitId, url, req.file.filename, caption, isBanner]
+  );
+  if (isBanner) {
+    await query('UPDATE units SET banner_url = $1 WHERE id = $2', [url, unitId]);
+  }
+  res.status(201).json({ ok: true, data });
+}));
+
+app.delete('/api/photos/:id', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const photo = await queryOne('SELECT * FROM unit_photos WHERE id = $1', [id]);
+  if (!photo) return res.status(404).json({ ok: false, error: 'Foto não encontrada.' });
+  fs.unlink(path.join(UPLOADS_DIR, photo.filename), () => {});
+  if (photo.is_banner) {
+    await query('UPDATE units SET banner_url = NULL WHERE id = $1', [photo.unit_id]);
+  }
+  await query('DELETE FROM unit_photos WHERE id = $1', [id]);
+  res.json({ ok: true });
+}));
+
+app.put('/api/photos/:id/banner', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const photo = await queryOne('SELECT * FROM unit_photos WHERE id = $1', [id]);
+  if (!photo) return res.status(404).json({ ok: false, error: 'Foto não encontrada.' });
+  await query('UPDATE unit_photos SET is_banner = false WHERE unit_id = $1', [photo.unit_id]);
+  await query('UPDATE unit_photos SET is_banner = true WHERE id = $1', [id]);
+  await query('UPDATE units SET banner_url = $1 WHERE id = $2', [photo.url, photo.unit_id]);
+  res.json({ ok: true });
+}));
+
+// ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────
+
+app.get(/^(?!\/api\/).*/, (_req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
-initDb()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`SGUA executando em http://localhost:${PORT}`);
-      console.log(`Banco SQLite: ${DB_PATH}`);
-    });
-  })
-  .catch((error) => {
-    console.error('Falha ao inicializar aplicação:', error);
-    process.exit(1);
-  });
+// ─── Global error handler ─────────────────────────────────────────────────────
+
+app.use((err, _req, res, _next) => {
+  const code = err.code || '';
+  const msg = (err.message || '').toLowerCase();
+  const severity = err.severity || '';
+  const isDbErr = code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND'
+    || severity === 'FATAL' || severity === 'ERROR'
+    || msg.includes('timeout') || msg.includes('terminated') || msg.includes('connect')
+    || msg.includes('tenant') || msg.includes('user not found')
+    || msg.includes('password') || msg.includes('ssl') || msg.includes('database');
+  if (isDbErr) {
+    console.error('[DB]', err.message);
+    return res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.' });
+  }
+  console.error(err);
+  res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
+});
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+
+app.listen(PORT, () => {
+  console.log(`SGUA executando em http://localhost:${PORT}`);
+  console.log(`Banco: PostgreSQL (Supabase)`);
+  if (process.env.RENDER) {
+    console.warn('[Aviso] Render.com free tier: uploads de fotos em disco são temporários e serão perdidos a cada redeploy. Configure um Persistent Disk ou migre para Supabase Storage para fotos permanentes.');
+  }
+});
