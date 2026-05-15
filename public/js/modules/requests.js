@@ -4,8 +4,10 @@ const STATUS_LABELS = { pending: 'Pendente', approved: 'Aprovada', rejected: 'Re
 const STATUS_COLORS = { pending: '#e67e22', approved: '#0f7a45', rejected: '#c0392b' };
 
 export async function renderRequests(root) {
-  const requests = await api.get('/api/requests');
-  const units = await api.get('/api/units');
+  let requests = [], units = [];
+  try {
+    [requests, units] = await Promise.all([api.get('/api/requests'), api.get('/api/units')]);
+  } catch { /* banco indisponível */ }
 
   root.innerHTML = `
     <section class="card">

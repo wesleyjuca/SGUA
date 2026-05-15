@@ -32,7 +32,8 @@ function occupancyBar(current, capacity) {
 }
 
 export async function renderMap(root) {
-  const units = await api.get('/api/units');
+  let units = [];
+  try { units = await api.get('/api/units'); } catch { /* banco indisponível */ }
   const mapped = units.filter((u) => Number.isFinite(u.latitude) && Number.isFinite(u.longitude));
   const activeCount = mapped.filter((u) => u.status === 'active').length;
 

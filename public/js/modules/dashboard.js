@@ -1,18 +1,31 @@
 import { api, esc } from '../api.js';
 
 export async function renderDashboard(root) {
-  const [users, units, news, requests] = await Promise.all([
+  const [usersR, unitsR, newsR, requestsR] = await Promise.allSettled([
     api.get('/api/users'),
     api.get('/api/units'),
     api.get('/api/news'),
     api.get('/api/requests')
   ]);
 
+  const dbError = [usersR, unitsR, newsR, requestsR].find((r) => r.status === 'rejected');
+  const users    = usersR.status    === 'fulfilled' ? usersR.value    : [];
+  const units    = unitsR.status    === 'fulfilled' ? unitsR.value    : [];
+  const news     = newsR.status     === 'fulfilled' ? newsR.value     : [];
+  const requests = requestsR.status === 'fulfilled' ? requestsR.value : [];
+
   const recent = news.slice(0, 5);
   const activeUnits = units.filter((u) => u.status === 'active').length;
   const inactiveUnits = units.length - activeUnits;
 
   root.innerHTML = `
+    ${dbError ? `<div class="card" style="border-left:4px solid #e67e22;padding:.6rem 1rem;margin-bottom:1rem;display:flex;align-items:center;gap:.75rem;">
+      <span style="color:#e67e22;font-size:1.1rem;">⚠</span>
+      <div>
+        <strong style="color:#e67e22;">Banco de dados indisponível</strong>
+        <p style="margin:.15rem 0 0;font-size:.83rem;color:#63707c;">Atualize a variável <code>DATABASE_URL</code> no Railway para restaurar os dados.</p>
+      </div>
+    </div>` : ''}
     <section class="grid" style="margin-bottom:1rem;">
       <article class="card"><h3>Usuários</h3><p><strong>${users.length}</strong></p></article>
       <article class="card">

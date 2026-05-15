@@ -1,5 +1,5 @@
 // Quando rodando no GitHub Pages, as chamadas de API vão para o Railway
-const BASE = window.location.hostname === 'wesleyjuca.github.io'
+export const BASE = window.location.hostname === 'wesleyjuca.github.io'
   ? 'https://sgua-production.up.railway.app'
   : '';
 

@@ -1,4 +1,4 @@
-import { api, esc } from '../api.js';
+import { api, esc, BASE } from '../api.js';
 
 let editingUnitId = null;
 
@@ -26,7 +26,7 @@ async function uploadPhotos(unitId, files, isBanner = false) {
     const fd = new FormData();
     fd.append('photo', file);
     if (isBanner) fd.append('is_banner', 'true');
-    await fetch(`/api/units/${unitId}/photos`, {
+    await fetch(BASE + `/api/units/${unitId}/photos`, {
       method: 'POST',
       body: fd,
       signal: AbortSignal.timeout(30_000)
@@ -65,7 +65,7 @@ function renderGallery(root, photos, unitId) {
   container.querySelectorAll('[data-set-banner]').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await fetch(`/api/photos/${btn.dataset.setBanner}`, { method: 'PUT', signal: AbortSignal.timeout(10_000) });
+      await fetch(BASE + `/api/photos/${btn.dataset.setBanner}`, { method: 'PUT', signal: AbortSignal.timeout(10_000) });
       const photos = await api.get(`/api/units/${unitId}/photos`);
       renderGallery(root, photos, unitId);
     });
@@ -229,14 +229,15 @@ function renderEditPanel(root, unit, photos) {
 }
 
 export async function renderUnits(root) {
-  const units = await api.get('/api/units');
+  let units = [];
+  try { units = await api.get('/api/units'); } catch { /* banco indisponível */ }
 
   let editUnit = null;
   let editPhotos = [];
   if (editingUnitId) {
     editUnit = units.find((u) => u.id === editingUnitId) || null;
     if (editUnit) {
-      editPhotos = await api.get(`/api/units/${editingUnitId}/photos`);
+      try { editPhotos = await api.get(`/api/units/${editingUnitId}/photos`); } catch { /* banco indisponível */ }
     } else {
       editingUnitId = null;
     }

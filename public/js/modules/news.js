@@ -9,10 +9,10 @@ const DEFAULT_FEEDS = [
 let feedState = { feeds: DEFAULT_FEEDS };
 
 export async function renderNews(root) {
-  const [newsItems, users] = await Promise.all([
-    api.get('/api/news'),
-    api.get('/api/users')
-  ]);
+  let newsItems = [], users = [];
+  try {
+    [newsItems, users] = await Promise.all([api.get('/api/news'), api.get('/api/users')]);
+  } catch { /* banco indisponível */ }
 
   root.innerHTML = `
     <section class="card">

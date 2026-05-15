@@ -1,7 +1,8 @@
 import { api, esc } from '../api.js';
 
 export async function renderUsers(root) {
-  const users = await api.get('/api/users');
+  let users = [];
+  try { users = await api.get('/api/users'); } catch { /* banco indisponível */ }
   root.innerHTML = `
     <section class="card">
       <h2>Usuários</h2>
