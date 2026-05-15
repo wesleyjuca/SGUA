@@ -249,8 +249,8 @@ function approveUso(uns, setUns, unidadeId, orgaoData){
       if(un.id!==unidadeId) return un;
       var novaLista=(un.orgaosPresentes||[]).concat([novoOrgao]);
       var ativos=novaLista.filter(function(o){return o.ativo;}).length;
-      var novaOcupacao={id:novoOrgao.id,orgao:nome,tipo:'temp',espacos:1,
-        dataInicio:novoOrgao.dataEntrada,dataFim:null,motivo:tipo,ativo:true};
+      var novaOcupacao={id:novoOrgao.id,orgao:nome,tipo:orgaoData.semPrevisao?'perm':'temp',espacos:1,
+        dataInicio:novoOrgao.dataEntrada,dataFim:orgaoData.semPrevisao?null:(orgaoData.dtFim||null),motivo:tipo,ativo:true};
       var novasOcupacoes=(un.ocupacoes||[]).concat([novaOcupacao]);
       return Object.assign({},un,{orgaosPresentes:novaLista,ocupacaoAtual:ativos,ocupacoes:novasOcupacoes});
     });
@@ -314,6 +314,30 @@ function temConflito(un,novaOc){
     if(++iteracoes>365) break;
   }
   return false;
+}
+function runSysCheck(uns,sols,monLog,dbOffline){
+  var hoje=new Date().toISOString().split('T')[0];
+  var now=Date.now();
+  var alertas=[];
+  var pendLong=sols.filter(function(s){return s.st==='pendente'&&s.dt&&(now-new Date(s.dt+'T12:00:00').getTime())>5*86400000;});
+  if(pendLong.length) alertas.push({sev:'alta',titulo:'Solicitações antigas',det:pendLong.length+' solicitação(ões) pendente(s) há mais de 5 dias.',sug:'Revisar e aprovar/rejeitar na aba Solicitações.'});
+  uns.forEach(function(u){
+    var d=getDisponibilidade(u,hoje);
+    if(d.pct>=80&&u.status==='ativo') alertas.push({sev:'alta',titulo:'Unidade quase cheia',det:u.nome+': '+d.pct+'% de capacidade em uso.',sug:'Verificar e gerenciar ocupações.'});
+  });
+  var semCap=uns.filter(function(u){return !u.capacidade;});
+  if(semCap.length) alertas.push({sev:'media',titulo:'Capacidade indefinida',det:semCap.length+' unidade(s) sem capacidade configurada.',sug:'Editar unidade → aba Ocupação → definir capacidade total.'});
+  var jsErrs=monLog.filter(function(e){return e.type==='js_err';}).length;
+  if(jsErrs>=3) alertas.push({sev:'alta',titulo:'Erros JavaScript',det:jsErrs+' erros detectados na sessão.',sug:'Abrir DevTools (F12 → Console) para identificar erros.'});
+  if(dbOffline) alertas.push({sev:'alta',titulo:'Banco offline',det:'Supabase inacessível. Dados persistidos localmente.',sug:'Verificar conectividade e configurações do Supabase.'});
+  var inativas=uns.filter(function(u){return !u.visivel;});
+  if(inativas.length>0) alertas.push({sev:'baixa',titulo:'Unidades ocultas',det:inativas.length+' unidade(s) ocultas do público.',sug:'Verificar se a ocultação é intencional em Unidades.'});
+  return {
+    ts:now,alertas:alertas,
+    sugestoes:['Configurar backup automático semanal dos dados via Supabase.','Adicionar exportação de relatórios de ocupação em PDF.','Implementar notificações automáticas para solicitações aprovadas.','Criar indicadores públicos de desempenho ambiental.','Configurar alertas por e-mail para ocupações críticas.'],
+    jsErrs:jsErrs,pendentes:sols.filter(function(s){return s.st==='pendente';}).length,
+    unidades:uns.length,ocAtivas:uns.reduce(function(a,u){return a+(u.ocupacaoAtual||0);},0)
+  };
 }
 
 
@@ -858,16 +882,24 @@ function PainelOcupacao(p){
 var h=React.createElement,useState=React.useState,useEffect=React.useEffect,
     useRef=React.useRef,useMemo=React.useMemo,useCallback=React.useCallback;
 
-// ─── PALETA ORIGINAL v7 ───────────────────────────────────────────────────────
-var C={
-  g0:"#0A3D2B",g1:"#0F5C3A",g2:"#1A7A4A",g3:"#2E9E63",
-  gl:"#C8E6D4",gx:"#EAF7EE",
-  b1:"#1565A8",bl:"#DCF0FF",
-  t1:"#7B4D1A",tl:"#FAEBD7",am:"#C4832A",al:"#FFF3E0",
-  rm:"#A32D2D",rl:"#FCEBEB",
-  pm:"#5B3FA8",px:"#EDE9FB",
-  cl:"#DEE2D8",cx:"#F7F8F5",cm:"#6B7260",cd:"#1E2218"
+// ─── PERSONALIZAÇÃO ──────────────────────────────────────────────────────────
+var PERS_TEMAS={
+  verde:{g0:"#0A3D2B",g1:"#0F5C3A",g2:"#1A7A4A",g3:"#2E9E63",gl:"#C8E6D4",gx:"#EAF7EE"},
+  azul:{g0:"#0A2D4A",g1:"#0F4C7A",g2:"#1A6AAA",g3:"#2E8EC3",gl:"#C0D8F0",gx:"#E8F3FF"},
+  roxo:{g0:"#2D0A4A",g1:"#4A0F7A",g2:"#6A1AAA",g3:"#8E2EC3",gl:"#D4C0F0",gx:"#F0E8FF"},
+  laranja:{g0:"#3D1A0A",g1:"#7A2F0F",g2:"#AA4A1A",g3:"#C36A2E",gl:"#F0D0C0",gx:"#FFF0E8"}
 };
+var PERS_DEF={nomeApp:"SGUA",subApp:"Sistema de Gestão de Unidades Ambientais",logo:"",temaAtual:"verde",corSecundaria:"#1565A8",msgBemVindo:"Bem-vindo ao SGUA",rodapeTexto:"Secretaria de Meio Ambiente do Acre · SEMA/AC"};
+
+// ─── PALETA (inicializada com tema padrão; App vai sobrescrever com pers) ────
+var _persInit=(function(){try{var p=localStorage.getItem('sagcu_v4_pers');return p?JSON.parse(p):PERS_DEF;}catch(e){return PERS_DEF;}})();
+var _temaInit=PERS_TEMAS[_persInit.temaAtual]||PERS_TEMAS.verde;
+var C=Object.assign({},_temaInit,{
+  b1:_persInit.corSecundaria||"#1565A8",bl:"#DCF0FF",
+  t1:"#7B4D1A",tl:"#FAEBD7",am:"#C4832A",al:"#FFF3E0",
+  rm:"#A32D2D",rl:"#FCEBEB",pm:"#5B3FA8",px:"#EDE9FB",
+  cl:"#DEE2D8",cx:"#F7F8F5",cm:"#6B7260",cd:"#1E2218"
+});
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 var hashPwd=function(p){return sha256('sagcu:'+p);};
@@ -1365,6 +1397,74 @@ function TelaLogin(p){
   );
 }
 
+// ─── PERSONALIZAÇÃO DO SISTEMA ───────────────────────────────────────────────
+function AdminPersonalizacao(p){
+  var pers=p.pers,setPers=p.setPers,C=p.C,toast2=p.toast2;
+  var lbl={fontSize:11,color:C.cm,display:"block",marginBottom:4,fontWeight:600};
+  var TEMAS=[
+    {id:"verde",label:"Verde Ambiental",cor:"#1A7A4A"},
+    {id:"azul",label:"Azul Institucional",cor:"#1A6AAA"},
+    {id:"roxo",label:"Roxo Inovação",cor:"#6A1AAA"},
+    {id:"laranja",label:"Laranja Energia",cor:"#AA4A1A"}
+  ];
+  function sv(k,v){setPers(function(p){return Object.assign({},p,{[k]:v});});}
+  return h("div",null,
+    h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},
+      h("h2",{style:{fontSize:20,fontWeight:700,margin:0,color:C.cd}},"Personalização do Sistema"),
+      h("button",{onClick:function(){setPers(PERS_DEF);toast2("Configurações restauradas ao padrão.",C.am);},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.am,background:C.al,color:C.am,fontSize:12,cursor:"pointer"}},"↺ Restaurar padrão")
+    ),
+    // Identidade
+    h(Card,{style:{padding:"18px 20px",marginBottom:16}},
+      h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"IDENTIDADE"),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
+        h("div",null,h("label",{style:lbl},"Nome do sistema"),h("input",{value:pers.nomeApp,onChange:function(e){sv("nomeApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Subtítulo"),h("input",{value:pers.subApp,onChange:function(e){sv("subApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",{style:{gridColumn:"1/-1"}},h("label",{style:lbl},"Logo (URL)"),h("input",{value:pers.logo||"",onChange:function(e){sv("logo",e.target.value);},placeholder:"https://…",style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Mensagem de boas-vindas"),h("input",{value:pers.msgBemVindo,onChange:function(e){sv("msgBemVindo",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Texto do rodapé"),h("input",{value:pers.rodapeTexto,onChange:function(e){sv("rodapeTexto",e.target.value);},style:{width:"100%",boxSizing:"border-box"}}))
+      )
+    ),
+    // Cores e Temas
+    h(Card,{style:{padding:"18px 20px",marginBottom:16}},
+      h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"CORES E TEMA"),
+      h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:16}},
+        TEMAS.map(function(t){
+          var ativo=pers.temaAtual===t.id;
+          return h("div",{key:t.id,onClick:function(){sv("temaAtual",t.id);},
+            style:{padding:"14px 12px",borderRadius:10,border:"2px solid "+(ativo?t.cor:C.cl),background:ativo?t.cor+"18":"none",cursor:"pointer",textAlign:"center",transition:"all .15s"}},
+            h("div",{style:{width:28,height:28,borderRadius:"50%",background:t.cor,margin:"0 auto 8px",boxShadow:ativo?"0 0 0 3px "+t.cor+"40":"none"}}),
+            h("div",{style:{fontSize:12,fontWeight:ativo?700:400,color:ativo?t.cor:C.cm}},t.label)
+          );
+        })
+      ),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
+        h("div",null,h("label",{style:lbl},"Cor secundária"),h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
+          h("input",{type:"color",value:pers.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{width:40,height:32,borderRadius:6,border:"none",cursor:"pointer",padding:0}}),
+          h("input",{value:pers.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{flex:1,boxSizing:"border-box"}})
+        ))
+      )
+    ),
+    // Preview ao vivo
+    h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+C.g2}},
+      h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"PREVIEW AO VIVO"),
+      h("div",{style:{background:C.g1,borderRadius:12,padding:"16px 20px",display:"flex",alignItems:"center",gap:12,marginBottom:12}},
+        pers.logo&&h("img",{src:pers.logo,alt:"logo",style:{height:36,objectFit:"contain"}}),
+        h("div",null,
+          h("div",{style:{fontSize:16,fontWeight:800,color:"#fff"}},pers.nomeApp),
+          h("div",{style:{fontSize:11,color:"rgba(255,255,255,.7)"}},pers.subApp)
+        )
+      ),
+      h("div",{style:{display:"flex",gap:8}},
+        h("div",{style:{padding:"10px 18px",borderRadius:8,background:C.g2,color:"#fff",fontSize:13,fontWeight:700}},"Botão primário"),
+        h("div",{style:{padding:"10px 18px",borderRadius:8,background:C.b1,color:"#fff",fontSize:13,fontWeight:700}},"Botão secundário"),
+        h(Pill,{t:"Operacional",c:C.g2,b:C.gx}),
+        h(Pill,{t:"Pendente",c:C.am,b:C.al})
+      ),
+      h("div",{style:{marginTop:10,fontSize:11,color:C.cm}},pers.rodapeTexto)
+    )
+  );
+}
+
 // ─── CALENDÁRIO DE DISPONIBILIDADE ───────────────────────────────────────────
 function CalendarioSol(p){
   var hoje=new Date();
@@ -1385,9 +1485,10 @@ function CalendarioSol(p){
   var cells=[];
   for(var i=0;i<primeiroDia;i++) cells.push(null);
   for(var d=1;d<=ultimoDia;d++) cells.push(d);
+  var minBlock=p.minDate||hojeStr;
   function getDayStyle(d){
     var dateStr=ano+'-'+String(mes+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');
-    if(dateStr<hojeStr) return {bg:'#F7F8F5',c:'#9BA88F',cursor:'default'};
+    if(dateStr<minBlock) return {bg:'#F7F8F5',c:'#9BA88F',cursor:'default'};
     if(!un) return {bg:'#F7F8F5',c:'#6B7260',cursor:'pointer'};
     if(un.status==='manutencao') return {bg:'#FFF3E0',c:'#C4832A',cursor:'not-allowed'};
     var disp=getDisponibilidade(un,dateStr);
@@ -1773,13 +1874,14 @@ function AdminMonitor(p){
   var log=p.log,setLog=p.setLog,dbOffline=p.dbOffline;
   var health=p.health,healthLabel=p.healthLabel,healthColor=p.healthColor,uptimeMin=p.uptimeMin,lastDbMs=p.lastDbMs;
   var CD=p.CD;
+  var sysReport=p.sysReport,setSysReport=p.setSysReport;
+  var sTab=useState('saude');var mTab=sTab[0],setMTab=sTab[1];
   var jsErrCount=log.filter(function(e){return e.type==='js_err';}).length;
   var apiErrCount=log.filter(function(e){return e.type==='api_err'||e.type==='save_err';}).length;
   var slowCount=log.filter(function(e){return e.type==='api_slow';}).length;
   var authFail=log.filter(function(e){return e.type==='auth_fail';}).length;
   var savesOk=log.filter(function(e){return e.type==='save_ok';}).length;
   var warns=log.filter(function(e){return e.sev==='warn';}).length;
-
   var diag=(function(){
     if(dbOffline) return {pat:'Banco de dados offline — sem conexão com Supabase',sug:'Verificar URL e anon key do Supabase. Checar painel em supabase.com.',sev:'crit'};
     if(jsErrCount>0) return {pat:''+jsErrCount+' erro(s) JavaScript detectado(s)',sug:'Abrir DevTools (F12 → Console) para identificar a linha exata do erro.',sev:'crit'};
@@ -1789,55 +1891,104 @@ function AdminMonitor(p){
     if(warns>2) return {pat:'Múltiplos avisos detectados na sessão',sug:'Revisar o log abaixo para identificar padrão de falha.',sev:'warn'};
     return {pat:'Sistema operando normalmente — sem anomalias detectadas',sug:'Monitorar latência do BD periodicamente. Ideal < 800ms.',sev:'ok'};
   })();
-
   function fmtTime(ts){return new Date(ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   function logIcon(sev){return sev==='crit'?'🔴':sev==='warn'?'⚠️':'✅';}
   var sevColor=diag.sev==='crit'?CD.rm:diag.sev==='warn'?CD.am:CD.g2;
-
+  var TABS=[['saude','🩺 Saúde'],['relatorio','📋 Relatório'],['log','📊 Log']];
   return h('div',null,
-    h('h2',{style:{fontSize:20,fontWeight:700,margin:'0 0 20px',color:CD.cd}},'Monitor do Sistema'),
-    // Status row
-    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:12,marginBottom:16}},
-      h(Card,{style:{padding:'14px 16px',border:'1.5px solid '+(dbOffline?CD.rm:CD.g2),background:CD.cx}},
-        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'BANCO DE DADOS'),
-        h('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:3}},
-          h('span',{style:{width:8,height:8,borderRadius:'50%',background:dbOffline?CD.rm:CD.g2,display:'inline-block',boxShadow:'0 0 6px '+(dbOffline?CD.rm:CD.g2)}}),
-          h('span',{style:{fontSize:13,fontWeight:700,color:dbOffline?CD.rm:CD.g2}},dbOffline?'OFFLINE':'ONLINE')
-        ),
-        h('div',{style:{fontSize:11,color:CD.cm}},lastDbMs?'Latência: '+lastDbMs+'ms':'Aguardando...')
-      ),
-      h(Card,{style:{padding:'14px 16px',background:CD.cx}},
-        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'HEALTH SCORE'),
-        h('div',{style:{display:'flex',alignItems:'baseline',gap:4,marginBottom:3}},
-          h('span',{style:{fontSize:26,fontWeight:700,color:healthColor}},health),
-          h('span',{style:{fontSize:12,color:CD.cm}},'/100')
-        ),
-        h('div',{style:{fontSize:11,fontWeight:600,color:healthColor}},healthLabel)
-      ),
-      h(Card,{style:{padding:'14px 16px',background:CD.cx}},
-        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'ERROS JS'),
-        h('div',{style:{fontSize:26,fontWeight:700,color:jsErrCount>0?CD.rm:CD.g2,marginBottom:3}},jsErrCount),
-        h('div',{style:{fontSize:11,color:CD.cm}},jsErrCount===0?'Sem erros':'Checar console')
-      ),
-      h(Card,{style:{padding:'14px 16px',background:CD.cx}},
-        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'SESSÃO'),
-        h('div',{style:{fontSize:26,fontWeight:700,color:CD.b1,marginBottom:3}},uptimeMin+'min'),
-        h('div',{style:{fontSize:11,color:CD.cm}},'Uptime')
+    h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}},
+      h('h2',{style:{fontSize:20,fontWeight:700,margin:0,color:CD.cd}},'Monitor do Sistema'),
+      h('div',{style:{display:'flex',gap:4}},
+        TABS.map(function(t){return h('button',{key:t[0],onClick:function(){setMTab(t[0]);},style:{padding:'7px 16px',borderRadius:9,border:'none',background:mTab===t[0]?CD.g2:'none',color:mTab===t[0]?'#fff':CD.cm,fontSize:12,fontWeight:mTab===t[0]?700:400,cursor:'pointer'}},t[1]);})
       )
     ),
-    // Diagnóstico IA
-    h(Card,{style:{padding:'14px 18px',marginBottom:14,borderLeft:'4px solid '+sevColor,background:CD.cx}},
-      h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:8}},'🧠 DIAGNÓSTICO IA — ANÁLISE DE PADRÕES'),
-      h('div',{style:{fontSize:13,fontWeight:600,color:CD.cd,marginBottom:6}},logIcon(diag.sev)+' '+diag.pat),
-      h('div',{style:{fontSize:11,color:CD.cm}},h('strong',null,'Sugestão técnica: '),diag.sug)
+    // ─── Aba Saúde ───────────────────────────────────────────────────────────
+    mTab==='saude'&&h('div',null,
+      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:12,marginBottom:16}},
+        h(Card,{style:{padding:'14px 16px',border:'1.5px solid '+(dbOffline?CD.rm:CD.g2),background:CD.cx}},
+          h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'BANCO DE DADOS'),
+          h('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:3}},
+            h('span',{style:{width:8,height:8,borderRadius:'50%',background:dbOffline?CD.rm:CD.g2,display:'inline-block',boxShadow:'0 0 6px '+(dbOffline?CD.rm:CD.g2)}}),
+            h('span',{style:{fontSize:13,fontWeight:700,color:dbOffline?CD.rm:CD.g2}},dbOffline?'OFFLINE':'ONLINE')
+          ),
+          h('div',{style:{fontSize:11,color:CD.cm}},lastDbMs?'Latência: '+lastDbMs+'ms':'Aguardando...')
+        ),
+        h(Card,{style:{padding:'14px 16px',background:CD.cx}},
+          h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'HEALTH SCORE'),
+          h('div',{style:{display:'flex',alignItems:'baseline',gap:4,marginBottom:3}},
+            h('span',{style:{fontSize:26,fontWeight:700,color:healthColor}},health),
+            h('span',{style:{fontSize:12,color:CD.cm}},'/100')
+          ),
+          h('div',{style:{fontSize:11,fontWeight:600,color:healthColor}},healthLabel)
+        ),
+        h(Card,{style:{padding:'14px 16px',background:CD.cx}},
+          h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'ERROS JS'),
+          h('div',{style:{fontSize:26,fontWeight:700,color:jsErrCount>0?CD.rm:CD.g2,marginBottom:3}},jsErrCount),
+          h('div',{style:{fontSize:11,color:CD.cm}},jsErrCount===0?'Sem erros':'Checar console')
+        ),
+        h(Card,{style:{padding:'14px 16px',background:CD.cx}},
+          h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'SESSÃO'),
+          h('div',{style:{fontSize:26,fontWeight:700,color:CD.b1,marginBottom:3}},uptimeMin+'min'),
+          h('div',{style:{fontSize:11,color:CD.cm}},'Uptime')
+        )
+      ),
+      h(Card,{style:{padding:'14px 18px',marginBottom:14,borderLeft:'4px solid '+sevColor,background:CD.cx}},
+        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:8}},'🧠 DIAGNÓSTICO — ANÁLISE DE PADRÕES'),
+        h('div',{style:{fontSize:13,fontWeight:600,color:CD.cd,marginBottom:6}},logIcon(diag.sev)+' '+diag.pat),
+        h('div',{style:{fontSize:11,color:CD.cm}},h('strong',null,'Sugestão técnica: '),diag.sug)
+      ),
+      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:10}},
+        [{l:'Erros JS',v:jsErrCount,c:jsErrCount>0?CD.rm:CD.g2},{l:'Erros API',v:apiErrCount,c:apiErrCount>0?CD.rm:CD.g2},{l:'Avisos',v:warns,c:warns>0?CD.am:CD.g2},{l:'Auth Fail',v:authFail,c:authFail>0?CD.am:CD.g2},{l:'Saves OK',v:savesOk,c:CD.g2}].map(function(it){
+          return h('div',{key:it.l,style:{background:CD.cx,border:'1px solid '+CD.cl,borderRadius:10,padding:'10px 14px',textAlign:'center'}},
+            h('div',{style:{fontSize:22,fontWeight:700,color:it.c,marginBottom:2}},it.v),
+            h('div',{style:{fontSize:10,color:CD.cm}},it.l)
+          );
+        })
+      )
     ),
-    // Log em tempo real
-    h(Card,{style:{padding:'14px 18px',marginBottom:14,background:CD.cx}},
+    // ─── Aba Relatório ────────────────────────────────────────────────────────
+    mTab==='relatorio'&&h('div',null,
+      !sysReport&&h('div',{style:{textAlign:'center',padding:'40px 0',color:CD.cm}},
+        h('div',{style:{fontSize:32,marginBottom:12}},'📋'),
+        h('div',{style:{fontSize:14,marginBottom:16}},'Nenhuma verificação automática executada ainda.'),
+        h('div',{style:{fontSize:12}},h('em',null,'O relatório é gerado automaticamente a cada 10 dias quando você acessa o sistema como administrador.'))
+      ),
+      sysReport&&h('div',null,
+        h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}},
+          h('div',{style:{fontSize:12,color:CD.cm}},'Última verificação: '+new Date(sysReport.ts).toLocaleDateString('pt-BR')+' às '+new Date(sysReport.ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})),
+          h('div',{style:{display:'flex',gap:8}},
+            h(StatBox,{label:'Alertas',value:sysReport.alertas.length,color:sysReport.alertas.length>0?CD.am:CD.g2}),
+            h(StatBox,{label:'Pendentes',value:sysReport.pendentes,color:sysReport.pendentes>0?CD.rm:CD.g2})
+          )
+        ),
+        sysReport.alertas.length>0&&h(Card,{style:{padding:'16px 18px',marginBottom:14,background:CD.cx}},
+          h('div',{style:{fontSize:11,fontWeight:700,color:CD.cm,marginBottom:12,letterSpacing:.5}},'ALERTAS DO SISTEMA'),
+          sysReport.alertas.map(function(a,i){
+            var mapa={alta:[CD.rm,CD.rl,'🔥'],media:[CD.am,CD.al,'⚠️'],baixa:[CD.b1,CD.bl,'ℹ️']}[a.sev]||[CD.cm,CD.cx,'•'];
+            return h('div',{key:i,style:{padding:'10px 12px',borderRadius:8,background:mapa[1],borderLeft:'3px solid '+mapa[0],marginBottom:8}},
+              h('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:4}},h('span',null,mapa[2]),h('span',{style:{fontSize:12,fontWeight:700,color:mapa[0]}},a.titulo)),
+              h('div',{style:{fontSize:11,color:CD.cd,marginBottom:2}},a.det),
+              h('div',{style:{fontSize:11,color:CD.cm}},h('strong',null,'Ação: '),a.sug)
+            );
+          })
+        ),
+        h(Card,{style:{padding:'16px 18px',background:CD.cx}},
+          h('div',{style:{fontSize:11,fontWeight:700,color:CD.cm,marginBottom:12,letterSpacing:.5}},'💡 SUGESTÕES DE MELHORIA'),
+          sysReport.sugestoes.map(function(s,i){
+            return h('div',{key:i,style:{display:'flex',gap:8,fontSize:12,color:CD.cd,padding:'8px 0',borderBottom:i<sysReport.sugestoes.length-1?'0.5px solid '+CD.cl:'none'}},
+              h('span',{style:{color:CD.g2,fontWeight:700,flexShrink:0}},(i+1)+'.'),h('span',null,s)
+            );
+          })
+        )
+      )
+    ),
+    // ─── Aba Log ──────────────────────────────────────────────────────────────
+    mTab==='log'&&h(Card,{style:{padding:'14px 18px',background:CD.cx}},
       h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}},
         h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5}},'📋 LOG EM TEMPO REAL'),
         h('button',{onClick:function(){setLog([]);},style:{fontSize:11,padding:'4px 12px',borderRadius:7,border:'1px solid '+CD.cl,background:'none',color:CD.cm,cursor:'pointer'}},'🗑 Limpar log')
       ),
-      h('div',{style:{maxHeight:340,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}},
+      h('div',{style:{maxHeight:460,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}},
         log.length===0
           ?h('div',{style:{fontSize:12,color:CD.cm,textAlign:'center',padding:'24px 0',fontStyle:'italic'}},'Nenhum evento registrado.')
           :log.map(function(e){
@@ -1855,15 +2006,6 @@ function AdminMonitor(p){
             );
           })
       )
-    ),
-    // Resumo da sessão
-    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:10}},
-      [{l:'Erros JS',v:jsErrCount,c:jsErrCount>0?CD.rm:CD.g2},{l:'Erros API',v:apiErrCount,c:apiErrCount>0?CD.rm:CD.g2},{l:'Avisos',v:warns,c:warns>0?CD.am:CD.g2},{l:'Auth Fail',v:authFail,c:authFail>0?CD.am:CD.g2},{l:'Saves OK',v:savesOk,c:CD.g2}].map(function(it){
-        return h('div',{key:it.l,style:{background:CD.cx,border:'1px solid '+CD.cl,borderRadius:10,padding:'10px 14px',textAlign:'center'}},
-          h('div',{style:{fontSize:22,fontWeight:700,color:it.c,marginBottom:2}},it.v),
-          h('div',{style:{fontSize:10,color:CD.cm}},it.l)
-        );
-      })
     )
   );
 }
@@ -1891,7 +2033,7 @@ function App(){
     {id:"SOL-001",sol:"Maria Silva",org:"SESACRE",un:"CIMA Rio Branco",ev:"Capacitação",dt:"2026-04-10",st:"pendente"},
     {id:"SOL-002",sol:"João Melo",org:"SEAGRI",un:"CIMA Feijó",ev:"Reunião",dt:"2026-04-05",st:"aprovada"}
   ]);});var sols=sSo[0],setSols=sSo[1];
-  var sSf=useState({nome:"",org:"",email:"",un:"",ev:"",dt:"",hr:"",just:""});var sf=sSf[0],setSf=sSf[1];
+  var sSf=useState({nome:"",org:"",email:"",un:"",ev:"",dt:"",dtFim:"",semPrevisao:false,hr:"",just:""});var sf=sSf[0],setSf=sSf[1];
   var sSv=useState(false);var senv=sSv[0],setSenv=sSv[1];
   var sRdy=useState(false);var remoteReady=sRdy[0],setRemoteReady=sRdy[1];
   var sDbOff=useState(false);var dbOffline=sDbOff[0],setDbOffline=sDbOff[1];
@@ -1900,7 +2042,15 @@ function App(){
   var monLog=sML[0],setMonLog=sML[1];
   var sDk=useState(function(){return lsGet('darkMode',false);});
   var darkMode=sDk[0],setDarkMode=sDk[1];
+  var sRep=useState(function(){return lsGet('sysReport',null);});
+  var sysReport=sRep[0],setSysReport=sRep[1];
+  var sPrs=useState(function(){return lsGet('pers',PERS_DEF);});
+  var pers=sPrs[0],setPers=sPrs[1];
   var _appStart=useRef(Date.now());
+
+  // Recompute palette reactively when pers changes
+  var _tema=PERS_TEMAS[pers.temaAtual]||PERS_TEMAS.verde;
+  C=Object.assign({},_tema,{b1:pers.corSecundaria||"#1565A8",bl:"#DCF0FF",t1:"#7B4D1A",tl:"#FAEBD7",am:"#C4832A",al:"#FFF3E0",rm:"#A32D2D",rl:"#FCEBEB",pm:"#5B3FA8",px:"#EDE9FB",cl:"#DEE2D8",cx:"#F7F8F5",cm:"#6B7260",cd:"#1E2218"});
 
 
   useEffect(function(){lsSet('uns',uns);},[uns]);
@@ -1910,6 +2060,7 @@ function App(){
   useEffect(function(){lsSet('users',users);},[users]);
   useEffect(function(){lsSet('secs',secs);},[secs]);
   useEffect(function(){lsSet('darkMode',darkMode);},[darkMode]);
+  useEffect(function(){lsSet('pers',pers);if(pers.nomeApp)document.title=pers.nomeApp+" — SEMA/AC";},[pers]);
 
   function addLog(entry){
     setMonLog(function(prev){
@@ -1940,6 +2091,7 @@ function App(){
       if(Array.isArray(data.sols)) setSols(data.sols);
       if(Array.isArray(data.users)) setUsers(data.users);
       if(data.secs&&typeof data.secs==='object'&&!Array.isArray(data.secs)) setSecs(data.secs);
+      if(data.pers&&typeof data.pers==='object') setPers(function(p){return Object.assign({},PERS_DEF,data.pers);});
     }).catch(function(e){
       console.warn('SAGCU remote load warning:',e&&e.message?e.message:e);
       if(alive){
@@ -1954,14 +2106,14 @@ function App(){
   useEffect(function(){
     if(!remoteReady) return;
     var t0s=Date.now();
-    apiSaveState({uns:uns,news:news,feeds:feeds,sols:sols,users:users,secs:secs}).then(function(){
+    apiSaveState({uns:uns,news:news,feeds:feeds,sols:sols,users:users,secs:secs,pers:pers}).then(function(){
       var ms=Date.now()-t0s;
       if(ms>100) addLog({type:'save_ok',sev:'ok',msg:'Estado salvo ('+ms+'ms)',src:'apiSaveState',det:ms+'ms',sug:''});
     }).catch(function(e){
       console.warn('SAGCU remote save warning:',e&&e.message?e.message:e);
       addLog({type:'save_err',sev:'warn',msg:'Falha ao salvar: '+(e&&e.message?e.message.slice(0,80):String(e).slice(0,80)),src:'apiSaveState',det:'',sug:'Verificar permissões da tabela app_state no Supabase (RLS deve estar off).'});
     });
-  },[remoteReady,uns,news,feeds,sols,users,secs]);
+  },[remoteReady,uns,news,feeds,sols,users,secs,pers]);
   useEffect(function(){
     setTimeout(function(){var el=document.getElementById("app-loading");if(el){el.classList.add("hidden");setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},500);}},700);
   },[]);
@@ -1985,6 +2137,17 @@ function App(){
     window.addEventListener('unhandledrejection',onUnhandled);
     return function(){window.onerror=prev;window.removeEventListener('unhandledrejection',onUnhandled);};
   },[]);
+  useEffect(function(){
+    if(!curUser) return;
+    var last=sysReport?sysReport.ts:0;
+    var TEN_DAYS=10*24*60*60*1000;
+    if(Date.now()-last>TEN_DAYS){
+      var rep=runSysCheck(uns,sols,monLog,dbOffline);
+      setSysReport(rep);
+      lsSet('sysReport',rep);
+      addLog({type:'sys_check',sev:rep.alertas.some(function(a){return a.sev==='alta';})? 'warn':'ok',msg:'Verificação automática do sistema concluída — '+rep.alertas.length+' alertas.',src:'SysCheck',det:'',sug:''});
+    }
+  },[curUser]);
 
   var isMobile=vpWidth<=768;
 
@@ -2166,8 +2329,8 @@ function App(){
             )
           ),
           !isMobile&&h("div",{style:{lineHeight:1.15}},
-            h("div",{style:{fontSize:14,fontWeight:700,color:"#fff"}},"SEMA/AC"),
-            h("div",{style:{fontSize:10,color:"rgba(255,255,255,.55)"}},"CIMA · UGAI")
+            h("div",{style:{fontSize:14,fontWeight:700,color:"#fff"}},pers.nomeApp),
+            h("div",{style:{fontSize:10,color:"rgba(255,255,255,.55)"}},pers.subApp.split(" ").slice(0,4).join(" "))
           )
         ),
         // Itens de navegação
@@ -2405,12 +2568,29 @@ function App(){
             h("div",{style:{fontSize:13,fontWeight:700,color:C.g2,marginBottom:14}},"Disponibilidade"),
             h("div",{style:{marginBottom:12}},
               h("label",{style:lbl11},"Selecione a unidade *"),
-              h("select",{value:sf.un,onChange:function(e){setSf(function(f){return Object.assign({},f,{un:e.target.value,dt:""});});},style:{width:"100%",boxSizing:"border-box",marginBottom:12}},
+              h("select",{value:sf.un,onChange:function(e){setSf(function(f){return Object.assign({},f,{un:e.target.value,dt:"",dtFim:"",semPrevisao:false});});},style:{width:"100%",boxSizing:"border-box",marginBottom:12}},
                 h("option",{value:""},"Selecione"),
                 uns.filter(function(u){return u.visivel;}).map(function(u){return h("option",{key:u.id},u.nome);}))
             ),
-            h(CalendarioSol,{uns:uns,unId:sf.un,selectedDate:sf.dt,onSelectDate:function(d){setSf(function(f){return Object.assign({},f,{dt:d});});}}),
-            sf.dt&&sf.un&&h("div",{style:{marginTop:10,fontSize:13,color:C.g2,fontWeight:600}},"✓ Data selecionada: "+formatData(sf.dt))
+            h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,marginBottom:6,letterSpacing:.3}},"DATA DE ENTRADA *"),
+            h(CalendarioSol,{uns:uns,unId:sf.un,selectedDate:sf.dt,onSelectDate:function(d){setSf(function(f){return Object.assign({},f,{dt:d,dtFim:"",semPrevisao:false});});}}),
+            sf.dt&&sf.un&&h("div",{style:{marginTop:8,fontSize:13,color:C.g2,fontWeight:600}},"✓ Entrada: "+formatData(sf.dt)),
+            sf.dt&&h("div",{style:{marginTop:16}},
+              h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,marginBottom:10,letterSpacing:.3}},"PERÍODO DE PERMANÊNCIA *"),
+              h("label",{style:{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer",marginBottom:10,padding:"10px 12px",background:sf.semPrevisao?C.px:C.cx,border:"1px solid "+(sf.semPrevisao?C.pm:C.cl),borderRadius:8}},
+                h("input",{type:"checkbox",checked:sf.semPrevisao,onChange:function(e){setSf(function(f){return Object.assign({},f,{semPrevisao:e.target.checked,dtFim:""});});},style:{accentColor:C.pm,width:15,height:15}}),
+                h("span",{style:{color:sf.semPrevisao?C.pm:C.cd,fontWeight:sf.semPrevisao?700:400}},"Ocupação por prazo indeterminado")
+              ),
+              !sf.semPrevisao&&h("div",null,
+                h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,marginBottom:6,letterSpacing:.3}},"DATA DE SAÍDA"),
+                h(CalendarioSol,{uns:uns,unId:sf.un,selectedDate:sf.dtFim,minDate:sf.dt,onSelectDate:function(d){setSf(function(f){return Object.assign({},f,{dtFim:d});});}}),
+                sf.dtFim&&h("div",{style:{marginTop:8,fontSize:13,color:C.g2,fontWeight:600}},"✓ Saída: "+formatData(sf.dtFim))
+              ),
+              h("div",{style:{marginTop:10,padding:"10px 14px",background:sf.semPrevisao?C.px:(sf.dtFim?C.gx:C.al),borderRadius:9,fontSize:12,fontWeight:600,color:sf.semPrevisao?C.pm:(sf.dtFim?C.g2:C.am)}},
+                sf.semPrevisao?"🔄 Ocupação por prazo indeterminado — a partir de "+formatData(sf.dt)
+                  :(sf.dtFim?"📅 Ocupação temporária: "+formatData(sf.dt)+" → "+formatData(sf.dtFim):"⚠ Selecione a data de saída ou marque prazo indeterminado")
+              )
+            )
           ),
           h(Card,{style:{padding:"20px 22px"}},
             h("div",{style:{fontSize:13,fontWeight:700,color:C.g2,marginBottom:14}},"Dados da solicitação"),
@@ -2422,7 +2602,8 @@ function App(){
           ),
           h("button",{onClick:function(){
             if(!sf.nome||!sf.email||!sf.un||!sf.dt){toast2("Preencha os campos obrigatórios.",C.rm);return;}
-            setSols(function(s){return[{id:"SOL-"+String(s.length+1).padStart(3,"0"),sol:sf.nome,org:sf.org,un:sf.un,ev:sf.ev,dt:sf.dt,st:"pendente"}].concat(s);});
+            if(!sf.semPrevisao&&!sf.dtFim){toast2("Selecione a data de saída ou marque prazo indeterminado.",C.am);return;}
+            setSols(function(s){return[{id:"SOL-"+String(s.length+1).padStart(3,"0"),sol:sf.nome,org:sf.org,un:sf.un,ev:sf.ev,dt:sf.dt,dtFim:sf.semPrevisao?null:sf.dtFim||null,semPrevisao:sf.semPrevisao,st:"pendente"}].concat(s);});
             setSenv(true);
           },style:{padding:"13px 0",borderRadius:12,border:"none",background:C.g2,color:"#fff",fontSize:15,fontWeight:700,cursor:"pointer"}},"Enviar solicitação")
         )
@@ -2467,7 +2648,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["rel","📊","Relatórios",canDo("rel")],["monitor","🔍","Monitor",true]].filter(function(it){return it[3];}).map(function(it){
+        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["rel","📊","Relatórios",canDo("rel")],["monitor","🔍","Monitor",true],["pers","✨","Personalização",canDo("cfg")]].filter(function(it){return it[3];}).map(function(it){
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},it[1]),it[2]
           );
@@ -2485,109 +2666,138 @@ function App(){
       // Conteúdo admin
       h("div",{style:{flex:1,padding:"24px 28px",overflowY:"auto",background:C.cx}},
 
-        atab==="dash"&&h("div",null,
-          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}},
-            h("h2",{style:{fontSize:20,fontWeight:700,margin:0,color:C.cd}},"Dashboard"),
-            h("div",{style:{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:"#fff",borderRadius:12,border:"1px solid "+C.cl,cursor:"pointer"},onClick:function(){setAtab("monitor");}},
-              h("span",{style:{fontSize:20,fontWeight:700,color:healthColor}},healthScore+"/100"),
-              h("span",{style:{fontSize:11,fontWeight:700,color:healthColor}},healthLabel),
-              h("span",{style:{width:1,height:16,background:C.cl,display:"inline-block"}}),
-              h("span",{style:{width:8,height:8,borderRadius:"50%",background:dbOffline?C.rm:C.g2,display:"inline-block",boxShadow:"0 0 5px "+(dbOffline?C.rm:C.g2)}}),
-              h("span",{style:{fontSize:11,color:dbOffline?C.rm:C.g2,fontWeight:600}},dbOffline?"BD OFFLINE":"BD ONLINE"),
-              h("span",{style:{fontSize:10,color:C.cm,marginLeft:4}},"→ Monitor")
-            )
-          ),
-          h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:24}},
-            h(StatBox,{label:"Unidades",value:totalUnidades,color:C.g2}),
-            h(StatBox,{label:"Ativas",value:unidadesAtivas,color:C.g2}),
-            h(StatBox,{label:"Em manutenção",value:unidadesManutencao,color:C.am}),
-            h(StatBox,{label:"Órgãos ativos",value:orgaosAtivos,color:C.b1}),
-            h(StatBox,{label:"Notícias",value:news.length,color:C.b1}),
-            h(StatBox,{label:"Feeds ativos",value:feeds.filter(function(f){return f.ativo;}).length,color:C.pm}),
-            h(StatBox,{label:"Pendentes",value:pendentes.length,color:C.am}),
-            h(StatBox,{label:"Aprovação",value:taxaAprovacao+"%",color:C.pm})
-          ),
-          h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:16}},
-            h(Card,{style:{padding:"16px 18px"}},
-              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Alertas e sugestões de correção"),
-              alertasDash.length===0
-                ?h("div",{style:{fontSize:12,color:C.cm}},"Nenhum alerta crítico no momento. Continue monitorando os indicadores.")
-                :alertasDash.map(function(a,ix){
-                  var mapa={alta:[C.rm,C.rl,"🔥"],media:[C.am,C.al,"⚠️"],baixa:[C.b1,C.bl,"ℹ️"]}[a.sev]||[C.cm,C.cx,"•"];
-                  return h("div",{key:ix,style:{padding:"10px 0",borderBottom:ix===alertasDash.length-1?"none":"0.5px solid "+C.cl}},
-                    h("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:4}},
-                      h("span",{style:{fontSize:13}},mapa[2]),
-                      h("span",{style:{fontSize:12,fontWeight:700,color:mapa[0]}},a.titulo)
-                    ),
-                    h("div",{style:{fontSize:11,color:C.cd,marginBottom:4}},a.det),
-                    h("div",{style:{fontSize:11,color:C.cm}},h("strong",null,"Sugestão: "),a.sug)
-                  );
-                })
-            ),
-            h(Card,{style:{padding:"16px 18px"}},
-              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Utilização"),
-              uns.map(function(u){return h("div",{key:u.id,style:{marginBottom:9,opacity:u.visivel?1:.45}},
-                h("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3,color:C.cd}},
-                  h("span",null,u.nome.split(" ").slice(-2).join(" ")),
-                  h("span",{style:{fontWeight:700,color:u.taxaUso>80?C.rm:u.taxaUso>60?C.am:C.g2}},u.taxaUso+"%"+(u.visivel?"":"  🔒"))
+        atab==="dash"&&(function(){
+          var hoje2=new Date().toISOString().split('T')[0];
+          var hora=new Date().getHours();
+          var saudacao=hora<12?"Bom dia":hora<18?"Boa tarde":"Boa noite";
+          var dataFmt=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'numeric',month:'long'});
+          var mediaOcup=uns.length?Math.round(uns.map(function(u){return getDisponibilidade(u,hoje2).pct;}).reduce(function(a,b){return a+b;},0)/uns.length):0;
+          var pendentesCount=pendentes.length;
+          var pendentesAlt=alertasDash.filter(function(a){return a.sev==='alta';}).length;
+          return h("div",null,
+            // ─── Cabeçalho ──────────────────────────────────────────────────
+            h("div",{style:{background:"linear-gradient(135deg,"+C.g0+" 0%,"+C.g1+" 100%)",borderRadius:16,padding:"22px 28px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}},
+              h("div",null,
+                h("div",{style:{fontSize:22,fontWeight:800,color:"#fff",marginBottom:3}},saudacao+", "+curUser.nome.split(" ")[0]+" 👋"),
+                h("div",{style:{fontSize:13,color:"rgba(255,255,255,.7)",textTransform:"capitalize"}},dataFmt)
+              ),
+              h("div",{style:{display:"flex",gap:10,alignItems:"center"}},
+                h("div",{style:{display:"flex",alignItems:"center",gap:7,padding:"8px 14px",background:"rgba(255,255,255,.12)",borderRadius:10,cursor:"pointer"},onClick:function(){setAtab("monitor");}},
+                  h("span",{style:{width:8,height:8,borderRadius:"50%",background:dbOffline?"#ff6b6b":"#69e096",display:"inline-block",boxShadow:"0 0 6px "+(dbOffline?"#ff6b6b":"#69e096")}}),
+                  h("span",{style:{fontSize:12,color:"#fff",fontWeight:600}},dbOffline?"BD OFFLINE":"BD ONLINE"),
+                  h("span",{style:{fontSize:11,color:"rgba(255,255,255,.6)",marginLeft:4}},"→ Monitor")
                 ),
-                h(Bar,{v:u.taxaUso})
-              );})
-            ),
-            h(Card,{style:{padding:"16px 18px"}},
-              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Últimas solicitações"),
-              sols.slice(0,5).map(function(s){
-                var cm={pendente:[C.am,C.al],aprovada:[C.g2,C.gl],rejeitada:[C.rm,C.rl]}[s.st]||[C.cm,C.cx];
-                return h("div",{key:s.id,style:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"0.5px solid "+C.cl}},
-                  h("div",null,h("div",{style:{fontSize:12,fontWeight:600,color:C.cd}},s.sol),h("div",{style:{fontSize:11,color:C.cm}},s.un.split(" ").slice(-2).join(" "))),
-                  h(Pill,{t:s.st,c:cm[0],b:cm[1]})
-                );
-              })
-            )
-          ),
-          h(Card,{style:{padding:"16px 18px",marginTop:16}},
-            h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 12px",color:C.cd}},"Alertas e sugestões de implementação"),
-            alts.length===0&&adminInsights.length===0&&h("div",{style:{fontSize:12,color:C.cm}},"Nenhum alerta crítico no momento."),
-            alts.map(function(a,i){
-              return h("div",{key:"alt-"+i,style:{background:C.cx,border:"1px solid "+C.cl,borderRadius:10,padding:"8px 10px",fontSize:12,color:C.cd,marginBottom:8}},
-                h("strong",null,a.t+": "),
-                a.tx
-              );
-            }),
-            adminInsights.map(function(txt,i){
-              return h("div",{key:"ins-"+i,style:{display:"flex",gap:8,fontSize:12,color:C.cm,marginBottom:6}},
-                h("span",null,"💡"),
-                h("span",null,txt)
-              );
-            })
-          )
-          ,
-          h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16}},
-            h(Card,{style:{padding:"16px 18px"}},
-              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Indicadores de funcionamento"),
-              indicadoresDash.map(function(ind){
-                var ok=ind.valor>=ind.meta;
-                return h("div",{key:ind.nome,style:{marginBottom:12}},
-                  h("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:C.cd,marginBottom:4}},
-                    h("span",null,ind.nome),
-                    h("span",{style:{fontWeight:700,color:ok?C.g2:C.am}},ind.valor+"% · meta "+ind.meta+"%")
-                  ),
-                  h(Bar,{v:Math.max(0,Math.min(100,ind.valor)),c:ind.cor})
-                );
-              })
-            ),
-            h(Card,{style:{padding:"16px 18px"}},
-              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Resumo executivo"),
-              h("div",{style:{display:"grid",gap:8,fontSize:12,color:C.cd}},
-                h("div",null,"• Média geral de ocupação: ",h("strong",null,mediaTaxaUso+"%")),
-                h("div",null,"• Solicitações pendentes: ",h("strong",null,pendentes.length)," (",pendentesAntigos," com atraso)"),
-                h("div",null,"• Unidades com ocupação crítica: ",h("strong",null,unidadesCriticas)),
-                h("div",null,"• Usuários ativos no sistema: ",h("strong",null,users.filter(function(u){return u.ativo;}).length)),
-                h("div",{style:{fontSize:11,color:C.cm,marginTop:4}},"Use os alertas acima para priorizar correções operacionais, transparência pública e performance das unidades.")
+                h("div",{style:{padding:"8px 14px",background:"rgba(255,255,255,.12)",borderRadius:10}},
+                  h("div",{style:{fontSize:11,color:"rgba(255,255,255,.6)",marginBottom:2}},"HEALTH"),
+                  h("div",{style:{fontSize:18,fontWeight:800,color:healthScore>=80?"#69e096":healthScore>=60?"#ffd36b":"#ff6b6b"}},healthScore+"/100")
+                )
               )
+            ),
+            // ─── KPI Row ────────────────────────────────────────────────────
+            h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:20}},
+              h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+C.g2}},
+                h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"UNIDADES"),
+                h("div",{style:{fontSize:32,fontWeight:800,color:C.cd,marginBottom:4}},totalUnidades),
+                h("div",{style:{fontSize:11,color:C.g2,fontWeight:600}},unidadesAtivas+" operacionais · "+unidadesManutencao+" em manutenção")
+              ),
+              h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+C.b1}},
+                h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"OCUPAÇÃO MÉDIA"),
+                h("div",{style:{fontSize:32,fontWeight:800,color:C.cd,marginBottom:4}},mediaOcup+"%"),
+                h("div",{style:{width:"100%",height:6,borderRadius:3,background:C.cl,overflow:"hidden",marginBottom:4}},
+                  h("div",{style:{height:"100%",width:mediaOcup+"%",background:mediaOcup>=80?C.rm:mediaOcup>=60?C.am:C.g2,borderRadius:3,transition:"width .5s"}})
+                ),
+                h("div",{style:{fontSize:11,color:C.cm}},orgaosAtivos+" órgãos ativos")
+              ),
+              h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+(pendentesCount>0?C.am:C.g2)}},
+                h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"SOLICITAÇÕES"),
+                h("div",{style:{fontSize:32,fontWeight:800,color:pendentesCount>0?C.am:C.cd,marginBottom:4}},pendentesCount),
+                h("div",{style:{fontSize:11,color:C.cm}},"pendentes de análise · "+taxaAprovacao+"% aprovação")
+              ),
+              h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+(pendentesAlt>0?C.rm:C.g2),cursor:"pointer"},onClick:function(){setAtab("monitor");}},
+                h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"ALERTAS ATIVOS"),
+                h("div",{style:{fontSize:32,fontWeight:800,color:pendentesAlt>0?C.rm:C.g2,marginBottom:4}},pendentesAlt),
+                h("div",{style:{fontSize:11,color:C.cm}},alertasDash.length+" total · "+(sysReport&&sysReport.ts?("Relatório "+new Date(sysReport.ts).toLocaleDateString('pt-BR')):"Sem relatório"))
+              )
+            ),
+            // ─── Ocupação por Unidade ────────────────────────────────────────
+            h(Card,{style:{padding:"18px 20px",marginBottom:20}},
+              h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}},
+                h("h3",{style:{fontSize:14,fontWeight:700,margin:0,color:C.cd}},"Ocupação por Unidade"),
+                h("span",{style:{fontSize:11,color:C.cm}},hoje2)
+              ),
+              uns.filter(function(u){return u.visivel;}).map(function(u){
+                var disp=getDisponibilidade(u,hoje2);
+                var sc=disp.pct>=80?C.rm:disp.pct>=60?C.am:C.g2;
+                var sb=disp.pct>=80?C.rl:disp.pct>=60?C.al:C.gx;
+                return h("div",{key:u.id,style:{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:"0.5px solid "+C.cl,flexWrap:"wrap"}},
+                  h("div",{style:{width:28,height:28,borderRadius:7,background:u.tipo==="CIMA"?C.gx:C.bl,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:u.tipo==="CIMA"?C.g2:C.b1,flexShrink:0}},u.tipo[0]),
+                  h("div",{style:{flex:1,minWidth:120}},
+                    h("div",{style:{fontSize:12,fontWeight:700,color:C.cd,marginBottom:3}},u.nome),
+                    h("div",{style:{display:"flex",alignItems:"center",gap:8}},
+                      h("div",{style:{flex:1,height:8,borderRadius:4,background:C.cl,overflow:"hidden"}},
+                        h("div",{style:{height:"100%",width:disp.pct+"%",background:sc,borderRadius:4,transition:"width .4s"}})
+                      ),
+                      h("span",{style:{fontSize:12,fontWeight:700,color:sc,flexShrink:0,minWidth:36,textAlign:"right"}},disp.pct+"%"),
+                      h("span",{style:{fontSize:11,color:C.cm,flexShrink:0}},disp.livre+"/"+disp.total+" livres")
+                    )
+                  ),
+                  h("button",{onClick:function(){setAtab("uns");},style:{padding:"4px 12px",borderRadius:7,border:"1px solid "+C.g2,background:"none",color:C.g2,fontSize:11,cursor:"pointer"}},"Gerenciar")
+                );
+              })
+            ),
+            // ─── Atividade + Ações Rápidas ───────────────────────────────────
+            h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr":"1fr 1fr",gap:16,marginBottom:20}},
+              h(Card,{style:{padding:"16px 18px"}},
+                h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Atividade Recente"),
+                sols.slice(0,6).map(function(s){
+                  var cm={pendente:[C.am,C.al],aprovada:[C.g2,C.gl],rejeitada:[C.rm,C.rl]}[s.st]||[C.cm,C.cx];
+                  return h("div",{key:s.id,style:{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"0.5px solid "+C.cl}},
+                    h("div",{style:{width:6,height:6,borderRadius:"50%",background:cm[0],flexShrink:0}}),
+                    h("div",{style:{flex:1}},
+                      h("div",{style:{fontSize:12,color:C.cd}},h("strong",null,s.id)," · "+s.sol),
+                      h("div",{style:{fontSize:11,color:C.cm}},s.un.split(" ").slice(-2).join(" ")+" · "+formatData(s.dt))
+                    ),
+                    h(Pill,{t:s.st,c:cm[0],b:cm[1]})
+                  );
+                }),
+                sols.length===0&&h("div",{style:{fontSize:12,color:C.cm,textAlign:"center",padding:"16px 0"}},"Nenhuma solicitação ainda.")
+              ),
+              h(Card,{style:{padding:"16px 18px"}},
+                h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 14px",color:C.cd}},"Ações Rápidas"),
+                h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+                  [
+                    {icon:"🏛️",label:"Nova Unidade",fn:function(){setModal({t:"un",d:null});}},
+                    {icon:"📰",label:"Nova Notícia",fn:function(){setModal({t:"nw",d:null});}},
+                    {icon:"📋",label:"Solicitações",fn:function(){setAtab("sols");}},
+                    {icon:"👥",label:"Usuários",fn:function(){setAtab("users");}},
+                    {icon:"🔍",label:"Monitor",fn:function(){setAtab("monitor");}},
+                    {icon:"🎨",label:"Personalizar",fn:function(){setAtab("pers");}}
+                  ].map(function(ac){
+                    return h("button",{key:ac.label,onClick:ac.fn,style:{padding:"14px 10px",borderRadius:10,border:"1px solid "+C.cl,background:"none",cursor:"pointer",textAlign:"center",transition:"background .15s",display:"flex",flexDirection:"column",alignItems:"center",gap:4}},
+                      h("span",{style:{fontSize:20}},ac.icon),
+                      h("span",{style:{fontSize:11,color:C.cm,fontWeight:600}},ac.label)
+                    );
+                  })
+                )
+              )
+            ),
+            // ─── Alertas ────────────────────────────────────────────────────
+            alertasDash.length>0&&h(Card,{style:{padding:"16px 18px"}},
+              h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 12px",color:C.cd}},"Alertas e Correções"),
+              alertasDash.map(function(a,ix){
+                var mapa={alta:[C.rm,C.rl,"🔥"],media:[C.am,C.al,"⚠️"],baixa:[C.b1,C.bl,"ℹ️"]}[a.sev]||[C.cm,C.cx,"•"];
+                return h("div",{key:ix,style:{display:"flex",gap:10,padding:"10px 0",borderBottom:ix<alertasDash.length-1?"0.5px solid "+C.cl:"none"}},
+                  h("span",{style:{fontSize:16,flexShrink:0,marginTop:1}},mapa[2]),
+                  h("div",null,
+                    h("div",{style:{fontSize:12,fontWeight:700,color:mapa[0],marginBottom:2}},a.titulo),
+                    h("div",{style:{fontSize:11,color:C.cd,marginBottom:2}},a.det),
+                    h("div",{style:{fontSize:11,color:C.cm}},h("strong",null,"Ação: "),a.sug)
+                  )
+                );
+              })
             )
-          )
-        ),
+          );
+        })(),
 
         atab==="uns"&&canDo("units")&&h("div",null,
           h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},
@@ -2678,12 +2888,12 @@ function App(){
               return h(Card,{key:s.id,style:{padding:"14px 16px"}},
                 h("div",{style:{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:10}},
                   h("div",null,
-                    h("div",{style:{display:"flex",gap:7,marginBottom:6}},h("span",{style:{fontSize:11,color:C.cm}},s.id),h(Pill,{t:s.st,c:cm[0],b:cm[1]})),
+                    h("div",{style:{display:"flex",gap:7,marginBottom:6,flexWrap:"wrap",alignItems:"center"}},h("span",{style:{fontSize:11,color:C.cm}},s.id),h(Pill,{t:s.st,c:cm[0],b:cm[1]}),h(Pill,{t:s.semPrevisao?"Prazo indeterminado":"Temporária",c:s.semPrevisao?C.pm:C.b1,b:s.semPrevisao?C.px:C.bl})),
                     h("div",{style:{fontSize:13,fontWeight:700,color:C.cd}},s.sol+" — "+s.org),
-                    h("div",{style:{fontSize:11,color:C.cm,marginTop:2}},s.un+" · "+s.ev+" · "+formatData(s.dt))
+                    h("div",{style:{fontSize:11,color:C.cm,marginTop:2}},s.un+" · "+s.ev+" · "+formatData(s.dt)+(s.semPrevisao?" → prazo indeterminado":s.dtFim?" → "+formatData(s.dtFim):""))
                   ),
                   s.st==="pendente"&&h("div",{style:{display:"flex",gap:7}},
-                    h("button",{onClick:function(){var unid=uns.find(function(u){return u.nome===s.un;});if(!unid){toast2("Falha ao aprovar: unidade não encontrada.",C.rm);return;}var res=approveUso(uns,setUns,unid.id,{nome:s.org,tipo:s.ev});if(!res.ok){toast2("Aviso: "+res.err,C.am);return;}setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"aprovada"}):x;});});toast2("Aprovada.");},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.g2,background:C.gx,color:C.g2,fontSize:12,fontWeight:700,cursor:"pointer"}},"Aprovar"),
+                    h("button",{onClick:function(){var unid=uns.find(function(u){return u.nome===s.un;});if(!unid){toast2("Falha ao aprovar: unidade não encontrada.",C.rm);return;}var res=approveUso(uns,setUns,unid.id,{nome:s.org,tipo:s.ev,dtFim:s.dtFim||null,semPrevisao:s.semPrevisao||false});if(!res.ok){toast2("Aviso: "+res.err,C.am);return;}setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"aprovada"}):x;});});toast2("Aprovada.");},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.g2,background:C.gx,color:C.g2,fontSize:12,fontWeight:700,cursor:"pointer"}},"Aprovar"),
                     h("button",{onClick:function(){setSols(function(sl){return sl.map(function(x){return x.id===s.id?Object.assign({},x,{st:"rejeitada"}):x;});});toast2("Rejeitada.",C.rm);},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:12,fontWeight:700,cursor:"pointer"}},"Rejeitar")
                   )
                 )
@@ -2711,7 +2921,8 @@ function App(){
 
         atab==="rel"&&canDo("rel")&&h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2}),
 
-        atab==="monitor"&&h(AdminMonitor,{log:monLog,setLog:setMonLog,dbOffline:dbOffline,health:healthScore,healthLabel:healthLabel,healthColor:healthColor,uptimeMin:uptimeMin,lastDbMs:lastDbMs,CD:CD}),
+        atab==="monitor"&&h(AdminMonitor,{log:monLog,setLog:setMonLog,dbOffline:dbOffline,health:healthScore,healthLabel:healthLabel,healthColor:healthColor,uptimeMin:uptimeMin,lastDbMs:lastDbMs,CD:CD,sysReport:sysReport,setSysReport:setSysReport}),
+        atab==="pers"&&canDo("cfg")&&h(AdminPersonalizacao,{pers:pers,setPers:setPers,C:C,toast2:toast2}),
 
       )
     ),
@@ -2719,7 +2930,7 @@ function App(){
     // Footer (idêntico ao v7)
     page!=="admin"&&page!=="mapa"&&h("footer",{style:{background:C.g0,padding:"28px 20px 20px"}},
       h("div",{style:{maxWidth:1100,margin:"0 auto",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:24,marginBottom:20}},
-        h("div",null,h("div",{style:{fontSize:14,fontWeight:700,color:"#fff",marginBottom:6}},"SEMA/AC"),h("div",{style:{fontSize:12,color:"rgba(255,255,255,.5)",lineHeight:1.8}},"Secretaria de Estado do",h("br"),"Meio Ambiente do Acre")),
+        h("div",null,h("div",{style:{fontSize:14,fontWeight:700,color:"#fff",marginBottom:6}},pers.nomeApp),h("div",{style:{fontSize:12,color:"rgba(255,255,255,.5)",lineHeight:1.8}},pers.rodapeTexto)),
         h("div",null,
           h("div",{style:{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",marginBottom:8,letterSpacing:.8}},"NAVEGAÇÃO"),
           ["home","cima","ugai","mapa","noticias","transp"].map(function(pg){
@@ -2729,7 +2940,7 @@ function App(){
         h("div",null,h("div",{style:{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",marginBottom:8,letterSpacing:.8}},"CONTATO"),h("div",{style:{fontSize:12,color:"rgba(255,255,255,.5)",lineHeight:1.9}},"📧 cima@sema.ac.gov.br",h("br"),"📞 (68) 3212-0000"))
       ),
       h("div",{style:{borderTop:"0.5px solid rgba(255,255,255,.1)",paddingTop:14}},
-        h("span",{style:{fontSize:11,color:"rgba(255,255,255,.25)"}},"© 2026 SEMA/AC — Todos os direitos reservados")
+        h("span",{style:{fontSize:11,color:"rgba(255,255,255,.25)"}},"© 2026 "+pers.nomeApp+" — Todos os direitos reservados")
       )
     )
   );
