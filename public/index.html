@@ -1407,21 +1407,53 @@ function AdminPersonalizacao(p){
     {id:"roxo",label:"Roxo Inovação",cor:"#6A1AAA"},
     {id:"laranja",label:"Laranja Energia",cor:"#AA4A1A"}
   ];
-  function sv(k,v){setPers(function(p){return Object.assign({},p,{[k]:v});});}
+  // Draft state — alterações ficam locais até clicar "Aplicar"
+  var sDraft=useState(pers);var draft=sDraft[0],setDraft=sDraft[1];
+  // Sincronizar draft quando pers muda externamente (ex: restaurar padrão)
+  useEffect(function(){setDraft(pers);},[pers]);
+  function sv(k,v){setDraft(function(d){return Object.assign({},d,{[k]:v});});}
+  function aplicar(){setPers(draft);toast2("Personalização aplicada com sucesso!",C.g2);}
+  // Tema ativo baseado no draft (para o preview responder ao clique nos temas)
+  var CT=PERS_TEMAS[draft.temaAtual]||PERS_TEMAS.verde;
+  var prevG2=CT.g2,prevG1=CT.g1,prevB1=draft.corSecundaria||"#1565A8";
   return h("div",null,
-    h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},
+    h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:8}},
       h("h2",{style:{fontSize:20,fontWeight:700,margin:0,color:C.cd}},"Personalização do Sistema"),
-      h("button",{onClick:function(){setPers(PERS_DEF);toast2("Configurações restauradas ao padrão.",C.am);},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.am,background:C.al,color:C.am,fontSize:12,cursor:"pointer"}},"↺ Restaurar padrão")
+      h("div",{style:{display:"flex",gap:8}},
+        h("button",{onClick:function(){setPers(PERS_DEF);setDraft(PERS_DEF);toast2("Configurações restauradas ao padrão.",C.am);},style:{padding:"7px 16px",borderRadius:8,border:"1px solid "+C.am,background:C.al,color:C.am,fontSize:12,cursor:"pointer"}},"↺ Restaurar padrão"),
+        h("button",{onClick:aplicar,style:{padding:"7px 20px",borderRadius:8,border:"none",background:C.g2,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}},"✓ Aplicar")
+      )
     ),
     // Identidade
     h(Card,{style:{padding:"18px 20px",marginBottom:16}},
       h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"IDENTIDADE"),
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
-        h("div",null,h("label",{style:lbl},"Nome do sistema"),h("input",{value:pers.nomeApp,onChange:function(e){sv("nomeApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
-        h("div",null,h("label",{style:lbl},"Subtítulo"),h("input",{value:pers.subApp,onChange:function(e){sv("subApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
-        h("div",{style:{gridColumn:"1/-1"}},h("label",{style:lbl},"Logo (URL)"),h("input",{value:pers.logo||"",onChange:function(e){sv("logo",e.target.value);},placeholder:"https://…",style:{width:"100%",boxSizing:"border-box"}})),
-        h("div",null,h("label",{style:lbl},"Mensagem de boas-vindas"),h("input",{value:pers.msgBemVindo,onChange:function(e){sv("msgBemVindo",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
-        h("div",null,h("label",{style:lbl},"Texto do rodapé"),h("input",{value:pers.rodapeTexto,onChange:function(e){sv("rodapeTexto",e.target.value);},style:{width:"100%",boxSizing:"border-box"}}))
+        h("div",null,h("label",{style:lbl},"Nome do sistema"),h("input",{value:draft.nomeApp,onChange:function(e){sv("nomeApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Subtítulo"),h("input",{value:draft.subApp,onChange:function(e){sv("subApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",{style:{gridColumn:"1/-1"}},
+          h("label",{style:lbl},"Logo"),
+          h("div",{style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
+            h("input",{value:draft.logo||"",onChange:function(e){sv("logo",e.target.value);},
+              placeholder:"https://… ou use o botão para enviar arquivo",
+              style:{flex:1,boxSizing:"border-box"}}),
+            h("label",{style:{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",
+                padding:"6px 12px",borderRadius:7,border:"1px solid "+C.g2,
+                background:C.gx,color:C.g2,fontSize:11,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}},
+              h("input",{type:"file",accept:"image/*",style:{display:"none"},
+                onChange:function(e){
+                  var file=e.target.files&&e.target.files[0];
+                  if(!file) return;
+                  fileToDataUrl(file)
+                    .then(function(dataUrl){sv("logo",dataUrl);})
+                    .catch(function(){toast2("Erro ao carregar imagem.",C.rm);});
+                }}),
+              "📷 Enviar arquivo"
+            )
+          ),
+          draft.logo&&h("img",{src:draft.logo,alt:"preview logo",style:{height:36,maxWidth:160,objectFit:"contain",borderRadius:6,border:"1px solid "+C.cl,background:C.cx,padding:4,display:"block"}})
+        ),
+        h("div",null,h("label",{style:lbl},"Mensagem de boas-vindas"),h("input",{value:draft.msgBemVindo,onChange:function(e){sv("msgBemVindo",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Texto do rodapé"),h("input",{value:draft.rodapeTexto,onChange:function(e){sv("rodapeTexto",e.target.value);},style:{width:"100%",boxSizing:"border-box"}}))
       )
     ),
     // Cores e Temas
@@ -1429,7 +1461,7 @@ function AdminPersonalizacao(p){
       h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"CORES E TEMA"),
       h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:16}},
         TEMAS.map(function(t){
-          var ativo=pers.temaAtual===t.id;
+          var ativo=draft.temaAtual===t.id;
           return h("div",{key:t.id,onClick:function(){sv("temaAtual",t.id);},
             style:{padding:"14px 12px",borderRadius:10,border:"2px solid "+(ativo?t.cor:C.cl),background:ativo?t.cor+"18":"none",cursor:"pointer",textAlign:"center",transition:"all .15s"}},
             h("div",{style:{width:28,height:28,borderRadius:"50%",background:t.cor,margin:"0 auto 8px",boxShadow:ativo?"0 0 0 3px "+t.cor+"40":"none"}}),
@@ -1439,28 +1471,31 @@ function AdminPersonalizacao(p){
       ),
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
         h("div",null,h("label",{style:lbl},"Cor secundária"),h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
-          h("input",{type:"color",value:pers.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{width:40,height:32,borderRadius:6,border:"none",cursor:"pointer",padding:0}}),
-          h("input",{value:pers.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{flex:1,boxSizing:"border-box"}})
+          h("input",{type:"color",value:draft.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{width:40,height:32,borderRadius:6,border:"none",cursor:"pointer",padding:0}}),
+          h("input",{value:draft.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{flex:1,boxSizing:"border-box"}})
         ))
       )
     ),
-    // Preview ao vivo
-    h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+C.g2}},
+    // Preview ao vivo (usa draft para mostrar alterações antes de Aplicar)
+    h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+prevG2}},
       h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"PREVIEW AO VIVO"),
-      h("div",{style:{background:C.g1,borderRadius:12,padding:"16px 20px",display:"flex",alignItems:"center",gap:12,marginBottom:12}},
-        pers.logo&&h("img",{src:pers.logo,alt:"logo",style:{height:36,objectFit:"contain"}}),
+      h("div",{style:{background:prevG1,borderRadius:12,padding:"16px 20px",display:"flex",alignItems:"center",gap:12,marginBottom:12}},
+        draft.logo&&h("img",{src:draft.logo,alt:"logo",style:{height:36,objectFit:"contain"}}),
         h("div",null,
-          h("div",{style:{fontSize:16,fontWeight:800,color:"#fff"}},pers.nomeApp),
-          h("div",{style:{fontSize:11,color:"rgba(255,255,255,.7)"}},pers.subApp)
+          h("div",{style:{fontSize:16,fontWeight:800,color:"#fff"}},draft.nomeApp),
+          h("div",{style:{fontSize:11,color:"rgba(255,255,255,.7)"}},draft.subApp)
         )
       ),
-      h("div",{style:{display:"flex",gap:8}},
-        h("div",{style:{padding:"10px 18px",borderRadius:8,background:C.g2,color:"#fff",fontSize:13,fontWeight:700}},"Botão primário"),
-        h("div",{style:{padding:"10px 18px",borderRadius:8,background:C.b1,color:"#fff",fontSize:13,fontWeight:700}},"Botão secundário"),
-        h(Pill,{t:"Operacional",c:C.g2,b:C.gx}),
+      h("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+        h("div",{style:{padding:"10px 18px",borderRadius:8,background:prevG2,color:"#fff",fontSize:13,fontWeight:700}},"Botão primário"),
+        h("div",{style:{padding:"10px 18px",borderRadius:8,background:prevB1,color:"#fff",fontSize:13,fontWeight:700}},"Botão secundário"),
+        h(Pill,{t:"Operacional",c:prevG2,b:prevG2+"20"}),
         h(Pill,{t:"Pendente",c:C.am,b:C.al})
       ),
-      h("div",{style:{marginTop:10,fontSize:11,color:C.cm}},pers.rodapeTexto)
+      h("div",{style:{marginTop:10,fontSize:11,color:C.cm}},draft.rodapeTexto),
+      h("div",{style:{marginTop:14,paddingTop:12,borderTop:"1px solid "+C.cl,display:"flex",justifyContent:"flex-end"}},
+        h("button",{onClick:aplicar,style:{padding:"9px 24px",borderRadius:9,border:"none",background:prevG2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"✓ Aplicar personalização")
+      )
     )
   );
 }
