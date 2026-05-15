@@ -45,6 +45,7 @@ code{font-family:monospace}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 
 
@@ -165,38 +166,21 @@ function lsClear(){
   }
 }
 
-// Backend API (opcional): quando disponível, sincroniza dados com SQLite via /api/state
-var API_BASE=window.location.hostname==='wesleyjuca.github.io'?'https://sgua-production.up.railway.app':(window.SAGCU_API_BASE||'').replace(/\/$/,'');
-var API_ENABLED=typeof window!=='undefined'&&window.location&&window.location.protocol.indexOf('http')===0;
-function apiUrl(path){return(API_BASE||'')+path;}
+// Supabase — persistência direta (sem servidor intermediário)
+var _supa=supabase.createClient(
+  'https://ylbhtjpbejwqgxudrikz.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlsYmh0anBiZWp3cWd4dWRyaWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2MjY3NjMsImV4cCI6MjA5NDIwMjc2M30.FoWdYCpfI8NWavxrXvIqjc2IU7Kxz6NVuWXNKqHBATk'
+);
 function apiFetchState(){
-  if(!API_ENABLED) return Promise.resolve(null);
-  return fetch(apiUrl('/api/state'),{headers:{'Accept':'application/json'}}).then(function(r){
-    if(!r.ok) throw new Error('Falha ao carregar estado remoto ('+r.status+')');
-    return r.json();
-  });
+  return _supa.from('app_state').select('value').eq('key','sgua').maybeSingle()
+    .then(function(r){return r.data?r.data.value:null;});
 }
 function apiSaveState(payload){
-  if(!API_ENABLED) return Promise.resolve();
-  return fetch(apiUrl('/api/state'),{
-    method:'PUT',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(payload)
-  }).then(function(r){
-    if(!r.ok) throw new Error('Falha ao salvar estado remoto ('+r.status+')');
-    return r.json();
-  });
+  return _supa.from('app_state')
+    .upsert({key:'sgua',value:payload,updated_at:new Date().toISOString()},{onConflict:'key'});
 }
-function apiSyncFeeds(feeds,news){
-  if(!API_ENABLED) return Promise.resolve({ok:false,error:'Sincronização requer servidor HTTP ativo.'});
-  return fetch(apiUrl('/api/feeds/sync'),{
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({feeds:feeds,news:news})
-  }).then(function(r){
-    if(!r.ok) throw new Error('Falha ao sincronizar feeds ('+r.status+')');
-    return r.json();
-  });
+function apiSyncFeeds(){
+  return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Sincronização RSS não disponível nesta versão. Adicione notícias manualmente pelo painel admin.']});
 }
 
 
@@ -1363,7 +1347,24 @@ function FmUn(p){
       h("textarea",{value:f.historia||"",onChange:function(e){sv("historia",e.target.value);},rows:8,placeholder:"Descreva a história desta unidade…",style:{width:"100%",boxSizing:"border-box",resize:"vertical",fontFamily:"sans-serif",fontSize:13,borderRadius:8,border:"0.5px solid #ccc",padding:"8px 12px"}})
     ),
     ab==="galeria"&&h("div",null,
-      h("div",{style:{marginBottom:14}},h("label",{style:lbl},"Foto principal (URL)"),h("input",{value:f.foto||"",onChange:function(e){sv("foto",e.target.value);},placeholder:"https://…",style:{width:"100%",boxSizing:"border-box"}})),
+      h("div",{style:{marginBottom:14}},
+        h("label",{style:lbl},"Foto principal"),
+        h("div",{style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
+          h("input",{value:f.foto||"",onChange:function(e){sv("foto",e.target.value);},placeholder:"Cole uma URL ou faça upload abaixo",style:{flex:1,boxSizing:"border-box"}}),
+          f.foto&&h("img",{src:f.foto,alt:"",style:{width:68,height:48,objectFit:"cover",borderRadius:6,flexShrink:0,border:"1px solid "+C.cl}})
+        ),
+        h("label",{style:{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,color:C.g2,fontWeight:600,marginTop:4}},
+          h("input",{type:"file",accept:"image/*",style:{display:"none"},onChange:function(e){
+            var file=e.target.files&&e.target.files[0];
+            if(!file) return;
+            setGalUploading(true);
+            fileToDataUrl(file).then(function(dataUrl){sv("foto",dataUrl);})
+              .catch(function(err){alert(err.message||"Erro ao carregar imagem.");})
+              .finally(function(){setGalUploading(false);});
+          }}),
+          galUploading?"Carregando…":"📷 Enviar foto principal"
+        )
+      ),
       h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
         h("label",{style:{fontSize:11,color:C.cm,fontWeight:700}},"GALERIA"),
         h("button",{onClick:function(){sv("galeria",(f.galeria||[]).concat([{url:"",leg:""}]));},style:{padding:"5px 14px",borderRadius:7,border:"none",background:C.g2,color:"#fff",fontSize:12,cursor:"pointer"}},"+ Foto")
