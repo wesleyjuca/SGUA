@@ -31,10 +31,9 @@ jobs:
 
       - name: Check required files
         run: |
-          test -f server.js       && echo "✓ server.js"
+          test -f server.js         && echo "✓ server.js"
           test -f public/index.html && echo "✓ index.html"
-          test -f .env.example    && echo "✓ .env.example"
-          test -f render.yaml     && echo "✓ render.yaml"
+          test -f .env.example      && echo "✓ .env.example"
 
       - name: Check DATABASE_URL is documented
         run: grep -q DATABASE_URL .env.example

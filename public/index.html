@@ -51,6 +51,7 @@ code{font-family:monospace}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 
 
@@ -171,7 +172,8 @@ function lsClear(){
   }
 }
 
-// ── Supabase (direto, sem backend) ───────────────────────────────────────────
+// Supabase — persistência direta (sem servidor intermediário)
+// Guard: se o CDN não carregar, o app continua funcionando com localStorage
 var _supa=null;
 try{
   if(typeof supabase!=='undefined'){
@@ -182,7 +184,9 @@ try{
   }else{
     console.warn('[SGUA] supabase.js não carregou — modo offline (localStorage)');
   }
-}catch(e){console.warn('[SGUA] Erro ao inicializar Supabase:',e.message);}
+}catch(e){
+  console.warn('[SGUA] Erro ao inicializar Supabase:',e.message);
+}
 function apiFetchState(){
   if(!_supa) return Promise.resolve(null);
   return _supa.from('app_state').select('value').eq('key','sgua').maybeSingle()
@@ -194,7 +198,7 @@ function apiSaveState(payload){
     .upsert({key:'sgua',value:payload,updated_at:new Date().toISOString()},{onConflict:'key'});
 }
 function apiSyncFeeds(){
-  return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Sincronização RSS não disponível nesta versão. Adicione notícias manualmente.']});
+  return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Sincronização RSS não disponível nesta versão. Adicione notícias manualmente pelo painel admin.']});
 }
 
 
@@ -1117,16 +1121,34 @@ function Confirm(p){
   );
 }
 
+function Lightbox(p){
+  useEffect(function(){
+    function onKey(e){if(e.key==="Escape")p.onClose();}
+    document.addEventListener("keydown",onKey);
+    return function(){document.removeEventListener("keydown",onKey);};
+  },[]);
+  return h("div",{onClick:p.onClose,style:{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center",cursor:"zoom-out"}},
+    h("div",{onClick:function(e){e.stopPropagation();},style:{position:"relative",maxWidth:"90vw",maxHeight:"90vh"}},
+      h("img",{src:p.src,alt:p.leg||"",style:{maxWidth:"90vw",maxHeight:"85vh",objectFit:"contain",borderRadius:8,display:"block"}}),
+      p.leg&&h("div",{style:{textAlign:"center",color:"rgba(255,255,255,.8)",fontSize:13,marginTop:8}},p.leg),
+      h("button",{onClick:p.onClose,style:{position:"absolute",top:-40,right:0,background:"none",border:"none",color:"#fff",fontSize:28,cursor:"pointer",lineHeight:1}},"×")
+    )
+  );
+}
+
 // ─── PÁGINA DA UNIDADE ────────────────────────────────────────────────────────
 function PageUnidade(p){
   var u=p.u,onBack=p.onBack,onSolicitar=p.onSolicitar;
   var sA=useState("sobre");var aba=sA[0],setAba=sA[1];
+  var sLb=useState(null);var lbFoto=sLb[0],setLbFoto=sLb[1];
   var cor=u.tipo==="CIMA"?C.g2:C.b1;
   var corL=u.tipo==="CIMA"?C.gx:C.bl;
   var scr=scMap[u.status]||[C.cm,C.cx];var sc=scr[0],sbg=scr[1];
   var abas=[["sobre","Sobre"],["historia","História"],["galeria","Galeria"],["mapa","Localização"],["estrutura","Estrutura"],["ocupacao","Ocupação"]];
 
-  return h("div",{style:{background:"#fff",minHeight:"100vh"}},
+  return h(React.Fragment,null,
+    lbFoto&&h(Lightbox,{src:lbFoto.url,leg:lbFoto.leg,onClose:function(){setLbFoto(null);}}),
+    h("div",{style:{background:"#fff",minHeight:"100vh"}},
     // Hero
     h("div",{style:{position:"relative",height:300,overflow:"hidden",background:cor}},
       u.foto&&h("img",{src:u.foto,alt:"",style:{width:"100%",height:"100%",objectFit:"cover",opacity:.7}}),
@@ -1176,7 +1198,7 @@ function PageUnidade(p){
         )
       ),
       aba==="historia"&&h(Card,{style:{padding:"24px 28px",maxWidth:740}},h("h2",{style:{fontSize:18,fontWeight:700,margin:"0 0 16px",color:cor}},"História da unidade"),u.historia?h("p",{style:{fontSize:14,color:C.cd,lineHeight:1.9,margin:0}},u.historia):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Histórico não cadastrado.")),
-      aba==="galeria"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Galeria de fotos"),u.galeria&&u.galeria.length>0?h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}},u.galeria.map(function(f,i){return h("div",{key:i,style:{aspectRatio:"4/3",borderRadius:10,overflow:"hidden",background:C.cl}},h("img",{src:f.url,alt:f.leg||"",style:{width:"100%",height:"100%",objectFit:"cover"}}));})):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Nenhuma foto cadastrada.")),
+      aba==="galeria"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Galeria de fotos"),u.galeria&&u.galeria.length>0?h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}},u.galeria.map(function(f,i){return h("div",{key:i,onClick:function(){setLbFoto(f);},style:{aspectRatio:"4/3",borderRadius:10,overflow:"hidden",background:C.cl,cursor:"zoom-in"}},h("img",{src:f.url,alt:f.leg||"",style:{width:"100%",height:"100%",objectFit:"cover"}}));})):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Nenhuma foto cadastrada.")),
       aba==="mapa"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Localização georeferenciada"),h(MapView,{units:[u],height:"380px",compact:false,singleUnit:true}),h("div",{style:{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.cx,borderRadius:8,fontSize:11,color:C.cm}},h("span",{style:{fontFamily:"monospace"}},"Lat "+u.coords.lat.toFixed(6)+", Lon "+u.coords.lng.toFixed(6)),h("a",{href:"https://www.google.com/maps?q="+u.coords.lat+","+u.coords.lng,target:"_blank",rel:"noreferrer",style:{color:C.b1,fontWeight:500}},"Abrir no Maps ↗"))),
       
       aba==="ocupacao"&&h(PainelOcupacao,{u:u,uns:p.uns||[u],setUns:p.setUns||function(){},curUser:p.curUser,toast2:p.toast2||function(){}}),
@@ -1186,8 +1208,9 @@ function PageUnidade(p){
         })
       )
     )
-  );
+  ));
 }
+
 
 // ─── NOTÍCIAS PÚBLICAS ────────────────────────────────────────────────────────
 function getCC(cat){return({Monitoramento:[C.g2,C.gx],Fiscalização:[C.b1,C.bl],"Programa REM":[C.t1,C.tl]}[cat]||[C.cm,C.cx]);}
@@ -1551,7 +1574,24 @@ function FmUn(p){
       h("textarea",{value:f.historia||"",onChange:function(e){sv("historia",e.target.value);},rows:8,placeholder:"Descreva a história desta unidade…",style:{width:"100%",boxSizing:"border-box",resize:"vertical",fontFamily:"sans-serif",fontSize:13,borderRadius:8,border:"0.5px solid #ccc",padding:"8px 12px"}})
     ),
     ab==="galeria"&&h("div",null,
-      h("div",{style:{marginBottom:14}},h("label",{style:lbl},"Foto principal (URL)"),h("input",{value:f.foto||"",onChange:function(e){sv("foto",e.target.value);},placeholder:"https://…",style:{width:"100%",boxSizing:"border-box"}})),
+      h("div",{style:{marginBottom:14}},
+        h("label",{style:lbl},"Foto principal"),
+        h("div",{style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
+          h("input",{value:f.foto||"",onChange:function(e){sv("foto",e.target.value);},placeholder:"Cole uma URL ou faça upload abaixo",style:{flex:1,boxSizing:"border-box"}}),
+          f.foto&&h("img",{src:f.foto,alt:"",style:{width:68,height:48,objectFit:"cover",borderRadius:6,flexShrink:0,border:"1px solid "+C.cl}})
+        ),
+        h("label",{style:{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,color:C.g2,fontWeight:600,marginTop:4}},
+          h("input",{type:"file",accept:"image/*",style:{display:"none"},onChange:function(e){
+            var file=e.target.files&&e.target.files[0];
+            if(!file) return;
+            setGalUploading(true);
+            fileToDataUrl(file).then(function(dataUrl){sv("foto",dataUrl);})
+              .catch(function(err){alert(err.message||"Erro ao carregar imagem.");})
+              .finally(function(){setGalUploading(false);});
+          }}),
+          galUploading?"Carregando…":"📷 Enviar foto principal"
+        )
+      ),
       h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
         h("label",{style:{fontSize:11,color:C.cm,fontWeight:700}},"GALERIA"),
         h("button",{onClick:function(){sv("galeria",(f.galeria||[]).concat([{url:"",leg:""}]));},style:{padding:"5px 14px",borderRadius:7,border:"none",background:C.g2,color:"#fff",fontSize:12,cursor:"pointer"}},"+ Foto")
