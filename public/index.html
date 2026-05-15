@@ -51,7 +51,6 @@ code{font-family:monospace}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 
 
@@ -919,6 +918,8 @@ var USERS=[
   {id:2,nome:"Carlos Mendes",email:"gestor@sema.ac.gov.br",pwdHash:hashPwd("gestor123"),perfil:"gestor",ativo:true,criadoEm:"2024-03-15",permissoes:{units:true,news:true,users:false,sols:true,feeds:false,cfg:false,rel:true}},
   {id:3,nome:"Ana Rodrigues",email:"viewer@sema.ac.gov.br",pwdHash:hashPwd("viewer123"),perfil:"viewer",ativo:true,criadoEm:"2024-06-01",permissoes:{units:false,news:false,users:false,sols:false,feeds:false,cfg:false,rel:false}}
 ];
+// Versão do schema de usuários — incrementar sempre que USERS mudar
+var USERS_VER=3;
 
 var UNS=[
   // ── CIMA Cruzeiro do Sul ─────────────────────────────────────────────────────
@@ -1339,7 +1340,7 @@ function SecNoticias(p){
 
 // ─── LOGIN MODAL ──────────────────────────────────────────────────────────────
 function TelaLogin(p){
-  var users=p.users,setUsers=p.setUsers,onLogin=p.onLogin,onClose=p.onClose,onAuthFail=p.onAuthFail||function(){};
+  var users=p.users,setUsers=p.setUsers,onLogin=p.onLogin,onClose=p.onClose,onAuthFail=p.onAuthFail||function(){},dbLoading=p.dbLoading||false;
   var sM=useState("login");var mode=sM[0],setMode=sM[1];
   var sE=useState("");var email=sE[0],setEmail=sE[1];
   var sPw=useState("");var pwd=sPw[0],setPwd=sPw[1];
@@ -1391,7 +1392,8 @@ function TelaLogin(p){
             )
           ),
           h("button",{onClick:function(){setMode("forgot");setErr("");},style:{background:"none",border:"none",fontSize:12,color:C.b1,cursor:"pointer",padding:"0 0 18px",display:"block"}},"Esqueci minha senha"),
-          h("button",{onClick:doLogin,style:{width:"100%",padding:"11px 0",borderRadius:10,border:"none",background:C.g2,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}},"Entrar")
+          dbLoading&&h("div",{style:{fontSize:11,color:C.am,marginBottom:8,textAlign:"center",padding:"6px 10px",background:C.al,borderRadius:8}},"⏳ Aguardando conexão com o banco…"),
+          h("button",{onClick:doLogin,disabled:dbLoading,style:{width:"100%",padding:"11px 0",borderRadius:10,border:"none",background:C.g2,color:"#fff",fontSize:14,fontWeight:700,cursor:dbLoading?"wait":"pointer",opacity:dbLoading?0.6:1}},"Entrar")
         ),
         mode==="forgot"&&!tokenSent&&h("div",null,
           h("button",{onClick:function(){setMode("login");setErr("");},style:{background:"none",border:"none",fontSize:12,color:C.cm,cursor:"pointer",padding:"0 0 12px",display:"block"}},"← Voltar"),
@@ -2296,6 +2298,8 @@ function App(){
   var sUns=useState(function(){return lsGet("uns",UNS);});var uns=sUns[0],setUns=sUns[1];
   var sNws=useState(function(){return lsGet("news",NWS);});var news=sNws[0],setNews=sNws[1];
   var sFds=useState(function(){return lsGet("feeds",FDS);});var feeds=sFds[0],setFeeds=sFds[1];
+  // Invalida localStorage de usuários quando schema de USERS muda (previne hash stale)
+  if(lsGet('usersVer',0)!==USERS_VER){lsSet('usersVer',USERS_VER);lsSet('users',USERS);}
   var sUsr=useState(function(){return lsGet("users",USERS);});var users=sUsr[0],setUsers=sUsr[1];
   var sCU=useState(function(){return lsGet('curUser',null);});var curUser=sCU[0],setCurUser=sCU[1];
   var sSL=useState(false);var showLogin=sSL[0],setShowLogin=sSL[1];
@@ -2379,6 +2383,25 @@ function App(){
     });
     return function(){alive=false;};
   },[]);
+  // Reconexão automática: se offline, tenta reconectar a cada 60s
+  useEffect(function(){
+    if(!dbOffline) return;
+    var timer=setInterval(function(){
+      apiFetchState().then(function(data){
+        if(!data) return;
+        setDbOffline(false);
+        if(Array.isArray(data.uns)) setUns(data.uns);
+        if(Array.isArray(data.news)) setNews(data.news);
+        if(Array.isArray(data.feeds)) setFeeds(data.feeds);
+        if(Array.isArray(data.sols)) setSols(data.sols);
+        if(Array.isArray(data.users)) setUsers(data.users);
+        if(data.secs&&typeof data.secs==='object'&&!Array.isArray(data.secs)) setSecs(data.secs);
+        if(data.pers&&typeof data.pers==='object') setPers(function(pr){return Object.assign({},PERS_DEF,data.pers);});
+        addLog({type:'db_ok',sev:'ok',msg:'Reconectado ao BD automaticamente',src:'reconnect',det:'',sug:''});
+      }).catch(function(){});
+    },60000);
+    return function(){clearInterval(timer);};
+  },[dbOffline]);
   useEffect(function(){
     if(!remoteReady) return;
     var t0s=Date.now();
@@ -2632,7 +2655,7 @@ function App(){
 
   return h("div",{style:{fontFamily:"sans-serif",background:"#fff",minHeight:"100vh"}},
 
-    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,onLogin:function(u){lsSet('curUser',u);setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);},onAuthFail:addLog}),
+    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,onLogin:function(u){lsSet('curUser',u);setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);},onAuthFail:addLog,dbLoading:!remoteReady}),
     toast&&h(Toast,{msg:toast.m,color:toast.c,onDone:function(){setToast(null);}}),
     conf&&h(Confirm,{nome:conf.nome,onConfirm:conf.fn,onClose:function(){setConf(null);}}),
     dbOffline&&h("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",background:"#fff",border:"1.5px solid "+C.am,borderRadius:10,padding:"10px 20px",fontSize:13,color:C.am,boxShadow:"0 2px 16px rgba(0,0,0,.15)",zIndex:9999,display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}},
