@@ -167,15 +167,27 @@ function lsClear(){
 }
 
 // Supabase — persistência direta (sem servidor intermediário)
-var _supa=supabase.createClient(
-  'https://ylbhtjpbejwqgxudrikz.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlsYmh0anBiZWp3cWd4dWRyaWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2MjY3NjMsImV4cCI6MjA5NDIwMjc2M30.FoWdYCpfI8NWavxrXvIqjc2IU7Kxz6NVuWXNKqHBATk'
-);
+// Guard: se o CDN não carregar, o app continua funcionando com localStorage
+var _supa=null;
+try{
+  if(typeof supabase!=='undefined'){
+    _supa=supabase.createClient(
+      'https://ylbhtjpbejwqgxudrikz.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlsYmh0anBiZWp3cWd4dWRyaWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2MjY3NjMsImV4cCI6MjA5NDIwMjc2M30.FoWdYCpfI8NWavxrXvIqjc2IU7Kxz6NVuWXNKqHBATk'
+    );
+  }else{
+    console.warn('[SGUA] supabase.js não carregou — modo offline (localStorage)');
+  }
+}catch(e){
+  console.warn('[SGUA] Erro ao inicializar Supabase:',e.message);
+}
 function apiFetchState(){
+  if(!_supa) return Promise.resolve(null);
   return _supa.from('app_state').select('value').eq('key','sgua').maybeSingle()
     .then(function(r){return r.data?r.data.value:null;});
 }
 function apiSaveState(payload){
+  if(!_supa) return Promise.resolve();
   return _supa.from('app_state')
     .upsert({key:'sgua',value:payload,updated_at:new Date().toISOString()},{onConflict:'key'});
 }
