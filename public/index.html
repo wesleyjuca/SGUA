@@ -31,6 +31,11 @@ a{color:inherit;text-decoration:none}
 table{border-collapse:collapse}
 th,td{text-align:left;vertical-align:middle}
 code{font-family:monospace}
+/* dark mode admin */
+.sgua-dark{color-scheme:dark}
+.sgua-dark>div:first-child{background:#0D1A14!important;border-color:#1E2D26!important}
+.sgua-dark>div:first-child .sdm-item{color:#9BA88F!important}
+.sgua-dark>div:last-child{background:#111815!important}
 </style>
 </head>
 <body>
@@ -1243,7 +1248,7 @@ function SecNoticias(p){
 
 // ─── LOGIN MODAL ──────────────────────────────────────────────────────────────
 function TelaLogin(p){
-  var users=p.users,setUsers=p.setUsers,onLogin=p.onLogin,onClose=p.onClose;
+  var users=p.users,setUsers=p.setUsers,onLogin=p.onLogin,onClose=p.onClose,onAuthFail=p.onAuthFail||function(){};
   var sM=useState("login");var mode=sM[0],setMode=sM[1];
   var sE=useState("");var email=sE[0],setEmail=sE[1];
   var sPw=useState("");var pwd=sPw[0],setPwd=sPw[1];
@@ -1257,8 +1262,8 @@ function TelaLogin(p){
 
   function doLogin(){
     var u=users.find(function(x){return x.email.toLowerCase()===email.toLowerCase()&&verifyPwd(pwd,x.pwdHash);});
-    if(!u){setErr("E-mail ou senha incorretos.");return;}
-    if(!u.ativo){setErr("Conta desativada. Contate o administrador.");return;}
+    if(!u){setErr("E-mail ou senha incorretos.");onAuthFail({type:'auth_fail',sev:'warn',msg:'Login falhou para: '+email.slice(0,40),src:'TelaLogin',det:'Credenciais inválidas',sug:'Verificar email/senha ou usar recuperação.'});return;}
+    if(!u.ativo){setErr("Conta desativada. Contate o administrador.");onAuthFail({type:'auth_fail',sev:'warn',msg:'Login bloqueado — conta inativa: '+email.slice(0,40),src:'TelaLogin',det:'Conta desativada',sug:'Reativar o usuário no painel de administração.'});return;}
     onLogin(u);
   }
   function doForgot(){
@@ -1570,6 +1575,108 @@ function AdminUsers(p){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// MONITOR DO SISTEMA
+// ══════════════════════════════════════════════════════════════════════════════
+function AdminMonitor(p){
+  var log=p.log,setLog=p.setLog,dbOffline=p.dbOffline;
+  var health=p.health,healthLabel=p.healthLabel,healthColor=p.healthColor,uptimeMin=p.uptimeMin,lastDbMs=p.lastDbMs;
+  var CD=p.CD;
+  var jsErrCount=log.filter(function(e){return e.type==='js_err';}).length;
+  var apiErrCount=log.filter(function(e){return e.type==='api_err'||e.type==='save_err';}).length;
+  var slowCount=log.filter(function(e){return e.type==='api_slow';}).length;
+  var authFail=log.filter(function(e){return e.type==='auth_fail';}).length;
+  var savesOk=log.filter(function(e){return e.type==='save_ok';}).length;
+  var warns=log.filter(function(e){return e.sev==='warn';}).length;
+
+  var diag=(function(){
+    if(dbOffline) return {pat:'Banco de dados offline — sem conexão com Supabase',sug:'Verificar URL e anon key do Supabase. Checar painel em supabase.com.',sev:'crit'};
+    if(jsErrCount>0) return {pat:''+jsErrCount+' erro(s) JavaScript detectado(s)',sug:'Abrir DevTools (F12 → Console) para identificar a linha exata do erro.',sev:'crit'};
+    if(apiErrCount>0) return {pat:'Falhas de API detectadas — salvamento pode estar instável',sug:'Verificar conectividade e permissões da tabela app_state no Supabase (RLS off).',sev:'warn'};
+    if(slowCount>1) return {pat:'Padrão de lentidão na API ('+slowCount+'x detectado)',sug:'Pode indicar cold start do Supabase ou latência de rede. Aguardar ou verificar.',sev:'warn'};
+    if(authFail>0) return {pat:authFail+' tentativa(s) de login falhou/falharam',sug:'Verificar credenciais dos usuários. Usar recuperação de senha se necessário.',sev:'warn'};
+    if(warns>2) return {pat:'Múltiplos avisos detectados na sessão',sug:'Revisar o log abaixo para identificar padrão de falha.',sev:'warn'};
+    return {pat:'Sistema operando normalmente — sem anomalias detectadas',sug:'Monitorar latência do BD periodicamente. Ideal < 800ms.',sev:'ok'};
+  })();
+
+  function fmtTime(ts){return new Date(ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+  function logIcon(sev){return sev==='crit'?'🔴':sev==='warn'?'⚠️':'✅';}
+  var sevColor=diag.sev==='crit'?CD.rm:diag.sev==='warn'?CD.am:CD.g2;
+
+  return h('div',null,
+    h('h2',{style:{fontSize:20,fontWeight:700,margin:'0 0 20px',color:CD.cd}},'Monitor do Sistema'),
+    // Status row
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:12,marginBottom:16}},
+      h(Card,{style:{padding:'14px 16px',border:'1.5px solid '+(dbOffline?CD.rm:CD.g2),background:CD.cx}},
+        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'BANCO DE DADOS'),
+        h('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:3}},
+          h('span',{style:{width:8,height:8,borderRadius:'50%',background:dbOffline?CD.rm:CD.g2,display:'inline-block',boxShadow:'0 0 6px '+(dbOffline?CD.rm:CD.g2)}}),
+          h('span',{style:{fontSize:13,fontWeight:700,color:dbOffline?CD.rm:CD.g2}},dbOffline?'OFFLINE':'ONLINE')
+        ),
+        h('div',{style:{fontSize:11,color:CD.cm}},lastDbMs?'Latência: '+lastDbMs+'ms':'Aguardando...')
+      ),
+      h(Card,{style:{padding:'14px 16px',background:CD.cx}},
+        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'HEALTH SCORE'),
+        h('div',{style:{display:'flex',alignItems:'baseline',gap:4,marginBottom:3}},
+          h('span',{style:{fontSize:26,fontWeight:700,color:healthColor}},health),
+          h('span',{style:{fontSize:12,color:CD.cm}},'/100')
+        ),
+        h('div',{style:{fontSize:11,fontWeight:600,color:healthColor}},healthLabel)
+      ),
+      h(Card,{style:{padding:'14px 16px',background:CD.cx}},
+        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'ERROS JS'),
+        h('div',{style:{fontSize:26,fontWeight:700,color:jsErrCount>0?CD.rm:CD.g2,marginBottom:3}},jsErrCount),
+        h('div',{style:{fontSize:11,color:CD.cm}},jsErrCount===0?'Sem erros':'Checar console')
+      ),
+      h(Card,{style:{padding:'14px 16px',background:CD.cx}},
+        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:6}},'SESSÃO'),
+        h('div',{style:{fontSize:26,fontWeight:700,color:CD.b1,marginBottom:3}},uptimeMin+'min'),
+        h('div',{style:{fontSize:11,color:CD.cm}},'Uptime')
+      )
+    ),
+    // Diagnóstico IA
+    h(Card,{style:{padding:'14px 18px',marginBottom:14,borderLeft:'4px solid '+sevColor,background:CD.cx}},
+      h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5,marginBottom:8}},'🧠 DIAGNÓSTICO IA — ANÁLISE DE PADRÕES'),
+      h('div',{style:{fontSize:13,fontWeight:600,color:CD.cd,marginBottom:6}},logIcon(diag.sev)+' '+diag.pat),
+      h('div',{style:{fontSize:11,color:CD.cm}},h('strong',null,'Sugestão técnica: '),diag.sug)
+    ),
+    // Log em tempo real
+    h(Card,{style:{padding:'14px 18px',marginBottom:14,background:CD.cx}},
+      h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}},
+        h('div',{style:{fontSize:10,fontWeight:700,color:CD.cm,letterSpacing:.5}},'📋 LOG EM TEMPO REAL'),
+        h('button',{onClick:function(){setLog([]);},style:{fontSize:11,padding:'4px 12px',borderRadius:7,border:'1px solid '+CD.cl,background:'none',color:CD.cm,cursor:'pointer'}},'🗑 Limpar log')
+      ),
+      h('div',{style:{maxHeight:340,overflowY:'auto',display:'flex',flexDirection:'column',gap:3}},
+        log.length===0
+          ?h('div',{style:{fontSize:12,color:CD.cm,textAlign:'center',padding:'24px 0',fontStyle:'italic'}},'Nenhum evento registrado.')
+          :log.map(function(e){
+            var sc=e.sev==='crit'?CD.rm:e.sev==='warn'?CD.am:CD.g2;
+            var bg=e.sev==='crit'?CD.rl:e.sev==='warn'?CD.al:CD.gx;
+            return h('div',{key:e.id,style:{display:'flex',gap:8,alignItems:'flex-start',padding:'7px 10px',borderRadius:8,borderLeft:'3px solid '+sc,background:bg,fontSize:12}},
+              h('span',{style:{flexShrink:0,fontSize:11}},logIcon(e.sev)),
+              h('span',{style:{color:CD.cm,flexShrink:0,fontFamily:'monospace',fontSize:10,marginTop:1}},fmtTime(e.ts)),
+              h('div',{style:{flex:1}},
+                h('span',{style:{fontWeight:600,color:sc,fontSize:11}},e.src+' — '),
+                h('span',{style:{color:CD.cd}},e.msg),
+                e.det&&h('div',{style:{color:CD.cm,fontSize:10,marginTop:2}},'↳ '+e.det),
+                e.sug&&h('div',{style:{color:CD.b1,fontSize:10,marginTop:1}},'💡 '+e.sug)
+              )
+            );
+          })
+      )
+    ),
+    // Resumo da sessão
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))',gap:10}},
+      [{l:'Erros JS',v:jsErrCount,c:jsErrCount>0?CD.rm:CD.g2},{l:'Erros API',v:apiErrCount,c:apiErrCount>0?CD.rm:CD.g2},{l:'Avisos',v:warns,c:warns>0?CD.am:CD.g2},{l:'Auth Fail',v:authFail,c:authFail>0?CD.am:CD.g2},{l:'Saves OK',v:savesOk,c:CD.g2}].map(function(it){
+        return h('div',{key:it.l,style:{background:CD.cx,border:'1px solid '+CD.cl,borderRadius:10,padding:'10px 14px',textAlign:'center'}},
+          h('div',{style:{fontSize:22,fontWeight:700,color:it.c,marginBottom:2}},it.v),
+          h('div',{style:{fontSize:10,color:CD.cm}},it.l)
+        );
+      })
+    )
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // APP PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════════════
 function App(){
@@ -1595,7 +1702,13 @@ function App(){
   var sSf=useState({nome:"",org:"",email:"",un:"",ev:"",dt:"",hr:"",just:""});var sf=sSf[0],setSf=sSf[1];
   var sSv=useState(false);var senv=sSv[0],setSenv=sSv[1];
   var sRdy=useState(false);var remoteReady=sRdy[0],setRemoteReady=sRdy[1];
+  var sDbOff=useState(false);var dbOffline=sDbOff[0],setDbOffline=sDbOff[1];
   var sVp=useState(typeof window!=="undefined"?window.innerWidth:1280);var vpWidth=sVp[0],setVpWidth=sVp[1];
+  var sML=useState([{id:1,ts:Date.now(),type:'init',sev:'ok',msg:'Sistema iniciado',src:'App',det:'',sug:''}]);
+  var monLog=sML[0],setMonLog=sML[1];
+  var sDk=useState(function(){return lsGet('darkMode',false);});
+  var darkMode=sDk[0],setDarkMode=sDk[1];
+  var _appStart=useRef(Date.now());
 
 
   useEffect(function(){lsSet('uns',uns);},[uns]);
@@ -1604,10 +1717,31 @@ function App(){
   useEffect(function(){lsSet('sols',sols);},[sols]);
   useEffect(function(){lsSet('users',users);},[users]);
   useEffect(function(){lsSet('secs',secs);},[secs]);
+  useEffect(function(){lsSet('darkMode',darkMode);},[darkMode]);
+
+  function addLog(entry){
+    setMonLog(function(prev){
+      var e=Object.assign({id:Date.now()+Math.random(),ts:Date.now()},entry);
+      return [e].concat(prev).slice(0,50);
+    });
+  }
   useEffect(function(){
     var alive=true;
+    var t0=Date.now();
     apiFetchState().then(function(data){
-      if(!alive||!data) return;
+      if(!alive) return;
+      var ms=Date.now()-t0;
+      if(!data){
+        setDbOffline(true);
+        addLog({type:'db_err',sev:'crit',msg:'BD desconectado — sem dados remotos',src:'apiFetchState',det:'Retornou null',sug:'Verificar URL e anon key do Supabase.'});
+        return;
+      }
+      setDbOffline(false);
+      if(ms>1500){
+        addLog({type:'api_slow',sev:'warn',msg:'Carregamento lento: '+(ms/1000).toFixed(1)+'s',src:'apiFetchState',det:ms+'ms (ideal < 800ms)',sug:'Possível cold start do Supabase ou latência de rede.'});
+      } else {
+        addLog({type:'db_ok',sev:'ok',msg:'BD conectado (latência '+ms+'ms)',src:'apiFetchState',det:ms+'ms',sug:''});
+      }
       if(Array.isArray(data.uns)) setUns(data.uns);
       if(Array.isArray(data.news)) setNews(data.news);
       if(Array.isArray(data.feeds)) setFeeds(data.feeds);
@@ -1616,6 +1750,10 @@ function App(){
       if(data.secs&&typeof data.secs==='object'&&!Array.isArray(data.secs)) setSecs(data.secs);
     }).catch(function(e){
       console.warn('SAGCU remote load warning:',e&&e.message?e.message:e);
+      if(alive){
+        setDbOffline(true);
+        addLog({type:'api_err',sev:'crit',msg:'Erro ao carregar estado: '+(e&&e.message?e.message.slice(0,80):String(e).slice(0,80)),src:'apiFetchState',det:'',sug:'Verificar Supabase e chave anon.'});
+      }
     }).finally(function(){
       if(alive) setRemoteReady(true);
     });
@@ -1623,8 +1761,13 @@ function App(){
   },[]);
   useEffect(function(){
     if(!remoteReady) return;
-    apiSaveState({uns:uns,news:news,feeds:feeds,sols:sols,users:users,secs:secs}).catch(function(e){
+    var t0s=Date.now();
+    apiSaveState({uns:uns,news:news,feeds:feeds,sols:sols,users:users,secs:secs}).then(function(){
+      var ms=Date.now()-t0s;
+      if(ms>100) addLog({type:'save_ok',sev:'ok',msg:'Estado salvo ('+ms+'ms)',src:'apiSaveState',det:ms+'ms',sug:''});
+    }).catch(function(e){
       console.warn('SAGCU remote save warning:',e&&e.message?e.message:e);
+      addLog({type:'save_err',sev:'warn',msg:'Falha ao salvar: '+(e&&e.message?e.message.slice(0,80):String(e).slice(0,80)),src:'apiSaveState',det:'',sug:'Verificar permissões da tabela app_state no Supabase (RLS deve estar off).'});
     });
   },[remoteReady,uns,news,feeds,sols,users,secs]);
   useEffect(function(){
@@ -1635,6 +1778,20 @@ function App(){
     onResize();
     window.addEventListener("resize",onResize);
     return function(){window.removeEventListener("resize",onResize);};
+  },[]);
+  useEffect(function(){
+    var prev=window.onerror;
+    window.onerror=function(msg,src,line,col,err){
+      addLog({type:'js_err',sev:'crit',msg:String(err&&err.message?err.message:msg).slice(0,100),src:(String(src||'').split('/').pop()||'script')+':'+(line||''),det:'col '+(col||''),sug:'Abrir DevTools (F12 → Console) para stack trace.'});
+      if(typeof prev==='function') return prev(msg,src,line,col,err);
+      return false;
+    };
+    function onUnhandled(ev){
+      var r=ev&&ev.reason;
+      addLog({type:'js_err',sev:'warn',msg:('Promise rejeitada: '+(r&&r.message?r.message:String(r||'desconhecido'))).slice(0,100),src:'Promise',det:'',sug:'Verificar await/catch no código.'});
+    }
+    window.addEventListener('unhandledrejection',onUnhandled);
+    return function(){window.onerror=prev;window.removeEventListener('unhandledrejection',onUnhandled);};
   },[]);
 
   var isMobile=vpWidth<=768;
@@ -1748,6 +1905,32 @@ function App(){
   ].filter(Boolean);
   var alertasDash=alertasFuncionalidade.concat(alertasOperacionais,sugestoesImplementacao);
 
+  // ── Health Score ──────────────────────────────────────────────────────────
+  var healthScore=(function(){
+    var now=Date.now(),win=10*60*1000;
+    var recent=monLog.filter(function(e){return (now-e.ts)<win;});
+    var crits=recent.filter(function(e){return e.sev==='crit';}).length;
+    var warns=recent.filter(function(e){return e.sev==='warn';}).length;
+    var jsE=monLog.filter(function(e){return e.type==='js_err';}).length;
+    var s=100-crits*15-warns*5;
+    if(dbOffline) s-=25;
+    if(jsE>=3) s-=20;
+    return Math.max(0,Math.min(100,s));
+  })();
+  var healthLabel=healthScore>=80?'Estável':healthScore>=60?'Atenção':'Crítico';
+  var healthColor=healthScore>=80?C.g2:healthScore>=60?C.am:C.rm;
+  var lastDbLog=monLog.slice().find(function(e){return e.type==='db_ok'||e.type==='db_err';});
+  var lastDbMs=lastDbLog&&lastDbLog.det?parseInt(lastDbLog.det):null;
+  var uptimeMin=Math.floor((Date.now()-_appStart.current)/60000);
+
+  // ── Paleta dark/light para admin ─────────────────────────────────────────
+  var CD=darkMode?{
+    g0:'#0A2B1E',g1:'#0A2B1E',g2:'#2EA86A',g3:'#3DCC82',gl:'#1A4A2E',gx:'#0D2218',
+    b1:'#3A8FD8',bl:'#0D2035',t1:'#D4922F',tl:'#2A1E0D',am:'#D4922F',al:'#2A1E0D',
+    rm:'#D44E4E',rl:'#2A0D0D',pm:'#8A6FD8',px:'#1A1530',
+    cl:'#2A3028',cx:'#1A1E18',cm:'#9BA88F',cd:'#E0EDD6'
+  }:C;
+
   var indicadoresDash=[
     {nome:"Disponibilidade operacional",valor:Math.round((unidadesAtivas/Math.max(1,totalUnidades))*100),meta:90,cor:C.g2},
     {nome:"Taxa média de uso",valor:mediaTaxaUso,meta:70,cor:C.b1},
@@ -1818,9 +2001,14 @@ function App(){
 
   return h("div",{style:{fontFamily:"sans-serif",background:"#fff",minHeight:"100vh"}},
 
-    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,onLogin:function(u){setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);}}),
+    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,onLogin:function(u){setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);},onAuthFail:addLog}),
     toast&&h(Toast,{msg:toast.m,color:toast.c,onDone:function(){setToast(null);}}),
     conf&&h(Confirm,{nome:conf.nome,onConfirm:conf.fn,onClose:function(){setConf(null);}}),
+    dbOffline&&h("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",background:"#fff",border:"1.5px solid "+C.am,borderRadius:10,padding:"10px 20px",fontSize:13,color:C.am,boxShadow:"0 2px 16px rgba(0,0,0,.15)",zIndex:9999,display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}},
+      h("span",null,"⚠"),
+      h("span",null,"Banco de dados offline — alterações salvas apenas localmente"),
+      h("button",{onClick:function(){setDbOffline(false);},style:{marginLeft:12,background:"none",border:"none",cursor:"pointer",fontSize:16,color:C.cm,lineHeight:1}},"×")
+    ),
 
     // Modais
     modal&&modal.t==="un"&&h(Modal,{titulo:modal.d&&modal.d.id?"Editar unidade":"Nova unidade",onClose:function(){setModal(null);},wide:true},h(FmUn,{init:modal.d,uns:uns,onSave:saveUn,onClose:function(){setModal(null);}})),
@@ -2068,11 +2256,11 @@ function App(){
       h("button",{onClick:function(){setShowLogin(true);},style:{padding:"12px 32px",borderRadius:10,border:"none",background:C.g2,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}},"Fazer login")
     ),
 
-    page==="admin"&&curUser&&h("div",{style:{display:"flex",minHeight:"calc(100vh - 72px)"}},
+    page==="admin"&&curUser&&h("div",{style:{display:"flex",minHeight:"calc(100vh - 72px)"},className:darkMode?"sgua-dark":""},
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["rel","📊","Relatórios",canDo("rel")]].filter(function(it){return it[3];}).map(function(it){
+        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["rel","📊","Relatórios",canDo("rel")],["monitor","🔍","Monitor",true]].filter(function(it){return it[3];}).map(function(it){
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},it[1]),it[2]
           );
@@ -2080,7 +2268,10 @@ function App(){
         h("div",{style:{flex:1}}),
         h("div",{style:{borderTop:"1px solid "+C.cl,paddingTop:8,marginTop:4}},
           h("div",{style:{fontSize:12,fontWeight:600,color:C.cd,padding:"4px 12px 2px"}},curUser.nome.split(" ").slice(0,2).join(" ")),
-          h("div",{style:{fontSize:11,color:C.cm,padding:"0 12px 8px"}},PL[curUser.perfil]),
+          h("div",{style:{fontSize:11,color:C.cm,padding:"0 12px 6px"}},PL[curUser.perfil]),
+          h("div",{style:{padding:"0 4px 4px"}},
+            h("button",{onClick:function(){setDarkMode(function(d){return !d;});},style:{width:"100%",textAlign:"left",padding:"7px 8px",borderRadius:8,border:"none",background:darkMode?C.g0:C.cx,color:darkMode?"rgba(255,255,255,.7)":C.cm,fontSize:12,cursor:"pointer",marginBottom:3}},darkMode?"☀️ Modo claro":"🌙 Modo escuro")
+          ),
           h("button",{onClick:function(){setCurUser(null);go("home");},style:{width:"100%",textAlign:"left",padding:"8px 12px",borderRadius:9,border:"none",background:"none",color:C.rm,fontSize:13,cursor:"pointer"}},"⬅ Sair")
         )
       ),
@@ -2088,7 +2279,17 @@ function App(){
       h("div",{style:{flex:1,padding:"24px 28px",overflowY:"auto",background:C.cx}},
 
         atab==="dash"&&h("div",null,
-          h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 20px",color:C.cd}},"Dashboard"),
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}},
+            h("h2",{style:{fontSize:20,fontWeight:700,margin:0,color:C.cd}},"Dashboard"),
+            h("div",{style:{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:"#fff",borderRadius:12,border:"1px solid "+C.cl,cursor:"pointer"},onClick:function(){setAtab("monitor");}},
+              h("span",{style:{fontSize:20,fontWeight:700,color:healthColor}},healthScore+"/100"),
+              h("span",{style:{fontSize:11,fontWeight:700,color:healthColor}},healthLabel),
+              h("span",{style:{width:1,height:16,background:C.cl,display:"inline-block"}}),
+              h("span",{style:{width:8,height:8,borderRadius:"50%",background:dbOffline?C.rm:C.g2,display:"inline-block",boxShadow:"0 0 5px "+(dbOffline?C.rm:C.g2)}}),
+              h("span",{style:{fontSize:11,color:dbOffline?C.rm:C.g2,fontWeight:600}},dbOffline?"BD OFFLINE":"BD ONLINE"),
+              h("span",{style:{fontSize:10,color:C.cm,marginLeft:4}},"→ Monitor")
+            )
+          ),
           h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:12,marginBottom:24}},
             h(StatBox,{label:"Unidades",value:totalUnidades,color:C.g2}),
             h(StatBox,{label:"Ativas",value:unidadesAtivas,color:C.g2}),
@@ -2302,6 +2503,8 @@ function App(){
         ),
 
         atab==="rel"&&canDo("rel")&&h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2}),
+
+        atab==="monitor"&&h(AdminMonitor,{log:monLog,setLog:setMonLog,dbOffline:dbOffline,health:healthScore,healthLabel:healthLabel,healthColor:healthColor,uptimeMin:uptimeMin,lastDbMs:lastDbMs,CD:CD}),
 
       )
     ),
