@@ -199,8 +199,41 @@ function apiSaveState(payload){
   return _supa.from('app_state')
     .upsert({key:'sgua',value:payload,updated_at:new Date().toISOString()},{onConflict:'key'});
 }
-function apiSyncFeeds(){
-  return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Sincronização RSS não disponível nesta versão. Adicione notícias manualmente pelo painel admin.']});
+function apiSyncFeeds(feedsAtivos,newsExistentes){
+  if(!feedsAtivos||!feedsAtivos.length) return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Nenhum feed ativo.']});
+  var feedsResult=[];var novasNoticias=[];
+  var ativos=feedsAtivos.filter(function(f){return f.ativo;});
+  if(!ativos.length) return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Nenhum feed ativo encontrado.']});
+  var promises=ativos.map(function(f){
+    var proxyUrl='https://api.allorigins.win/get?disableCache=true&url='+encodeURIComponent(f.url);
+    var ctrl=typeof AbortController!=='undefined'?new AbortController():null;
+    var timer=ctrl?setTimeout(function(){ctrl.abort();},12000):null;
+    return fetch(proxyUrl,ctrl?{signal:ctrl.signal}:{})
+      .then(function(r){if(timer)clearTimeout(timer);return r.json();})
+      .then(function(data){
+        if(!data.contents) return;
+        var parser=new DOMParser();
+        var xml=parser.parseFromString(data.contents,'text/xml');
+        var items=Array.from(xml.querySelectorAll('item,entry'));
+        var idExistentes=new Set((newsExistentes||[]).map(function(n){return n.titulo;}));
+        items.slice(0,10).forEach(function(item){
+          var titulo=((item.querySelector('title')||{}).textContent||'').trim().slice(0,120);
+          var resumo=((item.querySelector('description,summary')||{}).textContent||'').replace(/<[^>]*>/g,'').trim().slice(0,200);
+          var dataStr=((item.querySelector('pubDate,published,updated')||{}).textContent||new Date().toISOString());
+          if(!titulo||idExistentes.has(titulo)) return;
+          idExistentes.add(titulo);
+          novasNoticias.push({id:Date.now()+Math.random(),titulo:titulo,resumo:resumo,conteudo:'',
+            data:new Date(dataStr).toISOString().slice(0,10),categoria:f.categoria||'Gestão',
+            unidade:'',destaque:false,visivel:true,fonte:f.nome,autor:f.nome,orgaosPresentes:[],ocupacaoAtual:0});
+        });
+        feedsResult.push(Object.assign({},f,{sync:new Date().toISOString().slice(0,10)}));
+      }).catch(function(e){console.warn('[SGUA] Feed error:',f.nome,e);});
+  });
+  return Promise.all(promises).then(function(){
+    var newsAtualizada=(newsExistentes||[]).concat(novasNoticias);
+    return {ok:true,added:novasNoticias.length,news:newsAtualizada,feeds:feedsResult,
+      warnings:novasNoticias.length===0?['Nenhuma notícia nova encontrada.']:[]};
+  });
 }
 
 
@@ -891,7 +924,18 @@ var PERS_TEMAS={
   roxo:{g0:"#2D0A4A",g1:"#4A0F7A",g2:"#6A1AAA",g3:"#8E2EC3",gl:"#D4C0F0",gx:"#F0E8FF"},
   laranja:{g0:"#3D1A0A",g1:"#7A2F0F",g2:"#AA4A1A",g3:"#C36A2E",gl:"#F0D0C0",gx:"#FFF0E8"}
 };
-var PERS_DEF={nomeApp:"SGUA",subApp:"Sistema de Gestão de Unidades Ambientais",logo:"",temaAtual:"verde",corSecundaria:"#1565A8",msgBemVindo:"Bem-vindo ao SGUA",rodapeTexto:"Secretaria de Meio Ambiente do Acre · SEMA/AC"};
+var PERS_DEF={
+  nomeApp:"SGUA",subApp:"Sistema de Gestão de Unidades Ambientais",
+  logo:"",temaAtual:"verde",corSecundaria:"#1565A8",
+  msgBemVindo:"Bem-vindo ao SGUA",rodapeTexto:"Secretaria de Meio Ambiente do Acre · SEMA/AC",
+  heroTitulo:"Sistema de Gestão de Unidades Ambientais",
+  heroSubtitulo:"Monitoramento, transparência e gestão integrada das unidades ambientais do Acre.",
+  heroBotaoCta:"Conhecer as unidades",
+  bannerAtivo:false,bannerTexto:"",bannerCor:"#C4832A",
+  loginTitulo:"SEMA/AC",loginSubtitulo:"Acesso administrativo",
+  newsQtdHome:3,newsIntervalMs:5000,newsTransicao:"slide",newsMaxSaved:100,
+  mapCenterLat:-9.97,mapCenterLng:-67.81,mapZoom:7
+};
 
 // ─── PALETA (inicializada com tema padrão; App vai sobrescrever com pers) ────
 var _persInit=(function(){try{var p=localStorage.getItem('sagcu_v4_pers');return p?JSON.parse(p):PERS_DEF;}catch(e){return PERS_DEF;}})();
@@ -1343,7 +1387,7 @@ function SecNoticias(p){
 
 // ─── LOGIN MODAL ──────────────────────────────────────────────────────────────
 function TelaLogin(p){
-  var users=p.users,setUsers=p.setUsers,onLogin=p.onLogin,onClose=p.onClose,onAuthFail=p.onAuthFail||function(){},dbLoading=p.dbLoading||false;
+  var users=p.users,setUsers=p.setUsers,pers=p.pers||PERS_DEF,onLogin=p.onLogin,onClose=p.onClose,onAuthFail=p.onAuthFail||function(){},dbLoading=p.dbLoading||false;
   var sM=useState("login");var mode=sM[0],setMode=sM[1];
   var sE=useState("");var email=sE[0],setEmail=sE[1];
   var sPw=useState("");var pwd=sPw[0],setPwd=sPw[1];
@@ -1380,8 +1424,8 @@ function TelaLogin(p){
     h("div",{onClick:function(e){e.stopPropagation();},style:{background:"#fff",borderRadius:16,width:"100%",maxWidth:380,boxShadow:"0 20px 60px rgba(0,0,0,.3)",overflow:"hidden"}},
       h("div",{style:{background:"linear-gradient(150deg,"+C.g0+","+C.g2+")",padding:"24px 28px 20px",textAlign:"center"}},
         h("div",{style:{width:50,height:50,borderRadius:14,background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.25)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px",fontSize:22}},"🌿"),
-        h("div",{style:{fontSize:18,fontWeight:700,color:"#fff"}},"SEMA/AC"),
-        h("div",{style:{fontSize:12,color:"rgba(255,255,255,.55)",marginTop:3}},"Acesso administrativo")
+        h("div",{style:{fontSize:18,fontWeight:700,color:"#fff"}},pers.loginTitulo||"SEMA/AC"),
+        h("div",{style:{fontSize:12,color:"rgba(255,255,255,.55)",marginTop:3}},pers.loginSubtitulo||"Acesso administrativo")
       ),
       h("div",{style:{padding:"24px 28px 28px"}},
         mode==="login"&&h("div",null,
@@ -1428,15 +1472,15 @@ function TelaLogin(p){
 function AdminPersonalizacao(p){
   var pers=p.pers,setPers=p.setPers,C=p.C,toast2=p.toast2;
   var lbl={fontSize:11,color:C.cm,display:"block",marginBottom:4,fontWeight:600};
+  var inp2={width:"100%",boxSizing:"border-box",padding:"8px 10px",border:"1px solid "+C.cl,borderRadius:7,fontSize:13,fontFamily:"sans-serif"};
   var TEMAS=[
     {id:"verde",label:"Verde Ambiental",cor:"#1A7A4A"},
     {id:"azul",label:"Azul Institucional",cor:"#1A6AAA"},
     {id:"roxo",label:"Roxo Inovação",cor:"#6A1AAA"},
     {id:"laranja",label:"Laranja Energia",cor:"#AA4A1A"}
   ];
-  // Draft state — alterações ficam locais até clicar "Aplicar"
   var sDraft=useState(pers);var draft=sDraft[0],setDraft=sDraft[1];
-  // Sincronizar draft quando pers muda externamente (ex: restaurar padrão)
+  var sAba=useState("identidade");var aba=sAba[0],setAba=sAba[1];
   useEffect(function(){setDraft(pers);},[pers]);
   function sv(k,v){setDraft(function(d){return Object.assign({},d,{[k]:v});});}
   function aplicar(){setPers(draft);toast2("Personalização aplicada com sucesso!",C.g2);}
@@ -1455,9 +1499,9 @@ function AdminPersonalizacao(p){
       img.src=dataUrl;
     }).catch(function(){toast2("Erro ao carregar imagem.",C.rm);});
   }
-  // Tema ativo baseado no draft (para o preview responder ao clique nos temas)
   var CT=PERS_TEMAS[draft.temaAtual]||PERS_TEMAS.verde;
   var prevG2=CT.g2,prevG1=CT.g1,prevB1=draft.corSecundaria||"#1565A8";
+  var ABAS=[{id:"identidade",l:"Identidade"},{id:"home",l:"Página Principal"},{id:"noticias",l:"Notícias"},{id:"login",l:"Login"}];
   return h("div",null,
     h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:8}},
       h("h2",{style:{fontSize:20,fontWeight:700,margin:0,color:C.cd}},"Personalização do Sistema"),
@@ -1466,12 +1510,23 @@ function AdminPersonalizacao(p){
         h("button",{onClick:aplicar,style:{padding:"7px 20px",borderRadius:8,border:"none",background:C.g2,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}},"✓ Aplicar")
       )
     ),
-    // Identidade
-    h(Card,{style:{padding:"18px 20px",marginBottom:16}},
-      h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"IDENTIDADE"),
+    // Abas de navegação
+    h("div",{style:{display:"flex",gap:4,marginBottom:16,borderBottom:"1.5px solid "+C.cl,paddingBottom:0}},
+      ABAS.map(function(a){
+        var ativo=aba===a.id;
+        return h("button",{key:a.id,onClick:function(){setAba(a.id);},
+          style:{padding:"8px 16px",border:"none",borderBottom:ativo?"2.5px solid "+C.g2:"2.5px solid transparent",background:"none",
+            fontSize:13,fontWeight:ativo?700:400,color:ativo?C.g2:C.cm,cursor:"pointer",borderRadius:"6px 6px 0 0",
+            marginBottom:-1.5,transition:"all .15s"}},a.l);
+      })
+    ),
+    // Aba: Identidade
+    aba==="identidade"&&h(Card,{style:{padding:"18px 20px",marginBottom:16}},
       h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
-        h("div",null,h("label",{style:lbl},"Nome do sistema"),h("input",{value:draft.nomeApp,onChange:function(e){sv("nomeApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
-        h("div",null,h("label",{style:lbl},"Subtítulo"),h("input",{value:draft.subApp,onChange:function(e){sv("subApp",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
+        h("div",null,h("label",{style:lbl},"Nome do sistema"),h("input",{value:draft.nomeApp,onChange:function(e){sv("nomeApp",e.target.value);},style:inp2})),
+        h("div",null,h("label",{style:lbl},"Subtítulo do sistema"),h("input",{value:draft.subApp,onChange:function(e){sv("subApp",e.target.value);},style:inp2})),
+        h("div",null,h("label",{style:lbl},"Mensagem de boas-vindas"),h("input",{value:draft.msgBemVindo||"",onChange:function(e){sv("msgBemVindo",e.target.value);},style:inp2})),
+        h("div",null,h("label",{style:lbl},"Texto do rodapé"),h("input",{value:draft.rodapeTexto||"",onChange:function(e){sv("rodapeTexto",e.target.value);},style:inp2})),
         h("div",{style:{gridColumn:"1/-1"}},
           h("label",{style:lbl},"Logo"),
           h("div",{
@@ -1488,7 +1543,7 @@ function AdminPersonalizacao(p){
             h("div",{style:{display:"flex",gap:8,alignItems:"center",justifyContent:"center",flexWrap:"wrap"}},
               h("input",{value:draft.logo||"",onChange:function(e){sv("logo",e.target.value);},
                 placeholder:"https://…",
-                style:{flex:1,minWidth:140,boxSizing:"border-box",fontSize:12}}),
+                style:Object.assign({},inp2,{flex:1,minWidth:140,fontSize:12})}),
               h("label",{style:{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",
                   padding:"6px 12px",borderRadius:7,border:"1px solid "+C.g2,
                   background:C.gx,color:C.g2,fontSize:11,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}},
@@ -1504,35 +1559,92 @@ function AdminPersonalizacao(p){
           ),
           draft.logo&&h("img",{src:draft.logo,alt:"preview logo",style:{height:36,maxWidth:160,objectFit:"contain",borderRadius:6,border:"1px solid "+C.cl,background:C.cx,padding:4,display:"block",marginTop:6}})
         ),
-        h("div",null,h("label",{style:lbl},"Mensagem de boas-vindas"),h("input",{value:draft.msgBemVindo,onChange:function(e){sv("msgBemVindo",e.target.value);},style:{width:"100%",boxSizing:"border-box"}})),
-        h("div",null,h("label",{style:lbl},"Texto do rodapé"),h("input",{value:draft.rodapeTexto,onChange:function(e){sv("rodapeTexto",e.target.value);},style:{width:"100%",boxSizing:"border-box"}}))
+        h("div",{style:{gridColumn:"1/-1"}},
+          h("div",{style:{fontSize:11,fontWeight:700,color:C.cm,letterSpacing:.5,margin:"8px 0 12px"}},"TEMA E CORES"),
+          h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:16}},
+            TEMAS.map(function(t){
+              var ativo=draft.temaAtual===t.id;
+              return h("div",{key:t.id,onClick:function(){sv("temaAtual",t.id);},
+                style:{padding:"12px 10px",borderRadius:10,border:"2px solid "+(ativo?t.cor:C.cl),background:ativo?t.cor+"18":"none",cursor:"pointer",textAlign:"center",transition:"all .15s"}},
+                h("div",{style:{width:24,height:24,borderRadius:"50%",background:t.cor,margin:"0 auto 7px",boxShadow:ativo?"0 0 0 3px "+t.cor+"40":"none"}}),
+                h("div",{style:{fontSize:11,fontWeight:ativo?700:400,color:ativo?t.cor:C.cm}},t.label)
+              );
+            })
+          ),
+          h("div",{style:{display:"flex",gap:8,alignItems:"center",maxWidth:300}},
+            h("label",{style:lbl},"Cor secundária"),
+            h("input",{type:"color",value:draft.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{width:40,height:32,borderRadius:6,border:"none",cursor:"pointer",padding:0,flexShrink:0}}),
+            h("input",{value:draft.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:Object.assign({},inp2,{flex:1})})
+          )
+        )
       )
     ),
-    // Cores e Temas
-    h(Card,{style:{padding:"18px 20px",marginBottom:16}},
-      h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"CORES E TEMA"),
-      h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:16}},
-        TEMAS.map(function(t){
-          var ativo=draft.temaAtual===t.id;
-          return h("div",{key:t.id,onClick:function(){sv("temaAtual",t.id);},
-            style:{padding:"14px 12px",borderRadius:10,border:"2px solid "+(ativo?t.cor:C.cl),background:ativo?t.cor+"18":"none",cursor:"pointer",textAlign:"center",transition:"all .15s"}},
-            h("div",{style:{width:28,height:28,borderRadius:"50%",background:t.cor,margin:"0 auto 8px",boxShadow:ativo?"0 0 0 3px "+t.cor+"40":"none"}}),
-            h("div",{style:{fontSize:12,fontWeight:ativo?700:400,color:ativo?t.cor:C.cm}},t.label)
-          );
-        })
+    // Aba: Página Principal
+    aba==="home"&&h(Card,{style:{padding:"18px 20px",marginBottom:16}},
+      h("div",{style:{fontSize:11,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"HERO (SEÇÃO PRINCIPAL)"),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr",gap:12,marginBottom:20}},
+        h("div",null,h("label",{style:lbl},"Título do hero"),h("input",{value:draft.heroTitulo||"",onChange:function(e){sv("heroTitulo",e.target.value);},style:inp2})),
+        h("div",null,h("label",{style:lbl},"Subtítulo do hero"),h("input",{value:draft.heroSubtitulo||"",onChange:function(e){sv("heroSubtitulo",e.target.value);},style:inp2})),
+        h("div",null,h("label",{style:lbl},"Texto do botão CTA"),h("input",{value:draft.heroBotaoCta||"",onChange:function(e){sv("heroBotaoCta",e.target.value);},style:inp2}))
       ),
-      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
-        h("div",null,h("label",{style:lbl},"Cor secundária"),h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
-          h("input",{type:"color",value:draft.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{width:40,height:32,borderRadius:6,border:"none",cursor:"pointer",padding:0}}),
-          h("input",{value:draft.corSecundaria||"#1565A8",onChange:function(e){sv("corSecundaria",e.target.value);},style:{flex:1,boxSizing:"border-box"}})
+      h("div",{style:{fontSize:11,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:12,marginTop:4}},"BANNER DE ALERTA (TOPO DA PÁGINA)"),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}  ,
+        h("div",{style:{display:"flex",alignItems:"center",gap:8,gridColumn:"1/-1"}},
+          h("input",{type:"checkbox",id:"bannerAtivo",checked:!!draft.bannerAtivo,onChange:function(e){sv("bannerAtivo",e.target.checked);},style:{width:16,height:16,cursor:"pointer"}}),
+          h("label",{htmlFor:"bannerAtivo",style:{fontSize:13,color:C.cd,cursor:"pointer"}},"Exibir banner de alerta no topo da página")
+        ),
+        h("div",{style:{gridColumn:"1/-1"}},h("label",{style:lbl},"Texto do banner"),h("input",{value:draft.bannerTexto||"",onChange:function(e){sv("bannerTexto",e.target.value);},placeholder:"Ex: Sistema em manutenção programada.",style:inp2})),
+        h("div",null,h("label",{style:lbl},"Cor de fundo do banner"),h("div",{style:{display:"flex",gap:8,alignItems:"center"}},
+          h("input",{type:"color",value:draft.bannerCor||"#C4832A",onChange:function(e){sv("bannerCor",e.target.value);},style:{width:40,height:32,borderRadius:6,border:"none",cursor:"pointer",padding:0,flexShrink:0}}),
+          h("input",{value:draft.bannerCor||"#C4832A",onChange:function(e){sv("bannerCor",e.target.value);},style:Object.assign({},inp2,{flex:1})})
         ))
       )
     ),
-    // Preview ao vivo (usa draft para mostrar alterações antes de Aplicar)
+    // Aba: Notícias
+    aba==="noticias"&&h(Card,{style:{padding:"18px 20px",marginBottom:16}},
+      h("div",{style:{fontSize:11,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"CARROSSEL DE NOTÍCIAS (HOME)"),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
+        h("div",null,
+          h("label",{style:lbl},"Qtd. notícias na home"),
+          h("input",{type:"number",min:1,max:10,value:draft.newsQtdHome||3,onChange:function(e){sv("newsQtdHome",parseInt(e.target.value)||3);},style:inp2})
+        ),
+        h("div",null,
+          h("label",{style:lbl},"Intervalo do carrossel (ms)"),
+          h("input",{type:"number",min:1000,step:500,value:draft.newsIntervalMs||5000,onChange:function(e){sv("newsIntervalMs",parseInt(e.target.value)||5000);},style:inp2})
+        ),
+        h("div",null,
+          h("label",{style:lbl},"Tipo de transição"),
+          h("select",{value:draft.newsTransicao||"slide",onChange:function(e){sv("newsTransicao",e.target.value);},style:inp2},
+            h("option",{value:"slide"},"Slide"),
+            h("option",{value:"fade"},"Fade")
+          )
+        ),
+        h("div",null,
+          h("label",{style:lbl},"Máx. notícias salvas"),
+          h("input",{type:"number",min:10,max:500,step:10,value:draft.newsMaxSaved||100,onChange:function(e){sv("newsMaxSaved",parseInt(e.target.value)||100);},style:inp2})
+        )
+      )
+    ),
+    // Aba: Login
+    aba==="login"&&h(Card,{style:{padding:"18px 20px",marginBottom:16}},
+      h("div",{style:{fontSize:11,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"TELA DE LOGIN"),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
+        h("div",null,h("label",{style:lbl},"Título"),h("input",{value:draft.loginTitulo||"",onChange:function(e){sv("loginTitulo",e.target.value);},style:inp2})),
+        h("div",null,h("label",{style:lbl},"Subtítulo"),h("input",{value:draft.loginSubtitulo||"",onChange:function(e){sv("loginSubtitulo",e.target.value);},style:inp2}))
+      ),
+      h("div",{style:{marginTop:16,padding:"14px 16px",background:"linear-gradient(135deg,"+prevG1+","+prevG2+")",borderRadius:10,textAlign:"center"}},
+        h("div",{style:{width:44,height:44,borderRadius:12,background:"rgba(255,255,255,.15)",border:"1px solid rgba(255,255,255,.25)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px",fontSize:22}},"🌿"),
+        h("div",{style:{fontSize:16,fontWeight:700,color:"#fff"}},draft.loginTitulo||"SEMA/AC"),
+        h("div",{style:{fontSize:12,color:"rgba(255,255,255,.55)",marginTop:3}},draft.loginSubtitulo||"Acesso administrativo")
+      )
+    ),
+    // Preview ao vivo
     h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+prevG2}},
       h("div",{style:{fontSize:12,fontWeight:700,color:C.cm,letterSpacing:.5,marginBottom:14}},"PREVIEW AO VIVO"),
       h("div",{style:{background:prevG1,borderRadius:12,padding:"16px 20px",display:"flex",alignItems:"center",gap:12,marginBottom:12}},
-        draft.logo&&h("img",{src:draft.logo,alt:"logo",style:{height:36,objectFit:"contain"}}),
+        draft.logo
+          ? h("img",{src:draft.logo,alt:"logo",style:{height:36,objectFit:"contain",borderRadius:6}})
+          : h("div",{style:{width:32,height:32,borderRadius:8,background:prevG2+"88",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:16}},"🌿"),
         h("div",null,
           h("div",{style:{fontSize:16,fontWeight:800,color:"#fff"}},draft.nomeApp),
           h("div",{style:{fontSize:11,color:"rgba(255,255,255,.7)"}},draft.subApp)
@@ -2291,6 +2403,35 @@ function PgTransp(p){
   );
 }
 
+// ─── CARROSSEL DE NOTÍCIAS ────────────────────────────────────────────────────
+function CarrosselNoticias(p){
+  var itens=p.news.filter(function(n){return n.visivel;}).slice(0,p.count||3);
+  var sI=useState(0);var idx=sI[0],setIdx=sI[1];
+  useEffect(function(){
+    if(itens.length<=1) return;
+    var t=setInterval(function(){setIdx(function(i){return (i+1)%itens.length;});},p.intervalMs||5000);
+    return function(){clearInterval(t);};
+  },[itens.length,p.intervalMs]);
+  if(!itens.length) return h("div",{style:{textAlign:"center",padding:20,color:p.C.cm,fontSize:13}},"Nenhuma notícia disponível.");
+  var n=itens[idx];
+  var cc=getCC(n.categoria);
+  return h("div",null,
+    h("div",{onClick:function(){p.onVerNoticia(n);},style:{background:"#fff",border:"1px solid "+p.C.cl,borderRadius:12,padding:"14px 16px",cursor:"pointer",minHeight:100,transition:"border-color .2s"},
+      onMouseEnter:function(e){e.currentTarget.style.borderColor=cc[0];},
+      onMouseLeave:function(e){e.currentTarget.style.borderColor=p.C.cl;}},
+      h(Pill,{t:n.categoria,c:cc[0],b:cc[1],s:10}),
+      h("h3",{style:{fontSize:14,fontWeight:700,color:p.C.cd,margin:"10px 0 8px",lineHeight:1.4}},n.titulo),
+      h("p",{style:{fontSize:12,color:p.C.cm,margin:"0 0 10px",lineHeight:1.5}},n.resumo),
+      h("span",{style:{fontSize:11,color:cc[0],fontWeight:600}},"Ler mais →")
+    ),
+    itens.length>1&&h("div",{style:{display:"flex",justifyContent:"center",gap:6,marginTop:10}},
+      itens.map(function(_,i){
+        return h("button",{key:i,onClick:function(){setIdx(i);},style:{width:i===idx?18:8,height:8,borderRadius:4,border:"none",background:i===idx?cc[0]:p.C.cl,cursor:"pointer",padding:0,transition:"all .2s"}});
+      })
+    )
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // APP PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2471,7 +2612,7 @@ function App(){
     var alvo=Array.isArray(ids)&&ids.length?feeds.filter(function(f){return ids.indexOf(f.id)!==-1;}):feeds;
     apiSyncFeeds(alvo,news).then(function(resp){
       if(!resp||resp.ok===false){toast2((resp&&resp.error)||"Falha na sincronização.",C.rm);return;}
-      if(Array.isArray(resp.news)) setNews(resp.news);
+      if(Array.isArray(resp.news)){var maxSaved=pers.newsMaxSaved||100;setNews(resp.news.slice(0,maxSaved));}
       if(Array.isArray(resp.feeds)) setFeeds(function(fs){
         return fs.map(function(f){
           var remoto=resp.feeds.find(function(rf){return rf.id===f.id;});
@@ -2622,14 +2763,16 @@ function App(){
         h("span",{style:{fontSize:10,color:"rgba(255,255,255,.6)"}},"Governo do Estado do Acre · Secretaria de Estado do Meio Ambiente")
       ),
       h("div",{style:{maxWidth:1200,margin:"0 auto",padding:isMobile?"0 10px":"0 16px",height:isMobile?46:52,display:"flex",alignItems:"center"}},
-        // Logo exatamente como v7 — SVG pin
+        // Logo — imagem customizada ou SVG pin padrão
         h("div",{onClick:function(){go("home");},style:{display:"flex",alignItems:"center",gap:9,cursor:"pointer",marginRight:20,flexShrink:0}},
-          h("div",{style:{width:32,height:32,borderRadius:8,background:C.g3,display:"flex",alignItems:"center",justifyContent:"center"}},
-            h("svg",{width:18,height:18,viewBox:"0 0 18 18",fill:"none"},
-              h("path",{d:"M9 2C6.5 2 4 4.5 4 8c0 1.8.9 3.2 2.2 4.5L9 16l2.8-3.5C13.1 11.2 14 9.8 14 8c0-3.5-2.5-6-5-6z",fill:"rgba(255,255,255,.95)"}),
-              h("circle",{cx:9,cy:8,r:2.2,fill:C.g3})
-            )
-          ),
+          pers.logo
+            ? h("img",{src:pers.logo,alt:pers.nomeApp,style:{height:36,maxWidth:96,objectFit:"contain",borderRadius:6,display:"block"}})
+            : h("div",{style:{width:32,height:32,borderRadius:8,background:C.g3,display:"flex",alignItems:"center",justifyContent:"center"}},
+                h("svg",{width:18,height:18,viewBox:"0 0 18 18",fill:"none"},
+                  h("path",{d:"M9 2C6.5 2 4 4.5 4 8c0 1.8.9 3.2 2.2 4.5L9 16l2.8-3.5C13.1 11.2 14 9.8 14 8c0-3.5-2.5-6-5-6z",fill:"rgba(255,255,255,.95)"}),
+                  h("circle",{cx:9,cy:8,r:2.2,fill:C.g3})
+                )
+              ),
           !isMobile&&h("div",{style:{lineHeight:1.15}},
             h("div",{style:{fontSize:14,fontWeight:700,color:"#fff"}},pers.nomeApp),
             h("div",{style:{fontSize:10,color:"rgba(255,255,255,.55)"}},pers.subApp.split(" ").slice(0,4).join(" "))
@@ -2658,7 +2801,7 @@ function App(){
 
   return h("div",{style:{fontFamily:"sans-serif",background:"#fff",minHeight:"100vh"}},
 
-    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,onLogin:function(u){lsSet('curUser',u);setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);},onAuthFail:addLog,dbLoading:!remoteReady}),
+    showLogin&&h(TelaLogin,{users:users,setUsers:setUsers,pers:pers,onLogin:function(u){lsSet('curUser',u);setCurUser(u);setShowLogin(false);go("admin");},onClose:function(){setShowLogin(false);},onAuthFail:addLog,dbLoading:!remoteReady}),
     toast&&h(Toast,{msg:toast.m,color:toast.c,onDone:function(){setToast(null);}}),
     conf&&h(Confirm,{nome:conf.nome,onConfirm:conf.fn,onClose:function(){setConf(null);}}),
     dbOffline&&h("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",background:"#fff",border:"1.5px solid "+C.am,borderRadius:10,padding:"10px 20px",fontSize:13,color:C.am,boxShadow:"0 2px 16px rgba(0,0,0,.15)",zIndex:9999,display:"flex",alignItems:"center",gap:10,whiteSpace:"nowrap"}},
@@ -2676,12 +2819,15 @@ function App(){
 
     // ══ HOME — visível a todos sem login ══
     page==="home"&&h("div",null,
+      // Banner de alerta configurável
+      pers.bannerAtivo&&pers.bannerTexto&&h("div",{style:{background:pers.bannerCor||C.am,color:"#fff",padding:"10px 20px",textAlign:"center",fontSize:13,fontWeight:600,letterSpacing:.2}},pers.bannerTexto),
+
       // Hero
       secs.hero&&h("div",{style:{background:"linear-gradient(150deg,"+C.g1+" 0%,"+C.g2+" 60%,"+C.g3+" 100%)",padding:"56px 20px 48px",position:"relative",overflow:"hidden"}},
         h("div",{style:{maxWidth:1100,margin:"0 auto",position:"relative",zIndex:1}},
           h("div",{style:{display:"inline-flex",alignItems:"center",gap:6,background:"rgba(255,255,255,.12)",border:"0.5px solid rgba(255,255,255,.2)",borderRadius:20,padding:"5px 14px",fontSize:11,color:"rgba(255,255,255,.85)",marginBottom:18}},"🌿 Secretaria de Estado do Meio Ambiente do Acre"),
-          h("h1",{style:{fontSize:36,fontWeight:700,color:"#fff",margin:"0 0 14px",lineHeight:1.2,maxWidth:680}},"Sistema de Gestão de Unidades Ambientais"),
-          h("p",{style:{fontSize:16,color:"rgba(255,255,255,.78)",margin:"0 0 32px",maxWidth:600,lineHeight:1.7}},"Plataforma de gestão, monitoramento e uso das unidades ambientais do Estado do Acre — SEMA/AC"),
+          h("h1",{style:{fontSize:36,fontWeight:700,color:"#fff",margin:"0 0 14px",lineHeight:1.2,maxWidth:680}},pers.heroTitulo||"Sistema de Gestão de Unidades Ambientais"),
+          h("p",{style:{fontSize:16,color:"rgba(255,255,255,.78)",margin:"0 0 32px",maxWidth:600,lineHeight:1.7}},pers.heroSubtitulo||"Plataforma de gestão, monitoramento e uso das unidades ambientais do Estado do Acre — SEMA/AC"),
           h("div",{style:{display:"flex",gap:12,flexWrap:"wrap",marginBottom:36}},
             h("button",{onClick:function(){go("cima");},style:{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.95)",color:C.g1,border:"none",padding:"13px 26px",borderRadius:11,fontSize:15,fontWeight:700,cursor:"pointer"}},"🏛️ Acessar CIMA"),
             h("button",{onClick:function(){go("ugai");},style:{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.12)",color:"#fff",border:"1.5px solid rgba(255,255,255,.35)",padding:"13px 26px",borderRadius:11,fontSize:15,fontWeight:700,cursor:"pointer"}},"🌳 Acessar UGAI"),
@@ -2796,18 +2942,7 @@ function App(){
               h("h2",{style:{fontSize:16,fontWeight:700,margin:0,color:C.cd}},"Notícias recentes"),
               h("button",{onClick:function(){go("noticias");},style:{fontSize:12,color:C.g2,fontWeight:600,background:"none",border:"none",cursor:"pointer"}},"Ver todas →")
             ),
-            h("div",{style:{display:"flex",flexDirection:"column",gap:9}},
-              news.filter(function(n){return n.visivel;}).slice(0,3).map(function(n){
-                var cc=getCC(n.categoria);
-                return h("div",{key:n.id,onClick:function(){setNVista(n);},style:{background:"#fff",border:"1px solid "+C.cl,borderRadius:12,padding:"13px 16px",cursor:"pointer"},
-                  onMouseEnter:function(e){e.currentTarget.style.borderColor=cc[0];},
-                  onMouseLeave:function(e){e.currentTarget.style.borderColor=C.cl;}},
-                  h(Pill,{t:n.categoria,c:cc[0],b:cc[1],s:10}),
-                  h("h3",{style:{fontSize:13,fontWeight:600,color:C.cd,margin:"8px 0 6px",lineHeight:1.4}},n.titulo),
-                  h("span",{style:{fontSize:11,color:cc[0],fontWeight:600}},"Ler mais →")
-                );
-              })
-            )
+            h(CarrosselNoticias,{news:news,count:pers.newsQtdHome,intervalMs:pers.newsIntervalMs,transicao:pers.newsTransicao,C:C,onVerNoticia:function(n){setNVista(n);}})
           )
       )
     ),
