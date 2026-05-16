@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
+const cron = require('node-cron');
 const { Pool } = require('pg');
 
 const app = express();
@@ -866,6 +867,121 @@ app.put('/api/photos/:id/banner', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ─── Backup ──────────────────────────────────────────────────────────────────
+
+app.get('/api/backup', asyncRoute(async (_req, res) => {
+  const rows = await query('SELECT id, created_at, label, size_kb FROM sgua_backups ORDER BY created_at DESC LIMIT 50');
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/backup', asyncRoute(async (req, res) => {
+  const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua'");
+  if (!row) return res.status(404).json({ ok: false, error: 'Estado não encontrado.' });
+  const json = JSON.stringify(row.value);
+  const sizeKb = Math.ceil(Buffer.byteLength(json, 'utf8') / 1024);
+  const label = sanitizeText(req.body && req.body.label ? req.body.label : '', 160)
+    || `Manual — ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Rio_Branco' })}`;
+  const result = await queryOne(
+    'INSERT INTO sgua_backups (label, snapshot, size_kb) VALUES ($1, $2, $3) RETURNING id, created_at, label, size_kb',
+    [label, row.value, sizeKb]
+  );
+  res.status(201).json({ ok: true, data: result });
+}));
+
+app.get('/api/backup/:id', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const row = await queryOne('SELECT * FROM sgua_backups WHERE id = $1', [id]);
+  if (!row) return res.status(404).json({ ok: false, error: 'Backup não encontrado.' });
+  res.json({ ok: true, data: row });
+}));
+
+app.post('/api/backup/:id/restore', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const backup = await queryOne('SELECT snapshot FROM sgua_backups WHERE id = $1', [id]);
+  if (!backup) return res.status(404).json({ ok: false, error: 'Backup não encontrado.' });
+  await query(
+    "INSERT INTO app_state (key, value, updated_at) VALUES ('sgua', $1, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+    [JSON.stringify(backup.snapshot)]
+  );
+  res.json({ ok: true });
+}));
+
+app.delete('/api/backup/:id', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  await query('DELETE FROM sgua_backups WHERE id = $1', [id]);
+  res.json({ ok: true });
+}));
+
+// ─── Solicitações de Cadastro Público ────────────────────────────────────────
+
+app.get('/api/reg-requests', asyncRoute(async (_req, res) => {
+  const rows = await query('SELECT * FROM sgua_reg_requests ORDER BY created_at DESC');
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/reg-requests', asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const nome = sanitizeText(body.nome || '', 120);
+  const email = sanitizeText(body.email || '', 160).toLowerCase();
+  if (!nome || !email) return res.status(400).json({ ok: false, error: 'Nome e e-mail são obrigatórios.' });
+  if (!validateEmail(email)) return res.status(400).json({ ok: false, error: 'E-mail inválido.' });
+  const result = await queryOne(
+    'INSERT INTO sgua_reg_requests (nome, email, cargo, organizacao, justificativa) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+    [nome, email, sanitizeText(body.cargo||'',80), sanitizeText(body.organizacao||'',120), sanitizeText(body.justificativa||'',600)]
+  );
+  res.status(201).json({ ok: true, data: result });
+}));
+
+app.put('/api/reg-requests/:id', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const body = req.body || {};
+  const status = body.status;
+  if (!['aprovado','rejeitado'].includes(status)) return res.status(400).json({ ok: false, error: 'Status inválido.' });
+  const result = await queryOne(
+    'UPDATE sgua_reg_requests SET status=$1, obs=$2, reviewed_by=$3, reviewed_at=now() WHERE id=$4 RETURNING *',
+    [status, sanitizeText(body.obs||'',500), body.reviewed_by||null, id]
+  );
+  if (!result) return res.status(404).json({ ok: false, error: 'Solicitação não encontrada.' });
+  res.json({ ok: true, data: result });
+}));
+
+// ─── Notificações ─────────────────────────────────────────────────────────────
+
+app.get('/api/notifications', asyncRoute(async (req, res) => {
+  const userId = parsePositiveId(req.query.user_id);
+  if (!userId) return res.status(400).json({ ok: false, error: 'user_id inválido.' });
+  const rows = await query('SELECT * FROM sgua_notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50', [userId]);
+  res.json({ ok: true, data: rows });
+}));
+
+app.post('/api/notifications', asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const result = await queryOne(
+    'INSERT INTO sgua_notifications (user_id, tipo, canal, titulo, corpo) VALUES ($1,$2,$3,$4,$5) RETURNING *',
+    [body.user_id||null, sanitizeText(body.tipo||'sistema',40), sanitizeText(body.canal||'sistema',20),
+     sanitizeText(body.titulo||'',200), sanitizeText(body.corpo||'',600)]
+  );
+  res.status(201).json({ ok: true, data: result });
+}));
+
+app.put('/api/notifications/read-all', asyncRoute(async (req, res) => {
+  const userId = parsePositiveId((req.body||{}).user_id);
+  if (!userId) return res.status(400).json({ ok: false, error: 'user_id inválido.' });
+  await query('UPDATE sgua_notifications SET lida=true WHERE user_id=$1', [userId]);
+  res.json({ ok: true });
+}));
+
+app.put('/api/notifications/:id/read', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  await query('UPDATE sgua_notifications SET lida=true WHERE id=$1', [id]);
+  res.json({ ok: true });
+}));
+
 // ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────
 
 app.get(/^(?!\/api\/).*/, (_req, res) => {
@@ -901,3 +1017,21 @@ app.listen(PORT, () => {
     console.warn('[Aviso] Render.com free tier: uploads de fotos em disco são temporários e serão perdidos a cada redeploy. Configure um Persistent Disk ou migre para Supabase Storage para fotos permanentes.');
   }
 });
+
+// ─── Backup semanal automático (toda domingo às 02:00 horário de Brasília / 07:00 UTC) ────
+
+cron.schedule('0 7 * * 0', async () => {
+  try {
+    const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua'");
+    if (!row) { console.warn('[Backup] app_state não encontrado.'); return; }
+    const json = JSON.stringify(row.value);
+    const sizeKb = Math.ceil(Buffer.byteLength(json, 'utf8') / 1024);
+    const label = `Auto — ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Rio_Branco' })}`;
+    await query('INSERT INTO sgua_backups (label, snapshot, size_kb) VALUES ($1, $2, $3)', [label, row.value, sizeKb]);
+    // Retenção: manter apenas os 30 backups mais recentes
+    await query('DELETE FROM sgua_backups WHERE id NOT IN (SELECT id FROM sgua_backups ORDER BY created_at DESC LIMIT 30)');
+    console.log(`[Backup] Automático concluído — ${sizeKb} KB`);
+  } catch (err) {
+    console.error('[Backup] Falha no backup automático:', err.message);
+  }
+}, { timezone: 'UTC' });
