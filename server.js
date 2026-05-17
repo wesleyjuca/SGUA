@@ -787,8 +787,11 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
           title: item.title.slice(0, 180),
           content: (item.description || item.title).slice(0, 4000),
           source: item.source,
+          source_name: item.source_name || feed.nome,
           link: item.link || null,
-          category: item.category
+          category: item.category,
+          categoria: item.categoria || feed.categoria || 'Gestão',
+          pub_date: item.date || null
         });
       });
     })
@@ -986,6 +989,50 @@ app.put('/api/notifications/:id/read', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ─── Sugestões inteligentes ───────────────────────────────────────────────────
+
+app.get('/api/suggestions', asyncRoute(async (_req, res) => {
+  try {
+    const rows = await query('SELECT * FROM sgua_suggestions ORDER BY created_at DESC LIMIT 200');
+    res.json({ ok: true, items: rows || [] });
+  } catch(e) { res.json({ ok: false, error: e.message, items: [] }); }
+}));
+
+app.post('/api/suggestions', asyncRoute(async (req, res) => {
+  try {
+    const body = req.body || {};
+    const texto = sanitizeText(body.texto || '', 500);
+    if(!texto) return res.json({ ok: false, error: 'texto obrigatório' });
+    const tipo = sanitizeText(body.tipo || 'sistema', 40);
+    const prioridade = sanitizeText(body.prioridade || 'media', 20);
+    const impacto = sanitizeText(body.impacto || '', 300);
+    const obs = sanitizeText(body.obs || '', 500);
+    const tags = Array.isArray(body.tags) ? body.tags.slice(0,10).map(t=>String(t).slice(0,50)) : [];
+    await pool.query(
+      'INSERT INTO sgua_suggestions (texto, tipo, status, prioridade, impacto, obs, tags) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [texto, tipo, 'pendente', prioridade, impacto, obs, JSON.stringify(tags)]
+    );
+    res.json({ ok: true });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+}));
+
+app.put('/api/suggestions/:id', asyncRoute(async (req, res) => {
+  try {
+    const id = parsePositiveId(req.params.id);
+    if(!id) return res.json({ ok: false, error: 'ID inválido' });
+    const body = req.body || {};
+    const fields = [];
+    const vals = [];
+    if(body.status !== undefined){ fields.push('status=$'+(fields.length+1)); vals.push(sanitizeText(body.status,20)); }
+    if(body.prioridade !== undefined){ fields.push('prioridade=$'+(fields.length+1)); vals.push(sanitizeText(body.prioridade,20)); }
+    if(body.obs !== undefined){ fields.push('obs=$'+(fields.length+1)); vals.push(sanitizeText(body.obs,500)); }
+    if(!fields.length) return res.json({ ok: false, error: 'Nenhum campo para atualizar.' });
+    vals.push(id);
+    await pool.query('UPDATE sgua_suggestions SET '+fields.join(',')+' WHERE id=$'+vals.length, vals);
+    res.json({ ok: true });
+  } catch(e) { res.json({ ok: false, error: e.message }); }
+}));
+
 // ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────
 
 app.get(/^(?!\/api\/).*/, (_req, res) => {
@@ -1038,6 +1085,35 @@ cron.schedule('0 7 * * 0', async () => {
   } catch (err) {
     console.error('[Backup] Falha no backup automático:', err.message);
   }
+}, { timezone: 'UTC' });
+
+// Cron: daily 06:00 UTC — sincronizar RSS feeds
+cron.schedule('0 6 * * *', async () => {
+  try {
+    const row = await queryOne("SELECT value FROM app_state WHERE key='sgua'");
+    const state = row ? row.value : {};
+    const feeds = (state.feeds||[]).filter(f => f.ativo && f.url);
+    if(!feeds.length){console.log('[CRON-RSS] Sem feeds ativos');return;}
+    let totalAdded=0, warnings=[];
+    for(const f of feeds){
+      try{
+        const result = await fetchFeedItems(f);
+        if(!result.ok){ warnings.push(f.nome+': '+result.error); continue; }
+        const existTitles = new Set((state.news||[]).map(n=>n.titulo));
+        const novas = result.items.filter(i=>!existTitles.has(i.title)).map(i=>({
+          id: Date.now()+Math.random(), titulo:i.title, resumo:(i.description||'').slice(0,200),
+          conteudo:i.description||'', data:i.date?i.date.slice(0,10):new Date().toISOString().slice(0,10),
+          categoria:f.categoria||'Gestão', unidade:'', destaque:false, visivel:true,
+          fonte:f.nome, autor:f.nome, orgaosPresentes:[], ocupacaoAtual:0
+        }));
+        state.news = (state.news||[]).concat(novas);
+        state.feeds = (state.feeds||[]).map(fd=>fd.id===f.id?{...fd,sync:new Date().toISOString().slice(0,10)}:fd);
+        totalAdded += novas.length;
+      } catch(e){warnings.push(f.nome+': '+e.message);}
+    }
+    await query("INSERT INTO app_state (key, value, updated_at) VALUES ('sgua', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",[JSON.stringify(state)]);
+    console.log(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
+  } catch(e){console.error('[CRON-RSS] Falha:',e.message);}
 }, { timezone: 'UTC' });
 
 // Cron: daily 06:00 UTC — sincronizar RSS feeds

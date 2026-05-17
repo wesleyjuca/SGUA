@@ -1012,7 +1012,8 @@ var PERS_DEF={
   // Home — seções extras
   homeKPIs:true,homeAtividades:true,
   // Navegação — itens visíveis
-  navVisivel:["home","cima","ugai","mapa","noticias","sol","transp","indicadores"],
+  navVisivel:["home","cima","ugai","mapa","noticias","sol","indicadores"],
+  sugFreq:'diaria',
   // Relatórios
   relBranding:true,
   // Preset
@@ -1606,7 +1607,7 @@ function AdminPersonalizacao(p){
   var SECOES=[
     {grupo:"IDENTIDADE",itens:[{id:"identidade",icon:"✨",l:"Identidade"},{id:"temas",icon:"🎨",l:"Temas"}]},
     {grupo:"INTERFACE",itens:[{id:"layout",icon:"📐",l:"Layout"},{id:"menus",icon:"🧭",l:"Menus"},{id:"componentes",icon:"🧩",l:"Componentes"}]},
-    {grupo:"CONTEÚDO",itens:[{id:"home",icon:"🏠",l:"Página Home"},{id:"modulos",icon:"📦",l:"Módulos"},{id:"noticias",icon:"📰",l:"Notícias"}]},
+    {grupo:"CONTEÚDO",itens:[{id:"home",icon:"🏠",l:"Página Home"},{id:"secoes",icon:"🏠",l:"Seções da Home"},{id:"modulos",icon:"📦",l:"Módulos"},{id:"noticias",icon:"📰",l:"Notícias"}]},
     {grupo:"FERRAMENTAS",itens:[{id:"mapas",icon:"🗺",l:"Mapas"},{id:"relatorios",icon:"📊",l:"Relatórios"},{id:"login",icon:"🔐",l:"Login"},{id:"dashboard",icon:"📈",l:"Dashboard"}]},
     {grupo:"AVANÇADO",itens:[{id:"permissoes",icon:"🛡",l:"Permissões"}]}
   ];
@@ -1754,16 +1755,15 @@ function AdminPersonalizacao(p){
           {id:"ugai",l:"UGAI"},
           {id:"mapa",l:"🗺 Mapa"},
           {id:"noticias",l:"Notícias"},
-          {id:"sol",l:"Solicitação"},
-          {id:"transp",l:"Transparência"},
+          {id:"sol",l:"Solicitar Uso"},
           {id:"indicadores",l:"📊 Indicadores"}
         ].map(function(item){
-          var navV=draft.navVisivel||["home","cima","ugai","mapa","noticias","sol","transp","indicadores"];
+          var navV=draft.navVisivel||["home","cima","ugai","mapa","noticias","sol","indicadores"];
           var checked=navV.indexOf(item.id)!==-1;
           return h("div",{key:item.id,style:{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"0.5px solid "+C.cl}},
             h("input",{type:"checkbox",id:"nav_"+item.id,checked:checked,
               onChange:function(e){
-                var curr=draft.navVisivel||["home","cima","ugai","mapa","noticias","sol","transp","indicadores"];
+                var curr=draft.navVisivel||["home","cima","ugai","mapa","noticias","sol","indicadores"];
                 if(e.target.checked){if(curr.indexOf(item.id)===-1)sv("navVisivel",curr.concat([item.id]));}
                 else{sv("navVisivel",curr.filter(function(x){return x!==item.id;}));}
               },
@@ -1918,6 +1918,20 @@ function AdminPersonalizacao(p){
               );
             }))
           )
+        )
+      );
+      case "secoes":return h("div",null,
+        h("p",{style:{fontSize:13,color:C.cm,margin:"0 0 16px"}},"Ative ou desative seções da página inicial em tempo real."),
+        h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}},
+          [["hero","🖼 Hero"],["alert","⚠ Alertas"],["bloco","📖 CIMA/UGAI"],["mapa","🗺 Mapa"],["dash","📊 Dashboard"],["acesso","⚡ Acesso rápido"],["news","📰 Notícias"]].map(function(pr){
+            var secVal=pers&&pers.secs?pers.secs[pr[0]]:true;
+            return h("div",{key:pr[0],onClick:function(){setPers(function(ps){var ns=Object.assign({},ps);ns.secs=Object.assign({},ns.secs||{});ns.secs[pr[0]]=!ns.secs[pr[0]];return ns;});},style:{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",background:"#fff",borderRadius:12,border:"1.5px solid "+(secVal?C.g2:C.cl),cursor:"pointer"}},
+              h("div",{style:{width:22,height:22,borderRadius:6,background:secVal?C.g2:C.cl,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}},
+                secVal&&h("svg",{width:12,height:12,viewBox:"0 0 12 12"},h("path",{d:"M2 6l3 3 5-5",stroke:"white",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",fill:"none"}))
+              ),
+              h("span",{style:{fontSize:13,fontWeight:secVal?700:400,color:secVal?C.cd:C.cm}},pr[1])
+            );
+          })
         )
       );
       default:return h("div",{style:{padding:"20px",color:C.cm,textAlign:"center"}},"Seção em desenvolvimento.");
@@ -2438,11 +2452,84 @@ function AdminUsers(p){
 // ══════════════════════════════════════════════════════════════════════════════
 // MONITOR DO SISTEMA
 // ══════════════════════════════════════════════════════════════════════════════
+function AdminSugestoes(p){
+  var C=p.C,pers=p.pers,setPers=p.setPers,toast2=p.toast2||function(){},uns=p.uns||[],sols=p.sols||[];
+  var sItems=useState([]);var items=sItems[0],setItems=sItems[1];
+  var sLoad=useState(false);var loading=sLoad[0],setLoading=sLoad[1];
+  var sObs=useState({});var obsMap=sObs[0],setObsMap=sObs[1];
+  useEffect(function(){fetchSugs();},[]);
+  function fetchSugs(){
+    setLoading(true);
+    fetch('/api/suggestions').then(function(r){return r.json();}).then(function(d){
+      setItems(d.items||[]);setLoading(false);
+    }).catch(function(){setLoading(false);});
+  }
+  function gerarSugestoes(){
+    var sugs=[];
+    if(!uns.length) sugs.push({texto:'Cadastre unidades para começar a usar o sistema.',tipo:'setup',prioridade:'alta',impacto:'Permite uso do sistema'});
+    if(uns.filter(function(u){return !u.capacidade;}).length>0) sugs.push({texto:'Defina a capacidade de '+uns.filter(function(u){return !u.capacidade;}).length+' unidades sem capacidade configurada.',tipo:'dados',prioridade:'media',impacto:'Melhora métricas de ocupação'});
+    if(sols.filter(function(s){return s.st==='pendente';}).length>3) sugs.push({texto:sols.filter(function(s){return s.st==='pendente';}).length+' solicitações pendentes aguardam análise.',tipo:'gestao',prioridade:'alta',impacto:'Reduz tempo de resposta'});
+    if(!pers||!pers.logo) sugs.push({texto:'Configure o logo da organização em Personalização.',tipo:'visual',prioridade:'baixa',impacto:'Melhora identidade visual'});
+    if(sugs.length===0) sugs.push({texto:'Sistema em boa forma! Continue monitorando os indicadores.',tipo:'info',prioridade:'baixa',impacto:'Informativo'});
+    Promise.all(sugs.map(function(s){
+      return fetch('/api/suggestions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});
+    })).then(function(){fetchSugs();toast2(sugs.length+' sugestões geradas.');});
+  }
+  function updateStatus(id,status){
+    fetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})})
+      .then(function(){fetchSugs();toast2('Status atualizado.');});
+  }
+  function updateObs(id){
+    fetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({obs:obsMap[id]||''})})
+      .then(function(){fetchSugs();toast2('Observação salva.');});
+  }
+  var freqOptions=[['diaria','Diária'],['semanal','Semanal'],['manual','Manual']];
+  var pillColors={pendente:[C.am,C.al],implementada:[C.g2,C.gx],ignorada:[C.cm,C.cx]};
+  return h('div',{style:{padding:'0 4px'}},
+    h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16,flexWrap:'wrap',gap:8}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+        h('span',{style:{fontSize:13,color:C.cm}},'Frequência de verificação:'),
+        h('select',{value:(pers&&pers.sugFreq)||'diaria',onChange:function(e){if(setPers)setPers(function(pr){return Object.assign({},pr,{sugFreq:e.target.value});});},style:{padding:'5px 8px',borderRadius:6,border:'1px solid '+C.cl,fontSize:12}},
+          freqOptions.map(function(o){return h('option',{key:o[0],value:o[0]},o[1]);}))
+      ),
+      h('div',{style:{display:'flex',gap:8}},
+        h('button',{onClick:fetchSugs,style:{padding:'7px 14px',background:C.cx,border:'1px solid '+C.cl,borderRadius:6,cursor:'pointer',fontSize:12}},'🔄 Atualizar'),
+        h('button',{onClick:gerarSugestoes,style:{padding:'7px 14px',background:C.g1,color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontSize:12}},'💡 Gerar Sugestões')
+      )
+    ),
+    loading?h('div',{style:{textAlign:'center',padding:20,color:C.cm}},'Carregando...'):
+    items.length===0?h('div',{style:{textAlign:'center',padding:32,color:C.cm,background:C.cx,borderRadius:12}},'Nenhuma sugestão. Clique em "Gerar Sugestões" para analisar o sistema.'):
+    h('div',{style:{display:'flex',flexDirection:'column',gap:10}},
+      items.map(function(item){
+        var pc=pillColors[item.status]||pillColors.pendente;
+        return h('div',{key:item.id,style:{background:'#fff',border:'1px solid '+C.cl,borderRadius:10,padding:'12px 16px'}},
+          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8,marginBottom:8}},
+            h('div',{style:{flex:1}},
+              h('div',{style:{fontWeight:600,fontSize:13,color:C.cd,marginBottom:4}},item.texto),
+              item.impacto&&h('div',{style:{fontSize:11,color:C.cm}},'Impacto: '+item.impacto)
+            ),
+            h('span',{style:{fontSize:10,fontWeight:700,padding:'2px 8px',borderRadius:20,background:pc[1],color:pc[0],whiteSpace:'nowrap'}},item.status||'pendente')
+          ),
+          h('div',{style:{display:'flex',gap:6,flexWrap:'wrap',marginBottom:item.status==='pendente'?8:0}},
+            item.status==='pendente'&&h('button',{onClick:function(){updateStatus(item.id,'implementada');},style:{padding:'4px 10px',background:C.gx,color:C.g2,border:'1px solid '+C.g2,borderRadius:5,cursor:'pointer',fontSize:11}},'✓ Implementada'),
+            item.status==='pendente'&&h('button',{onClick:function(){updateStatus(item.id,'ignorada');},style:{padding:'4px 10px',background:C.cx,color:C.cm,border:'1px solid '+C.cl,borderRadius:5,cursor:'pointer',fontSize:11}},'✗ Ignorar')
+          ),
+          item.status==='pendente'&&h('div',{style:{display:'flex',gap:6}},
+            h('input',{type:'text',placeholder:'Observação...',value:obsMap[item.id]||item.obs||'',onChange:function(e){setObsMap(function(m){var n=Object.assign({},m);n[item.id]=e.target.value;return n;});},style:{flex:1,padding:'5px 8px',border:'1px solid '+C.cl,borderRadius:5,fontSize:11}}),
+            h('button',{onClick:function(){updateObs(item.id);},style:{padding:'5px 10px',background:C.b1,color:'#fff',border:'none',borderRadius:5,cursor:'pointer',fontSize:11}},'Salvar')
+          )
+        );
+      })
+    )
+  );
+}
+
 function AdminMonitor(p){
   var log=p.log,setLog=p.setLog,dbOffline=p.dbOffline;
   var health=p.health,healthLabel=p.healthLabel,healthColor=p.healthColor,uptimeMin=p.uptimeMin,lastDbMs=p.lastDbMs;
   var CD=p.CD;
   var sysReport=p.sysReport,setSysReport=p.setSysReport;
+  var pers=p.pers,setPers=p.setPers,uns=p.uns||[],sols=p.sols||[];
   var sTab=useState('saude');var mTab=sTab[0],setMTab=sTab[1];
   var jsErrCount=log.filter(function(e){return e.type==='js_err';}).length;
   var apiErrCount=log.filter(function(e){return e.type==='api_err'||e.type==='save_err';}).length;
@@ -2462,7 +2549,7 @@ function AdminMonitor(p){
   function fmtTime(ts){return new Date(ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
   function logIcon(sev){return sev==='crit'?'🔴':sev==='warn'?'⚠️':'✅';}
   var sevColor=diag.sev==='crit'?CD.rm:diag.sev==='warn'?CD.am:CD.g2;
-  var TABS=[['saude','🩺 Saúde'],['relatorio','📋 Relatório'],['log','📊 Log']];
+  var TABS=[['saude','🩺 Saúde'],['relatorio','📋 Relatório'],['log','📊 Log'],['sugestoes','💡 Sugestões']];
   return h('div',null,
     h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}},
       h('h2',{style:{fontSize:20,fontWeight:700,margin:0,color:CD.cd}},'Monitor do Sistema'),
@@ -2574,14 +2661,21 @@ function AdminMonitor(p){
             );
           })
       )
-    )
+    ),
+    // ─── Aba Sugestões ────────────────────────────────────────────────────────
+    mTab==='sugestoes'&&h(AdminSugestoes,{C:CD,pers:pers,setPers:setPers,toast2:p.toast2||function(){},uns:uns,sols:sols})
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PORTAL DE TRANSPARÊNCIA
+// PORTAL DE TRANSPARÊNCIA — redireciona para indicadores
 // ══════════════════════════════════════════════════════════════════════════════
 function PgTransp(p){
+  var go=p.go;
+  useEffect(function(){if(go)go("indicadores");},[]);
+  return null;
+}
+function PgTranspOld(p){
   var uns=p.uns,sols=p.sols,C=p.C,onVerUnidade=p.onVerUnidade;
   var isMobile=typeof window!=="undefined"&&window.innerWidth<=768;
   var sB=useState("");var busca=sB[0],setBusca=sB[1];
@@ -2771,7 +2865,6 @@ function PgTransp(p){
     )
   );
 }
-
 // ─── CARROSSEL DE NOTÍCIAS ────────────────────────────────────────────────────
 function CarrosselNoticias(p){
   var itens=p.news.filter(function(n){return n.visivel;}).slice(0,p.count||3);
@@ -3701,7 +3794,7 @@ function App(){
     {nome:"Unidades visíveis",valor:Math.round((unidadesVisiveis/Math.max(1,totalUnidades))*100),meta:80,cor:C.am}
   ];
 
-  var NAV=[{id:"home",l:"Início"},{id:"cima",l:"CIMA"},{id:"ugai",l:"UGAI"},{id:"mapa",l:"🗺 Mapa"},{id:"noticias",l:"Notícias"},{id:"sol",l:"Solicitação"},{id:"transp",l:"Transparência"}].concat(pers.indicadoresPublicos!==false?[{id:"indicadores",l:"📊 Indicadores"}]:[]).concat(!curUser?[{id:"solicitar-acesso",l:"Solicitar Acesso"}]:[]);
+  var NAV=[{id:"home",l:"Início"},{id:"cima",l:"CIMA"},{id:"ugai",l:"UGAI"},{id:"mapa",l:"🗺️ Mapa"},{id:"noticias",l:"Notícias"},{id:"sol",l:"Solicitar Uso"}].concat(pers.indicadoresPublicos!==false?[{id:"indicadores",l:"📊 Indicadores"}]:[]).concat(!curUser?[{id:"solicitar-acesso",l:"Solicitar Acesso"}]:[]);
 
   // Vistas especiais
   if(uVista) return h(PageUnidade,{u:uVista,uns:uns,setUns:setUns,curUser:curUser,toast2:toast2,onBack:function(){setUVista(null);},onSolicitar:function(){setSf(function(f){return Object.assign({},f,{un:uVista.nome});});setUVista(null);setPage("sol");}});
@@ -4054,7 +4147,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["cfg","🎨","Config. Home",canDo("cfg")],["rel","📊","Relatórios",canDo("rel")],["monitor","🔍","Monitor",true],["pers","✨","Personalização",canDo("cfg")],["backup","💾","Backups",canDo("backup")],["notif","🔔","Notificações",canDo("notif")],["alertas","⚡","Alertas",canDo("cfg")]].filter(function(it){return it[3];}).map(function(it){
+        [["dash","📊","Dashboard",true],["uns","🏛️","Unidades",canDo("units")],["nws","📰","Notícias",canDo("news")],["fds","📡","Feeds RSS",canDo("feeds")],["sols","📋","Solicitações",canDo("sols")],["users","👥","Usuários",canDo("users")],["rel","📊","Relatórios",canDo("rel")],["monitor","🔍","Monitor",true],["pers","✨","Personalização",canDo("cfg")],["backup","💾","Backups",canDo("backup")],["notif","🔔","Notificações",canDo("notif")],["alertas","⚡","Alertas",canDo("cfg")]].filter(function(it){return it[3];}).map(function(it){
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},it[1]),it[2]
           );
@@ -4101,7 +4194,7 @@ function App(){
               )
             ),
             // ─── KPI Row ────────────────────────────────────────────────────
-            h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:20}},
+            h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(5,1fr)",gap:12,marginBottom:20}},
               h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+C.g2}},
                 h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"UNIDADES"),
                 h("div",{style:{fontSize:32,fontWeight:800,color:C.cd,marginBottom:4}},totalUnidades),
@@ -4124,7 +4217,18 @@ function App(){
                 h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"ALERTAS ATIVOS"),
                 h("div",{style:{fontSize:32,fontWeight:800,color:pendentesAlt>0?C.rm:C.g2,marginBottom:4}},pendentesAlt),
                 h("div",{style:{fontSize:11,color:C.cm}},alertasDash.length+" total · "+(sysReport&&sysReport.ts?("Relatório "+new Date(sysReport.ts).toLocaleDateString('pt-BR')):"Sem relatório"))
-              )
+              ),
+              (function(){
+                var feedsAtivos=(state&&state.feeds||feeds||[]).filter(function(f){return f.ativo;}).length;
+                var feedsSemSync=(state&&state.feeds||feeds||[]).filter(function(f){return f.ativo&&(!f.sync||f.sync==='—');}).length;
+                return h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+(feedsSemSync>0?C.am:C.b1)}},
+                  h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"FEEDS RSS"),
+                  h("div",{style:{fontSize:32,fontWeight:800,color:C.cd,marginBottom:4}},feedsAtivos),
+                  feedsSemSync>0
+                    ?h("div",{style:{fontSize:11,color:C.am,fontWeight:600}},feedsSemSync+" sem sync · Sincronize na aba Feeds")
+                    :h("div",{style:{fontSize:11,color:C.g2,fontWeight:600}},"feeds ativos")
+                );
+              })()
             ),
             // ─── Ocupação por Unidade ────────────────────────────────────────
             h(Card,{style:{padding:"18px 20px",marginBottom:20}},
@@ -4311,24 +4415,11 @@ function App(){
 
         atab==="users"&&canDo("users")&&h(AdminUsers,{users:users,setUsers:setUsers,curUser:curUser,toast2:toast2,setConf:setConf,uns:uns}),
 
-        atab==="cfg"&&canDo("cfg")&&h("div",null,
-          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}},h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 6px",color:C.cd}},"Configuração da Home"),h("button",{onClick:function(){lsClear();toast2("Cache limpo. Recarregue a página.",C.am);},style:{padding:"5px 12px",borderRadius:7,border:"1px solid "+C.am,background:C.al,color:C.am,fontSize:11,cursor:"pointer"}},"🗑 Limpar cache")),
-          h("p",{style:{fontSize:13,color:C.cm,margin:"0 0 24px"}},"Ative ou desative seções da página inicial em tempo real."),
-          h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}},
-            [["hero","🖼 Hero"],["alert","⚠ Alertas"],["bloco","📖 CIMA/UGAI"],["mapa","🗺 Mapa"],["dash","📊 Dashboard"],["acesso","⚡ Acesso rápido"],["news","📰 Notícias"]].map(function(pr){
-              return h("div",{key:pr[0],onClick:function(){setSecs(function(s){var n=Object.assign({},s);n[pr[0]]=!n[pr[0]];return n;});},style:{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",background:"#fff",borderRadius:12,border:"1.5px solid "+(secs[pr[0]]?C.g2:C.cl),cursor:"pointer"}},
-                h("div",{style:{width:22,height:22,borderRadius:6,background:secs[pr[0]]?C.g2:C.cl,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}},
-                  secs[pr[0]]&&h("svg",{width:12,height:12,viewBox:"0 0 12 12"},h("path",{d:"M2 6l3 3 5-5",stroke:"white",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round",fill:"none"}))
-                ),
-                h("span",{style:{fontSize:13,fontWeight:secs[pr[0]]?700:400,color:secs[pr[0]]?C.cd:C.cm}},pr[1])
-              );
-            })
-          )
-        ),
+        atab==="cfg"&&canDo("cfg")&&(setAtab&&setAtab("pers"),null),
 
         atab==="rel"&&canDo("rel")&&h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2,pers:pers}),
 
-        atab==="monitor"&&h(AdminMonitor,{log:monLog,setLog:setMonLog,dbOffline:dbOffline,health:healthScore,healthLabel:healthLabel,healthColor:healthColor,uptimeMin:uptimeMin,lastDbMs:lastDbMs,CD:CD,sysReport:sysReport,setSysReport:setSysReport}),
+        atab==="monitor"&&h(AdminMonitor,{log:monLog,setLog:setMonLog,dbOffline:dbOffline,health:healthScore,healthLabel:healthLabel,healthColor:healthColor,uptimeMin:uptimeMin,lastDbMs:lastDbMs,CD:CD,sysReport:sysReport,setSysReport:setSysReport,pers:pers,setPers:setPers,uns:uns,sols:sols,toast2:toast2}),
         atab==="pers"&&canDo("cfg")&&h(AdminPersonalizacao,{pers:pers,setPers:setPers,C:C,toast2:toast2,isMobile:isMobile}),
         atab==="backup"&&canDo("backup")&&h(AdminBackups,{toast2:toast2,C:C}),
         atab==="notif"&&canDo("notif")&&h(AdminNotificacoes,{pers:pers,setPers:setPers,C:C,toast2:toast2}),
@@ -4343,8 +4434,8 @@ function App(){
         h("div",null,h("div",{style:{fontSize:14,fontWeight:700,color:"#fff",marginBottom:6}},pers.nomeApp),h("div",{style:{fontSize:12,color:"rgba(255,255,255,.5)",lineHeight:1.8}},pers.rodapeTexto)),
         h("div",null,
           h("div",{style:{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",marginBottom:8,letterSpacing:.8}},"NAVEGAÇÃO"),
-          ["home","cima","ugai","mapa","noticias","transp"].map(function(pg){
-            return h("div",{key:pg,onClick:function(){go(pg);},style:{fontSize:12,color:"rgba(255,255,255,.5)",cursor:"pointer",marginBottom:5}},pg==="home"?"Início":pg==="transp"?"Transparência":pg==="mapa"?"Mapa":pg.charAt(0).toUpperCase()+pg.slice(1));
+          ["home","cima","ugai","mapa","noticias","indicadores"].map(function(pg){
+            return h("div",{key:pg,onClick:function(){go(pg);},style:{fontSize:12,color:"rgba(255,255,255,.5)",cursor:"pointer",marginBottom:5}},pg==="home"?"Início":pg==="indicadores"?"📊 Indicadores":pg==="mapa"?"Mapa":pg.charAt(0).toUpperCase()+pg.slice(1));
           })
         ),
         h("div",null,h("div",{style:{fontSize:10,fontWeight:700,color:"rgba(255,255,255,.35)",marginBottom:8,letterSpacing:.8}},"CONTATO"),h("div",{style:{fontSize:12,color:"rgba(255,255,255,.5)",lineHeight:1.9}},"📧 cima@sema.ac.gov.br",h("br"),"📞 (68) 3212-0000"))
