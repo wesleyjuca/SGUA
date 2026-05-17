@@ -808,9 +808,16 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
     added += rowCount;
   }
 
-  const mergedFeeds = feeds.map((f) =>
-    feedUpdates.has(f.id) ? { ...f, sync: feedUpdates.get(f.id) } : f
-  );
+  const mergedFeeds = feeds.map((f) => {
+    if (feedUpdates.has(f.id)) {
+      return { ...f, sync: feedUpdates.get(f.id), lastStatus: 'ok', lastError: '' };
+    }
+    const warn = warnings.find(w => w.startsWith(`Falha no feed "${f.nome}"`));
+    if (warn) {
+      return { ...f, lastStatus: warn.includes('timeout') ? 'timeout' : 'erro', lastError: warn };
+    }
+    return f;
+  });
 
   return res.json({ ok: true, feeds: mergedFeeds, added, warnings, items: toInsert });
 }));
@@ -1112,36 +1119,6 @@ cron.schedule('0 6 * * *', async () => {
       } catch(e){warnings.push(f.nome+': '+e.message);}
     }
     await query("INSERT INTO app_state (key, value, updated_at) VALUES ('sgua', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",[JSON.stringify(state)]);
-    console.log(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
-  } catch(e){console.error('[CRON-RSS] Falha:',e.message);}
-}, { timezone: 'UTC' });
-
-// Cron: daily 06:00 UTC — sincronizar RSS feeds
-cron.schedule('0 6 * * *', async () => {
-  try {
-    const {rows:st} = await pool.query(`SELECT value FROM app_state WHERE key='sgua'`);
-    const state = st[0]?.value || {};
-    const feeds = (state.feeds||[]).filter(f => f.ativo && f.url);
-    if(!feeds.length){console.log('[CRON-RSS] Sem feeds ativos');return;}
-    let totalAdded=0, warnings=[];
-    for(const f of feeds){
-      try{
-        const result = await fetchFeedItems(f);
-        if(!result.ok){warnings.push(f.nome+': '+result.error);continue;}
-        const items = result.items;
-        const existTitles = new Set((state.news||[]).map(n=>n.titulo));
-        const novas = items.filter(i=>!existTitles.has(i.title)).map(i=>({
-          id: Date.now()+Math.random(), titulo:i.title, resumo:(i.description||'').slice(0,200),
-          conteudo:i.description||'', data:i.date?i.date.slice(0,10):new Date().toISOString().slice(0,10),
-          categoria:f.categoria||'Gestão', unidade:'', destaque:false, visivel:true,
-          fonte:f.nome, autor:f.nome, orgaosPresentes:[], ocupacaoAtual:0
-        }));
-        state.news = (state.news||[]).concat(novas);
-        state.feeds = (state.feeds||[]).map(fd=>fd.id===f.id?{...fd,sync:new Date().toISOString().slice(0,10)}:fd);
-        totalAdded += novas.length;
-      } catch(e){warnings.push(f.nome+': '+e.message);}
-    }
-    await pool.query(`UPDATE app_state SET value=$1 WHERE key='sgua'`,[state]);
     console.log(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
   } catch(e){console.error('[CRON-RSS] Falha:',e.message);}
 }, { timezone: 'UTC' });
