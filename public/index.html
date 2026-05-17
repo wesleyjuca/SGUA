@@ -201,41 +201,29 @@ function apiSaveState(payload){
   return _supa.from('app_state')
     .upsert({key:'sgua',value:payload,updated_at:new Date().toISOString()},{onConflict:'key'});
 }
-function apiSyncFeeds(feedsAtivos,newsExistentes){
-  if(!feedsAtivos||!feedsAtivos.length) return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Nenhum feed ativo.']});
-  var feedsResult=[];var novasNoticias=[];
-  var ativos=feedsAtivos.filter(function(f){return f.ativo;});
-  if(!ativos.length) return Promise.resolve({ok:false,added:0,feeds:[],warnings:['Nenhum feed ativo encontrado.']});
-  var promises=ativos.map(function(f){
-    var proxyUrl='https://api.allorigins.win/get?disableCache=true&url='+encodeURIComponent(f.url);
-    var ctrl=typeof AbortController!=='undefined'?new AbortController():null;
-    var timer=ctrl?setTimeout(function(){ctrl.abort();},12000):null;
-    return fetch(proxyUrl,ctrl?{signal:ctrl.signal}:{})
-      .then(function(r){if(timer)clearTimeout(timer);return r.json();})
-      .then(function(data){
-        if(!data.contents) return;
-        var parser=new DOMParser();
-        var xml=parser.parseFromString(data.contents,'text/xml');
-        var items=Array.from(xml.querySelectorAll('item,entry'));
-        var idExistentes=new Set((newsExistentes||[]).map(function(n){return n.titulo;}));
-        items.slice(0,10).forEach(function(item){
-          var titulo=((item.querySelector('title')||{}).textContent||'').trim().slice(0,120);
-          var resumo=((item.querySelector('description,summary')||{}).textContent||'').replace(/<[^>]*>/g,'').trim().slice(0,200);
-          var dataStr=((item.querySelector('pubDate,published,updated')||{}).textContent||new Date().toISOString());
-          if(!titulo||idExistentes.has(titulo)) return;
-          idExistentes.add(titulo);
-          novasNoticias.push({id:Date.now()+Math.random(),titulo:titulo,resumo:resumo,conteudo:'',
-            data:new Date(dataStr).toISOString().slice(0,10),categoria:f.categoria||'Gestão',
-            unidade:'',destaque:false,visivel:true,fonte:f.nome,autor:f.nome,orgaosPresentes:[],ocupacaoAtual:0});
-        });
-        feedsResult.push(Object.assign({},f,{sync:new Date().toISOString().slice(0,10)}));
-      }).catch(function(e){console.warn('[SGUA] Feed error:',f.nome,e);});
-  });
-  return Promise.all(promises).then(function(){
-    var newsAtualizada=(newsExistentes||[]).concat(novasNoticias);
-    return {ok:true,added:novasNoticias.length,news:newsAtualizada,feeds:feedsResult,
-      warnings:novasNoticias.length===0?['Nenhuma notícia nova encontrada.']:[]};
-  });
+async function apiSyncFeeds(feedsAtivos,newsExistentes){
+  var ativos=(feedsAtivos||[]).filter(function(f){return f.ativo;});
+  if(!ativos.length) return {ok:false,added:0,news:newsExistentes||[],feeds:feedsAtivos||[],warnings:['Nenhum feed ativo.']};
+  try {
+    var r=await fetch('/api/feeds/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feeds:ativos})});
+    var data=await r.json();
+    if(!data.ok) return {ok:false,added:0,news:newsExistentes||[],feeds:feedsAtivos||[],warnings:[data.error||'Erro no servidor de feeds.']};
+    var itens=data.items||[];
+    var titExist=new Set((newsExistentes||[]).map(function(n){return n.titulo;}));
+    var novas=itens.filter(function(i){return i.title&&!titExist.has(i.title);}).map(function(i){
+      return {id:Date.now()+Math.random(),titulo:i.title||'',resumo:(i.content||i.description||i.title||'').slice(0,200),
+        conteudo:i.content||i.description||'',data:i.pub_date?i.pub_date.slice(0,10):new Date().toISOString().slice(0,10),
+        categoria:i.categoria||i.category||'Gestão',unidade:'',destaque:false,visivel:true,
+        fonte:i.source_name||i.source||'',autor:i.source_name||i.source||'',orgaosPresentes:[],ocupacaoAtual:0};
+    });
+    var newsAtualizada=(newsExistentes||[]).concat(novas);
+    var feedsAtualizados=(data.feeds&&data.feeds.length)?data.feeds:feedsAtivos.map(function(f){
+      return ativos.find(function(a){return a.id===f.id;})?Object.assign({},f,{sync:new Date().toISOString().slice(0,10)}):f;
+    });
+    return {ok:true,added:novas.length,news:newsAtualizada,feeds:feedsAtualizados,warnings:data.warnings||[]};
+  } catch(e) {
+    return {ok:false,added:0,news:newsExistentes||[],feeds:feedsAtivos||[],warnings:[e.message||'Falha na sincronização.']};
+  }
 }
 
 

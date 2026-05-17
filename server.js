@@ -181,7 +181,9 @@ async function fetchFeedItems(feed) {
         link: isSafeUrl(rawLink) ? rawLink : '',
         date: normalizeDate(extractTag(block, 'pubDate')),
         category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
-        source: feed.nome
+        source: feed.nome,
+        source_name: feed.nome,
+        categoria: feed.categoria || 'Gestão'
       });
       if (items.length >= 8) break;
     }
@@ -202,7 +204,9 @@ async function fetchFeedItems(feed) {
           link: isSafeUrl(rawLink) ? rawLink : '',
           date: normalizeDate(extractTag(block, 'published') || extractTag(block, 'updated')),
           category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
-          source: feed.nome
+          source: feed.nome,
+          source_name: feed.nome,
+          categoria: feed.categoria || 'Gestão'
         });
         if (items.length >= 8) break;
       }
@@ -805,7 +809,7 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
     feedUpdates.has(f.id) ? { ...f, sync: feedUpdates.get(f.id) } : f
   );
 
-  return res.json({ ok: true, feeds: mergedFeeds, added, warnings });
+  return res.json({ ok: true, feeds: mergedFeeds, added, warnings, items: toInsert });
 }));
 
 // ─── Unit Photos ─────────────────────────────────────────────────────────────
@@ -1034,4 +1038,34 @@ cron.schedule('0 7 * * 0', async () => {
   } catch (err) {
     console.error('[Backup] Falha no backup automático:', err.message);
   }
+}, { timezone: 'UTC' });
+
+// Cron: daily 06:00 UTC — sincronizar RSS feeds
+cron.schedule('0 6 * * *', async () => {
+  try {
+    const {rows:st} = await pool.query(`SELECT value FROM app_state WHERE key='sgua'`);
+    const state = st[0]?.value || {};
+    const feeds = (state.feeds||[]).filter(f => f.ativo && f.url);
+    if(!feeds.length){console.log('[CRON-RSS] Sem feeds ativos');return;}
+    let totalAdded=0, warnings=[];
+    for(const f of feeds){
+      try{
+        const result = await fetchFeedItems(f);
+        if(!result.ok){warnings.push(f.nome+': '+result.error);continue;}
+        const items = result.items;
+        const existTitles = new Set((state.news||[]).map(n=>n.titulo));
+        const novas = items.filter(i=>!existTitles.has(i.title)).map(i=>({
+          id: Date.now()+Math.random(), titulo:i.title, resumo:(i.description||'').slice(0,200),
+          conteudo:i.description||'', data:i.date?i.date.slice(0,10):new Date().toISOString().slice(0,10),
+          categoria:f.categoria||'Gestão', unidade:'', destaque:false, visivel:true,
+          fonte:f.nome, autor:f.nome, orgaosPresentes:[], ocupacaoAtual:0
+        }));
+        state.news = (state.news||[]).concat(novas);
+        state.feeds = (state.feeds||[]).map(fd=>fd.id===f.id?{...fd,sync:new Date().toISOString().slice(0,10)}:fd);
+        totalAdded += novas.length;
+      } catch(e){warnings.push(f.nome+': '+e.message);}
+    }
+    await pool.query(`UPDATE app_state SET value=$1 WHERE key='sgua'`,[state]);
+    console.log(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
+  } catch(e){console.error('[CRON-RSS] Falha:',e.message);}
 }, { timezone: 'UTC' });
