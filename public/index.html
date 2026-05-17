@@ -4236,9 +4236,9 @@ function App(){
                 h("div",{style:{fontSize:11,color:C.cm}},alertasDash.length+" total · "+(sysReport&&sysReport.ts?("Relatório "+new Date(sysReport.ts).toLocaleDateString('pt-BR')):"Sem relatório"))
               ),
               (function(){
-                var feedsAtivos=(state&&state.feeds||feeds||[]).filter(function(f){return f.ativo;}).length;
-                var feedsSemSync=(state&&state.feeds||feeds||[]).filter(function(f){return f.ativo&&(!f.sync||f.sync==='—');}).length;
-                var feedsComErro=(state&&state.feeds||feeds||[]).filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length;
+                var feedsAtivos=(feeds||[]).filter(function(f){return f.ativo;}).length;
+                var feedsSemSync=(feeds||[]).filter(function(f){return f.ativo&&(!f.sync||f.sync==='—');}).length;
+                var feedsComErro=(feeds||[]).filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length;
                 return h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+(feedsComErro>0?C.rm:feedsSemSync>0?C.am:C.b1)}},
                   h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"FEEDS RSS"),
                   h("div",{style:{fontSize:32,fontWeight:800,color:feedsComErro>0?C.rm:C.cd,marginBottom:4}},feedsAtivos),
