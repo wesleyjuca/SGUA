@@ -1525,6 +1525,242 @@ function CalendarioSol(p){
   );
 }
 
+// ─── FmFd — Formulário de Feed RSS ───────────────────────────────────────────
+function FmFd(p){
+  var init=p.init||{};
+  var sF=useState({nome:init.nome||'',url:init.url||'',categoria:init.categoria||'Gestão',ativo:init.ativo!==false});
+  var f=sF[0],setF=sF[1];
+  var upd=function(k,v){setF(function(x){return Object.assign({},x,{[k]:v});});};
+  var inp={width:'100%',boxSizing:'border-box',padding:'8px 12px',border:'1px solid #DEE2D8',borderRadius:8,fontSize:13,fontFamily:'sans-serif'};
+  function save(){
+    if(!f.nome.trim()){alert('Nome obrigatório.');return;}
+    if(!f.url.trim()||!f.url.match(/^https?:\/\//)){alert('URL inválida (deve começar com http:// ou https://).');return;}
+    p.onSave(Object.assign({},init,f,{id:init.id||Date.now(),sync:init.sync||'—'}));
+  }
+  return h('div',{style:{display:'flex',flexDirection:'column',gap:14}},
+    h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Nome *'),h('input',{value:f.nome,onChange:function(e){upd('nome',e.target.value);},style:inp,placeholder:'Ex: Portal SEMA/AC'})),
+    h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'URL do Feed *'),h('input',{value:f.url,onChange:function(e){upd('url',e.target.value);},style:inp,placeholder:'https://exemplo.com/feed'})),
+    h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Categoria'),h('select',{value:f.categoria,onChange:function(e){upd('categoria',e.target.value);},style:inp},CATS.map(function(c){return h('option',{key:c,value:c},c);}))),
+    h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.ativo,onChange:function(e){upd('ativo',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Feed ativo'),
+    h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
+      h('button',{onClick:p.onClose,style:{padding:'9px 20px',borderRadius:8,border:'1px solid #DEE2D8',background:'none',fontSize:13,cursor:'pointer',color:'#1E2218'}},'Cancelar'),
+      h('button',{onClick:save,style:{padding:'9px 24px',borderRadius:8,border:'none',background:'#1A7A4A',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}},'Salvar feed')
+    )
+  );
+}
+
+// ─── FmNw — Formulário de Notícia ─────────────────────────────────────────────
+function FmNw(p){
+  var init=p.init||{};
+  var hoje=new Date().toISOString().split('T')[0];
+  var sF=useState({titulo:init.titulo||'',resumo:init.resumo||'',conteudo:init.conteudo||'',data:init.data||hoje,categoria:init.categoria||'Gestão',unidade:init.unidade||'',fonte:init.fonte||'',autor:init.autor||'',destaque:init.destaque||false,visivel:init.visivel!==false});
+  var f=sF[0],setF=sF[1];
+  var uns=p.uns||[];
+  var upd=function(k,v){setF(function(x){return Object.assign({},x,{[k]:v});});};
+  var inp={width:'100%',boxSizing:'border-box',padding:'8px 12px',border:'1px solid #DEE2D8',borderRadius:8,fontSize:13,fontFamily:'sans-serif'};
+  var lbl={fontSize:11,color:'#6B7260',display:'block',marginBottom:4};
+  function save(){
+    if(!f.titulo.trim()){alert('Título obrigatório.');return;}
+    p.onSave(Object.assign({},init,f,{id:init.id||Date.now()}));
+  }
+  return h('div',{style:{display:'flex',flexDirection:'column',gap:14}},
+    h('div',null,h('label',{style:lbl},'Título *'),h('input',{value:f.titulo,onChange:function(e){upd('titulo',e.target.value);},style:inp,placeholder:'Título da notícia'})),
+    h('div',null,h('label',{style:lbl},'Resumo'),h('textarea',{value:f.resumo,onChange:function(e){upd('resumo',e.target.value);},rows:2,style:Object.assign({},inp,{resize:'vertical'}),placeholder:'Breve descrição...'})),
+    h('div',null,h('label',{style:lbl},'Conteúdo (HTML permitido)'),h('textarea',{value:f.conteudo,onChange:function(e){upd('conteudo',e.target.value);},rows:5,style:Object.assign({},inp,{resize:'vertical'}),placeholder:'<p>Conteúdo da notícia...</p>'})),
+    h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+      h('div',null,h('label',{style:lbl},'Data'),h('input',{type:'date',value:f.data,onChange:function(e){upd('data',e.target.value);},style:inp})),
+      h('div',null,h('label',{style:lbl},'Categoria'),h('select',{value:f.categoria,onChange:function(e){upd('categoria',e.target.value);},style:inp},CATS.map(function(c){return h('option',{key:c,value:c},c);})))
+    ),
+    h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+      h('div',null,h('label',{style:lbl},'Unidade'),h('select',{value:f.unidade,onChange:function(e){upd('unidade',e.target.value);},style:inp},h('option',{value:''},'— Nenhuma'),uns.map(function(u){return h('option',{key:u.id,value:u.nome},u.nome);}))),
+      h('div',null,h('label',{style:lbl},'Fonte'),h('input',{value:f.fonte,onChange:function(e){upd('fonte',e.target.value);},style:inp,placeholder:'Ex: SEMA/AC'}))
+    ),
+    h('div',null,h('label',{style:lbl},'Autor'),h('input',{value:f.autor,onChange:function(e){upd('autor',e.target.value);},style:inp,placeholder:'Nome do autor'})),
+    h('div',{style:{display:'flex',gap:20,flexWrap:'wrap'}},
+      h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.visivel,onChange:function(e){upd('visivel',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Visível no site'),
+      h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.destaque,onChange:function(e){upd('destaque',e.target.checked);},style:{accentColor:'#C4832A',width:15,height:15}}),'Destaque')
+    ),
+    h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
+      h('button',{onClick:p.onClose,style:{padding:'9px 20px',borderRadius:8,border:'1px solid #DEE2D8',background:'none',fontSize:13,cursor:'pointer',color:'#1E2218'}},'Cancelar'),
+      h('button',{onClick:save,style:{padding:'9px 24px',borderRadius:8,border:'none',background:'#1A7A4A',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}},'Salvar notícia')
+    )
+  );
+}
+
+// ─── FmUn — Formulário de Unidade ─────────────────────────────────────────────
+function FmUn(p){
+  var init=p.init||{};
+  var sF=useState({
+    tipo:init.tipo||'CIMA',nome:init.nome||'',municipio:init.municipio||'',
+    regional:init.regional||'Vale do Acre',
+    lat:init.coords?String(init.coords.lat):'',lng:init.coords?String(init.coords.lng):'',
+    status:init.status||'ativo',taxaUso:init.taxaUso||0,ag:init.ag||0,
+    capacidade:init.capacidade||0,quartos:init.quartos||0,salas:init.salas||0,
+    cozinha:init.cozinha||false,auditorio:init.auditorio||false,visivel:init.visivel!==false,
+    descricao:init.descricao||'',historia:init.historia||'',decreto:init.decreto||'',
+    orgaosStr:(init.orgaos||[]).join(', '),foto:init.foto||''
+  });
+  var f=sF[0],setF=sF[1];
+  var upd=function(k,v){setF(function(x){return Object.assign({},x,{[k]:v});});};
+  var inp={width:'100%',boxSizing:'border-box',padding:'8px 12px',border:'1px solid #DEE2D8',borderRadius:8,fontSize:13,fontFamily:'sans-serif'};
+  var lbl={fontSize:11,color:'#6B7260',display:'block',marginBottom:4};
+  var sec={fontSize:12,fontWeight:700,color:'#6B7260',marginBottom:10,letterSpacing:.5,borderBottom:'1px solid #DEE2D8',paddingBottom:6};
+  function save(){
+    if(!f.nome.trim()||!f.municipio.trim()){alert('Nome e município são obrigatórios.');return;}
+    p.onSave(Object.assign({},init,{
+      id:init.id||Date.now(),tipo:f.tipo,nome:f.nome.trim(),municipio:f.municipio.trim(),
+      regional:f.regional,status:f.status,taxaUso:parseInt(f.taxaUso)||0,
+      ag:parseInt(f.ag)||0,capacidade:parseInt(f.capacidade)||0,
+      quartos:parseInt(f.quartos)||0,salas:parseInt(f.salas)||0,
+      cozinha:f.cozinha,auditorio:f.auditorio,visivel:f.visivel,
+      coords:{lat:parseFloat(f.lat)||0,lng:parseFloat(f.lng)||0},
+      descricao:f.descricao,historia:f.historia,decreto:f.decreto,
+      orgaos:f.orgaosStr?f.orgaosStr.split(',').map(function(s){return s.trim();}).filter(Boolean):[],
+      foto:f.foto,
+      galeria:init.galeria||[],extras:init.extras||[],
+      orgaosPresentes:init.orgaosPresentes||[],
+      ocupacaoAtual:init.ocupacaoAtual||0,ocupacoes:init.ocupacoes||[]
+    }));
+  }
+  return h('div',{style:{display:'flex',flexDirection:'column',gap:16}},
+    h('div',{style:sec},'IDENTIFICAÇÃO'),
+    h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+      h('div',null,h('label',{style:lbl},'Tipo'),h('select',{value:f.tipo,onChange:function(e){upd('tipo',e.target.value);},style:inp},h('option',{value:'CIMA'},'CIMA'),h('option',{value:'UGAI'},'UGAI'))),
+      h('div',null,h('label',{style:lbl},'Status'),h('select',{value:f.status,onChange:function(e){upd('status',e.target.value);},style:inp},h('option',{value:'ativo'},'Operacional'),h('option',{value:'manutencao'},'Manutenção'),h('option',{value:'inativo'},'Inativo')))
+    ),
+    h('div',null,h('label',{style:lbl},'Nome da Unidade *'),h('input',{value:f.nome,onChange:function(e){upd('nome',e.target.value);},style:inp,placeholder:'Ex: CIMA Rio Branco'})),
+    h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+      h('div',null,h('label',{style:lbl},'Município *'),h('input',{value:f.municipio,onChange:function(e){upd('municipio',e.target.value);},style:inp})),
+      h('div',null,h('label',{style:lbl},'Regional'),h('select',{value:f.regional,onChange:function(e){upd('regional',e.target.value);},style:inp},['Vale do Acre','Alto Acre','Vale do Juruá','Vale do Tarauacá-Envira','Vale do Purus','Baixo Acre'].map(function(r){return h('option',{key:r,value:r},r);})))
+    ),
+    h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}},
+      h('div',null,h('label',{style:lbl},'Latitude'),h('input',{type:'number',step:'0.0001',value:f.lat,onChange:function(e){upd('lat',e.target.value);},style:inp,placeholder:'-9.9746'})),
+      h('div',null,h('label',{style:lbl},'Longitude'),h('input',{type:'number',step:'0.0001',value:f.lng,onChange:function(e){upd('lng',e.target.value);},style:inp,placeholder:'-67.8082'})),
+      h('div',null,h('label',{style:lbl},'Taxa Uso (%)'),h('input',{type:'number',min:0,max:100,value:f.taxaUso,onChange:function(e){upd('taxaUso',e.target.value);},style:inp}))
+    ),
+    h('div',{style:Object.assign({},sec,{marginTop:4})},'INFRAESTRUTURA'),
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12}},
+      h('div',null,h('label',{style:lbl},'Capacidade'),h('input',{type:'number',min:0,value:f.capacidade,onChange:function(e){upd('capacidade',e.target.value);},style:inp})),
+      h('div',null,h('label',{style:lbl},'Quartos'),h('input',{type:'number',min:0,value:f.quartos,onChange:function(e){upd('quartos',e.target.value);},style:inp})),
+      h('div',null,h('label',{style:lbl},'Salas'),h('input',{type:'number',min:0,value:f.salas,onChange:function(e){upd('salas',e.target.value);},style:inp})),
+      h('div',null,h('label',{style:lbl},'Nº Órgãos'),h('input',{type:'number',min:0,value:f.ag,onChange:function(e){upd('ag',e.target.value);},style:inp}))
+    ),
+    h('div',{style:{display:'flex',gap:24,flexWrap:'wrap'}},
+      h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.cozinha,onChange:function(e){upd('cozinha',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Cozinha'),
+      h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.auditorio,onChange:function(e){upd('auditorio',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Auditório'),
+      h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.visivel,onChange:function(e){upd('visivel',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Visível no sistema')
+    ),
+    h('div',null,h('label',{style:lbl},'Órgãos (separados por vírgula)'),h('input',{value:f.orgaosStr,onChange:function(e){upd('orgaosStr',e.target.value);},style:inp,placeholder:'SEMA, IMAC, Iteracre'})),
+    h('div',null,h('label',{style:lbl},'Foto (URL)'),h('input',{value:f.foto,onChange:function(e){upd('foto',e.target.value);},style:inp,placeholder:'https://...'})),
+    h('div',null,h('label',{style:lbl},'Decreto/Ato de criação'),h('input',{value:f.decreto,onChange:function(e){upd('decreto',e.target.value);},style:inp,placeholder:'Ex: Decreto Estadual nº ...'})),
+    h('div',null,h('label',{style:lbl},'Descrição'),h('textarea',{value:f.descricao,onChange:function(e){upd('descricao',e.target.value);},rows:3,style:Object.assign({},inp,{resize:'vertical'}),placeholder:'Descrição da unidade...'})),
+    h('div',null,h('label',{style:lbl},'Histórico (opcional)'),h('textarea',{value:f.historia,onChange:function(e){upd('historia',e.target.value);},rows:3,style:Object.assign({},inp,{resize:'vertical'}),placeholder:'Histórico da unidade...'})),
+    h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
+      h('button',{onClick:p.onClose,style:{padding:'9px 20px',borderRadius:8,border:'1px solid #DEE2D8',background:'none',fontSize:13,cursor:'pointer',color:'#1E2218'}},'Cancelar'),
+      h('button',{onClick:save,style:{padding:'9px 24px',borderRadius:8,border:'none',background:'#1A7A4A',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}},'Salvar unidade')
+    )
+  );
+}
+
+// ─── AdminUsers — Gestão de Usuários ──────────────────────────────────────────
+function AdminUsers(p){
+  var users=p.users||[],setUsers=p.setUsers,curUser=p.curUser,toast2=p.toast2||function(){},setConf=p.setConf||function(){},uns=p.uns||[];
+  var PERMS=[['units','Unidades'],['news','Notícias'],['users','Usuários'],['sols','Solicitações'],['feeds','Feeds RSS'],['cfg','Configurações'],['rel','Relatórios'],['backup','Backups'],['notif','Notificações'],['ownUnits','Unidades próprias']];
+  var PERMS_DEF={units:false,news:false,users:false,sols:false,feeds:false,cfg:false,rel:false,backup:false,notif:false,ownUnits:false};
+  var sEd=useState(null);var editId=sEd[0],setEditId=sEd[1];
+  var sF=useState({nome:'',email:'',perfil:'gestor',ativo:true,senha:'',unitIds:[],permissoes:Object.assign({},PERMS_DEF)});
+  var form=sF[0],setForm=sF[1];
+  var upd=function(k,v){setForm(function(x){return Object.assign({},x,{[k]:v});});};
+  function startNew(){
+    setForm({nome:'',email:'',perfil:'gestor',ativo:true,senha:'',unitIds:[],permissoes:Object.assign({},PERMS_DEF)});
+    setEditId('new');
+  }
+  function startEdit(u){
+    setForm({nome:u.nome,email:u.email,perfil:u.perfil,ativo:u.ativo,senha:'',unitIds:u.unitIds||[],permissoes:Object.assign({},PERMS_DEF,u.permissoes||{})});
+    setEditId(u.id);
+  }
+  function saveUser(){
+    if(!form.nome.trim()){toast2('Nome obrigatório.',C.rm);return;}
+    if(!form.email.trim()){toast2('E-mail obrigatório.',C.rm);return;}
+    if(editId==='new'&&!form.senha){toast2('Senha obrigatória para novo usuário.',C.rm);return;}
+    var dup=users.find(function(u){return u.email.toLowerCase()===form.email.toLowerCase()&&u.id!==editId;});
+    if(dup){toast2('E-mail já cadastrado.',C.rm);return;}
+    var base=editId!=='new'?users.find(function(u){return u.id===editId;})||{}:{};
+    var pwdHash=form.senha?hashPwd(form.senha):base.pwdHash||'';
+    var perms=form.perfil==='admin'?{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true,backup:true,notif:true,ownUnits:false}:form.permissoes;
+    var out=Object.assign({},base,{id:editId!=='new'?editId:Date.now(),nome:form.nome.trim(),email:form.email.trim().toLowerCase(),perfil:form.perfil,ativo:form.ativo,pwdHash:pwdHash,criadoEm:base.criadoEm||new Date().toISOString().split('T')[0],unitIds:form.perfil==='gestor_unidade'?form.unitIds:[],permissoes:perms});
+    if(editId!=='new')setUsers(function(us){return us.map(function(u){return u.id===out.id?out:u;});});
+    else setUsers(function(us){return us.concat([out]);});
+    toast2('Usuário salvo.');
+    setEditId(null);
+  }
+  var inp={width:'100%',boxSizing:'border-box',padding:'8px 12px',border:'1px solid #DEE2D8',borderRadius:8,fontSize:13,fontFamily:'sans-serif'};
+  var lbl={fontSize:11,color:'#6B7260',display:'block',marginBottom:4};
+  return h('div',null,
+    h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:20}},
+      h('h2',{style:{fontSize:20,fontWeight:700,margin:0,color:C.cd}},'Gestão de usuários'),
+      h('button',{onClick:startNew,style:{padding:'9px 20px',borderRadius:9,border:'none',background:C.g2,color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}},'+ Novo usuário')
+    ),
+    editId&&h('div',{style:{background:'#fff',border:'1.5px solid '+C.g2,borderRadius:12,padding:'20px 22px',marginBottom:20}},
+      h('div',{style:{fontSize:14,fontWeight:700,color:C.g1,marginBottom:16}},(editId==='new'?'Novo usuário':'Editar: '+form.nome)),
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}},
+        h('div',null,h('label',{style:lbl},'Nome completo *'),h('input',{value:form.nome,onChange:function(e){upd('nome',e.target.value);},style:inp})),
+        h('div',null,h('label',{style:lbl},'E-mail *'),h('input',{type:'email',value:form.email,onChange:function(e){upd('email',e.target.value);},style:inp}))
+      ),
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:12}},
+        h('div',null,h('label',{style:lbl},'Perfil'),h('select',{value:form.perfil,onChange:function(e){upd('perfil',e.target.value);},style:inp},
+          ['admin','gestor','viewer','gestor_unidade'].map(function(p){return h('option',{key:p,value:p},{admin:'Administrador',gestor:'Gestor',viewer:'Visualizador',gestor_unidade:'Gestor de Unidade'}[p]);})
+        )),
+        h('div',null,h('label',{style:lbl},(editId==='new'?'Senha *':'Nova senha (opcional)')),h('input',{type:'password',value:form.senha,onChange:function(e){upd('senha',e.target.value);},style:inp,placeholder:editId==='new'?'':'Deixe em branco para manter'})),
+        h('div',{style:{paddingTop:20}},h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:form.ativo,onChange:function(e){upd('ativo',e.target.checked);},style:{accentColor:C.g2,width:15,height:15}}),'Usuário ativo'))
+      ),
+      form.perfil!=='admin'&&h('div',{style:{marginBottom:12}},
+        h('div',{style:{fontSize:11,fontWeight:700,color:'#6B7260',marginBottom:8,letterSpacing:.5}},'PERMISSÕES'),
+        h('div',{style:{display:'flex',flexWrap:'wrap',gap:8}},
+          PERMS.map(function(pp){return h('label',{key:pp[0],style:{display:'flex',alignItems:'center',gap:6,fontSize:12,cursor:'pointer',padding:'5px 10px',borderRadius:7,border:'1px solid '+(form.permissoes[pp[0]]?C.g2:C.cl),background:form.permissoes[pp[0]]?C.gx:'none',color:form.permissoes[pp[0]]?C.g2:C.cm}},
+            h('input',{type:'checkbox',checked:!!form.permissoes[pp[0]],onChange:function(e){upd('permissoes',Object.assign({},form.permissoes,{[pp[0]]:e.target.checked}));},style:{display:'none'}}),
+            pp[1]
+          );})
+        )
+      ),
+      form.perfil==='gestor_unidade'&&h('div',{style:{marginBottom:12}},
+        h('div',{style:{fontSize:11,fontWeight:700,color:'#6B7260',marginBottom:8,letterSpacing:.5}},'UNIDADES SOB GESTÃO'),
+        h('div',{style:{display:'flex',flexWrap:'wrap',gap:8}},
+          uns.map(function(u){var sel=form.unitIds.indexOf(u.id)!==-1;return h('label',{key:u.id,style:{display:'flex',alignItems:'center',gap:6,fontSize:12,cursor:'pointer',padding:'5px 10px',borderRadius:7,border:'1px solid '+(sel?C.b1:C.cl),background:sel?C.bl:'none',color:sel?C.b1:C.cm}},
+            h('input',{type:'checkbox',checked:sel,onChange:function(e){upd('unitIds',e.target.checked?form.unitIds.concat([u.id]):form.unitIds.filter(function(x){return x!==u.id;}));},style:{display:'none'}}),
+            u.nome
+          );})
+        )
+      ),
+      h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
+        h('button',{onClick:function(){setEditId(null);},style:{padding:'9px 20px',borderRadius:8,border:'1px solid '+C.cl,background:'none',fontSize:13,cursor:'pointer',color:C.cd}},'Cancelar'),
+        h('button',{onClick:saveUser,style:{padding:'9px 24px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}},'Salvar usuário')
+      )
+    ),
+    h('div',{style:{display:'flex',flexDirection:'column',gap:8}},
+      users.map(function(u){
+        var pc=PC[u.perfil]||[C.cm,C.cx];
+        return h(Card,{key:u.id,style:{padding:'14px 16px',opacity:u.ativo?1:.6}},
+          h('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}},
+            h('div',null,
+              h('div',{style:{display:'flex',gap:6,marginBottom:5,flexWrap:'wrap',alignItems:'center'}},
+                h(Pill,{t:PL[u.perfil]||u.perfil,c:pc[0],b:pc[1],s:10}),
+                !u.ativo&&h(Pill,{t:'Inativo',c:C.rm,b:C.rl,s:10})
+              ),
+              h('div',{style:{fontSize:14,fontWeight:700,color:C.cd}},u.nome),
+              h('div',{style:{fontSize:11,color:C.cm,marginTop:2}},u.email+(u.criadoEm?' · Desde '+u.criadoEm:''))
+            ),
+            h('div',{style:{display:'flex',gap:6,flexWrap:'wrap'}},
+              h('button',{onClick:function(){startEdit(u);},style:{padding:'5px 11px',borderRadius:7,border:'1px solid '+C.cl,background:'none',color:C.cd,fontSize:11,cursor:'pointer'}},'Editar'),
+              curUser&&u.id!==curUser.id&&h('button',{onClick:function(){setConf({nome:u.nome,fn:function(){setUsers(function(us){return us.filter(function(x){return x.id!==u.id;});}); toast2('Usuário removido.',C.am);}});},style:{padding:'5px 11px',borderRadius:7,border:'1px solid '+C.rm,background:C.rl,color:C.rm,fontSize:11,cursor:'pointer'}},'Excluir')
+            )
+          )
+        );
+      })
+    )
+  );
+}
+
 // ─── LOGIN MODAL ──────────────────────────────────────────────────────────────
 function TelaLogin(p){
   var users=p.users,setUsers=p.setUsers,pers=p.pers||PERS_DEF,onLogin=p.onLogin,onClose=p.onClose,onAuthFail=p.onAuthFail||function(){},dbLoading=p.dbLoading||false,go=p.go||function(){};
