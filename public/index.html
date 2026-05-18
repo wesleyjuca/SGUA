@@ -1508,6 +1508,23 @@ function SecNoticias(p){
   );
 }
 
+// ─── CALENDÁRIO DE SOLICITAÇÃO ────────────────────────────────────────────────
+function CalendarioSol(p){
+  var hoje=new Date().toISOString().split('T')[0];
+  return h('div',{style:{position:'relative'}},
+    h('input',{
+      type:'date',
+      value:p.selectedDate||'',
+      min:p.minDate||hoje,
+      onChange:function(e){if(p.onSelectDate)p.onSelectDate(e.target.value);},
+      style:{width:'100%',boxSizing:'border-box',padding:'9px 12px',
+             border:'1.5px solid #DEE2D8',borderRadius:9,fontSize:13,
+             fontFamily:'sans-serif',background:'#fff',cursor:'pointer',outline:'none',
+             color:'#1E2218'}
+    })
+  );
+}
+
 // ─── LOGIN MODAL ──────────────────────────────────────────────────────────────
 function TelaLogin(p){
   var users=p.users,setUsers=p.setUsers,pers=p.pers||PERS_DEF,onLogin=p.onLogin,onClose=p.onClose,onAuthFail=p.onAuthFail||function(){},dbLoading=p.dbLoading||false,go=p.go||function(){};
@@ -3194,6 +3211,7 @@ function App(){
   var pers=sPrs[0],setPers=sPrs[1];
   var sNo=useState([]);var notifs=sNo[0],setNotifs=sNo[1];
   var sNO=useState(false);var notifOpen=sNO[0],setNotifOpen=sNO[1];
+  var sNav=useState(false);var navOpen=sNav[0],setNavOpen=sNav[1];
   var _appStart=useRef(Date.now());
 
   // Recompute palette reactively when pers changes
@@ -3376,7 +3394,10 @@ function App(){
         });
       });
       var errosCount=resp.warnings?resp.warnings.length:0;
-      if(errosCount>0) toast2('Sincronizado: '+(resp.added||0)+' novas. '+errosCount+' feed(s) com erro.',C.am);
+      if(errosCount>0){
+        var nomes=resp.warnings.map(function(w){var m=w.match(/feed "([^"]+)"/);return m?m[1]:'?';}).join(', ');
+        toast2('Sincronizado: '+(resp.added||0)+' novas. Erro em: '+nomes,C.am);
+      }
       else toast2('Sincronização concluída. '+(resp.added||0)+' notícia(s) importada(s).');
     }).catch(function(e){
       toast2("Erro na sincronização: "+(e&&e.message?e.message:'desconhecido'),C.rm);
@@ -3514,7 +3535,6 @@ function App(){
   }
 
   // ── Navbar com hamburger para mobile ────────────────────────────────────
-  var sNavOpen=useState(false);var navOpen=sNavOpen[0],setNavOpen=sNavOpen[1];
   function Navbar(){
     return h("nav",{style:{background:C.g0,position:"sticky",top:0,zIndex:100}},
       h("div",{style:{background:C.g1,padding:"4px 20px"}},
@@ -4093,6 +4113,17 @@ function App(){
               h("button",{onClick:function(){setModal({t:"fd",d:null});},style:{padding:"9px 20px",borderRadius:9,border:"none",background:C.g2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"+ Novo feed")
             )
           ),
+          (function(){
+            var okCount=feeds.filter(function(f){return f.lastStatus==='ok';}).length;
+            var errCount=feeds.filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length;
+            var lastSync=feeds.map(function(f){return f.sync;}).filter(function(s){return s&&s!=='—';}).sort().reverse()[0];
+            return h("div",{style:{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14,padding:"10px 14px",background:C.cx,borderRadius:10,border:"1px solid "+C.cl,fontSize:12}},
+              h("span",{style:{color:C.cm}},"Total: "+feeds.length+" feeds"),
+              h("span",{style:{color:C.g2,fontWeight:600}},"✓ "+okCount+" OK"),
+              errCount>0&&h("span",{style:{color:C.rm,fontWeight:600}},"✗ "+errCount+" com erro"),
+              lastSync&&h("span",{style:{color:C.cm}},"Último sync: "+lastSync)
+            );
+          })(),
           h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
             feeds.map(function(f){
               return h(Card,{key:f.id,style:{padding:"14px 16px"}},
