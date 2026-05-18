@@ -5,6 +5,7 @@ const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
 const cron = require('node-cron');
+let nodemailer; try { nodemailer = require('nodemailer'); } catch(e) { nodemailer = null; }
 const { Pool } = require('pg');
 
 const app = express();
@@ -1038,6 +1039,83 @@ app.put('/api/suggestions/:id', asyncRoute(async (req, res) => {
     await pool.query('UPDATE sgua_suggestions SET '+fields.join(',')+' WHERE id=$'+vals.length, vals);
     res.json({ ok: true });
   } catch(e) { res.json({ ok: false, error: e.message }); }
+}));
+
+// ─── E-mail ───────────────────────────────────────────────────────────────────
+
+function createTransporter() {
+  if (!nodemailer) return null;
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  if (!host || !user || !pass) return null;
+  return nodemailer.createTransport({
+    host,
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false }
+  });
+}
+
+app.get('/api/email/config', (_req, res) => {
+  const configured = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  const host = process.env.SMTP_HOST || '';
+  const from = process.env.SMTP_FROM || process.env.SMTP_USER || '';
+  res.json({
+    ok: true,
+    configured,
+    host: configured ? host.replace(/(.{3}).+(.{3})/, '$1***$2') : '',
+    from: configured ? from.replace(/(.{2}).+(@.+)/, '$1***$2') : ''
+  });
+});
+
+app.post('/api/email/test', asyncRoute(async (req, res) => {
+  const to = sanitizeText((req.body||{}).to || '', 200);
+  if (!to || !to.includes('@')) return res.json({ ok: false, error: 'E-mail inválido.' });
+  const transporter = createTransporter();
+  if (!transporter) return res.json({ ok: false, error: 'SMTP não configurado. Defina SMTP_HOST, SMTP_USER, SMTP_PASS no .env do servidor.' });
+  const t0 = Date.now();
+  try {
+    const info = await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      subject: 'SGUA — Teste de envio de e-mail',
+      html: '<p>Este é um e-mail de teste enviado pelo sistema SGUA.</p><p><small>'+new Date().toLocaleString('pt-BR')+'</small></p>'
+    });
+    res.json({ ok: true, messageId: info.messageId, ms: Date.now() - t0 });
+  } catch(e) {
+    res.json({ ok: false, error: e.message });
+  }
+}));
+
+app.post('/api/email/send', asyncRoute(async (req, res) => {
+  const body = req.body || {};
+  const to = sanitizeText(body.to || '', 200);
+  const subject = sanitizeText(body.subject || 'Notificação SGUA', 200);
+  const html = sanitizeText(body.html || body.body || '', 5000);
+  if (!to || !to.includes('@')) return res.json({ ok: false, error: 'E-mail inválido.' });
+  if (!html) return res.json({ ok: false, error: 'Conteúdo vazio.' });
+  const transporter = createTransporter();
+  if (!transporter) return res.json({ ok: false, error: 'SMTP não configurado.' });
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const info = await transporter.sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to, subject, html
+      });
+      await query(
+        'INSERT INTO sgua_notifications (user_id, tipo, canal, titulo, corpo) VALUES ($1,$2,$3,$4,$5)',
+        [body.user_id || null, 'email', 'email', subject.slice(0,200), ('Enviado para: '+to).slice(0,600)]
+      ).catch(() => {});
+      return res.json({ ok: true, messageId: info.messageId, attempt });
+    } catch(e) {
+      lastErr = e.message;
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000 * attempt));
+    }
+  }
+  res.json({ ok: false, error: lastErr, attempts: 3 });
 }));
 
 // ─── SPA fallback (somente rotas não-API) ─────────────────────────────────────
