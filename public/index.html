@@ -1901,6 +1901,33 @@ function AdminPersonalizacao(p){
   );
 }
 
+function AdminSugestoes(p){
+  var C=p.C,pers=p.pers,setPers=p.setPers,toast2=p.toast2||function(){},uns=p.uns||[],sols=p.sols||[],feeds=p.feeds||[];
+  var sItems=useState([]);var items=sItems[0],setItems=sItems[1];
+  var sLoad=useState(false);var loading=sLoad[0],setLoading=sLoad[1];
+  var sObs=useState({});var obsMap=sObs[0],setObsMap=sObs[1];
+  var sFiltSt=useState('todos');var filtSt=sFiltSt[0],setFiltSt=sFiltSt[1];
+  var sFiltTp=useState('todos');var filtTp=sFiltTp[0],setFiltTp=sFiltTp[1];
+  useEffect(function(){fetchSugs();},[]);
+  function fetchSugs(){
+    setLoading(true);
+    fetch('/api/suggestions').then(function(r){return r.json();}).then(function(d){
+      setItems(d.items||[]);setLoading(false);
+    }).catch(function(){setLoading(false);});
+  }
+  function gerarSugestoes(){
+    var sugs=[];
+    var existentes=items.filter(function(i){return i.status!=='descartada'&&i.status!=='ignorada'&&i.status!=='aplicada'&&i.status!=='implementada';});
+    var jaTemTipo=function(tipo){return existentes.some(function(e){return e.tipo===tipo;});};
+    if(!uns.length&&!jaTemTipo('setup')) sugs.push({texto:'Cadastre unidades ambientais para começar a usar o sistema.',tipo:'setup',prioridade:'alta',impacto:'Habilita todo o fluxo de gestão'});
+    if(uns.filter(function(u){return !u.capacidade;}).length>0&&!jaTemTipo('dados')){var semCap=uns.filter(function(u){return !u.capacidade;}).length;sugs.push({texto:'Defina a capacidade de '+semCap+' unidade(s) sem capacidade configurada.',tipo:'dados',prioridade:'media',impacto:'Melhora métricas de ocupação e alertas'});}
+    if(sols.filter(function(s){return s.st==='pendente';}).length>3&&!jaTemTipo('gestao')){var np=sols.filter(function(s){return s.st==='pendente';}).length;sugs.push({texto:np+' solicitações pendentes aguardam análise.',tipo:'gestao',prioridade:'alta',impacto:'Reduz tempo de resposta'});}
+    if(feeds&&feeds.filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length>0&&!jaTemTipo('feed_erro')){var fe=feeds.filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length;sugs.push({texto:fe+' feed(s) RSS com erro na última sincronização.',tipo:'feed_erro',prioridade:'media',impacto:'Afeta atualização de notícias'});}
+    if((!pers||!pers.logo)&&!jaTemTipo('visual')) sugs.push({texto:'Configure o logo da organização em Personalização para melhorar a identidade visual.',tipo:'visual',prioridade:'baixa',impacto:'Melhora identidade visual'});
+    if(sugs.length===0){toast2('Nenhuma nova sugestão — sistema em boa forma!');return;}
+    Promise.all(sugs.map(function(s){
+      return fetch('/api/suggestions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});
+    })).then(function(){fetchSugs();toast2(sugs.length+' sugestão(ões) gerada(s).');});
   }
   function updateStatus(id,status){
     fetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})})
@@ -1935,8 +1962,8 @@ function AdminPersonalizacao(p){
         h('button',{onClick:gerarSugestoes,style:{padding:'7px 14px',background:C.g1,color:'#fff',border:'none',borderRadius:6,cursor:'pointer',fontSize:12}},'💡 Gerar Sugestões')
       )
     ),
-    h('div',{style:{display:'flex',gap:4,marginBottom:8,flexWrap:'wrap',alignItems:'center'}},
-      h('span',{style:{fontSize:11,color:C.cm,marginRight:2}},'Status:'),
+    h('div',{style:{display:'flex',gap:4,marginBottom:12,flexWrap:'wrap',alignItems:'center'}},
+      h('span',{style:{fontSize:11,color:C.cm}},'Status:'),
       btnFilt('todos','Todos',filtSt,setFiltSt),
       btnFilt('sugerida','Sugeridas',filtSt,setFiltSt),
       btnFilt('pendente','Pendentes',filtSt,setFiltSt),
@@ -1945,12 +1972,12 @@ function AdminPersonalizacao(p){
       btnFilt('descartada','Descartadas',filtSt,setFiltSt)
     ),
     tipos.length>1&&h('div',{style:{display:'flex',gap:4,marginBottom:12,flexWrap:'wrap',alignItems:'center'}},
-      h('span',{style:{fontSize:11,color:C.cm,marginRight:2}},'Tipo:'),
+      h('span',{style:{fontSize:11,color:C.cm}},'Tipo:'),
       btnFilt('todos','Todos',filtTp,setFiltTp),
       tipos.map(function(t){return btnFilt(t,t,filtTp,setFiltTp);})
     ),
     loading?h('div',{style:{textAlign:'center',padding:20,color:C.cm}},'Carregando...'):
-    filtrados.length===0?h('div',{style:{textAlign:'center',padding:32,color:C.cm,background:C.cx,borderRadius:12}},'Nenhuma sugestão com os filtros. Clique em "Gerar Sugestões" para analisar.'):
+    filtrados.length===0?h('div',{style:{textAlign:'center',padding:32,color:C.cm,background:C.cx,borderRadius:12}},'Nenhuma sugestão com os filtros aplicados. Clique em "Gerar Sugestões" para analisar.'):
     h('div',{style:{display:'flex',flexDirection:'column',gap:10}},
       filtrados.map(function(item){
         var pc=STATUS_COLORS[item.status]||STATUS_COLORS.pendente;
@@ -1983,7 +2010,6 @@ function AdminPersonalizacao(p){
     )
   );
 }
-
 
 function AdminMonitor(p){
   var log=p.log,setLog=p.setLog,dbOffline=p.dbOffline;
