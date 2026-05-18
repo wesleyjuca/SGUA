@@ -55,6 +55,20 @@ code{font-family:monospace}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.6.0/jspdf.plugin.autotable.min.js"></script>
 <script>
 
+// ── PURE JS FALLBACK: remove loading screen after 4s regardless of React ─────
+(function(){
+  var _lt=setTimeout(function(){
+    var el=document.getElementById('app-loading');
+    if(el){el.style.transition='opacity .4s';el.style.opacity='0';
+      setTimeout(function(){if(el&&el.parentNode)el.parentNode.removeChild(el);},500);}
+  },4000);
+  window._sguaHideLoad=function(){
+    clearTimeout(_lt);
+    var el=document.getElementById('app-loading');
+    if(el){el.style.transition='opacity .4s';el.style.opacity='0';
+      setTimeout(function(){if(el&&el.parentNode)el.parentNode.removeChild(el);},500);}
+  };
+})();
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SEGURANÇA — SHA-256 puro JS (sync) · sem dependências externas
@@ -2937,6 +2951,9 @@ function PgIndicadores(p){
       tab==='graficos'&&renderGraficos(),
       tab==='relatorios'&&renderRelatorios(),
       tab==='solicitacoes'&&renderSolicitacoes()
+    )
+  );
+}
 function AdminAlertas(p){
   var C=p.C,pers=p.pers,setPers=p.setPers,sysReport=p.sysReport,toast2=p.toast2;
   var alertasDash=p.alertasDash||[];
@@ -3064,14 +3081,6 @@ function AdminAlertas(p){
             h('input',{type:'number',value:r.threshold,min:1,max:r.tipo==='ocupacao_critica'?100:365,
               onChange:function(e){updateRule(r.id,'threshold',parseInt(e.target.value)||r.threshold);},
               style:{width:80,padding:'5px 8px',border:'1px solid '+C.cl,borderRadius:7,fontSize:12}}),
-            h('span',{style:{fontSize:12,color:C.cm}},r.tipo==='ocupacao_critica'?'% de ocupação':'dias sem ação')
-          )
-        );
-      })
-    )
-  );
-}
-
             h('span',{style:{fontSize:12,color:C.cm}},r.tipo==='ocupacao_critica'?'% de ocupação':'dias sem ação')
           )
         );
@@ -3282,13 +3291,13 @@ function App(){
     });
   },[remoteReady,uns,news,feeds,sols,users,secs,pers]);
   useEffect(function(){
-    var tid=setTimeout(function(){var el=document.getElementById("app-loading");if(el){el.style.transition="opacity .4s";el.style.opacity="0";setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},500);}},5000);
+    // React is mounted — clear the pure-JS fallback and hide immediately after 2s if remoteReady hasn't fired
+    var tid=setTimeout(function(){if(window._sguaHideLoad)window._sguaHideLoad();},2000);
     return function(){clearTimeout(tid);};
   },[]);
   useEffect(function(){
     if(!remoteReady) return;
-    var el=document.getElementById("app-loading");
-    if(el){el.style.transition="opacity .4s";el.style.opacity="0";setTimeout(function(){if(el.parentNode)el.parentNode.removeChild(el);},500);}
+    if(window._sguaHideLoad)window._sguaHideLoad();
   },[remoteReady]);
   useEffect(function(){
     function onResize(){setVpWidth(window.innerWidth||1280);}
