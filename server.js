@@ -3,12 +3,36 @@
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const cron = require('node-cron');
 let nodemailer; try { nodemailer = require('nodemailer'); } catch(e) { nodemailer = null; }
 const { Pool } = require('pg');
 
 const app = express();
+
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {ok: false, error: 'Muitas requisições. Tente novamente em 15 minutos.'}
+});
+app.use('/api/', limiter);
+
+const writeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: {ok: false, error: 'Limite de escrita atingido.'}
+});
+app.use(['/api/state', '/api/users', '/api/units'], writeLimiter);
+
 const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const UPLOADS_DIR = path.join(PUBLIC_DIR, 'uploads', 'photos');
