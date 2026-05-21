@@ -991,9 +991,16 @@ app.put('/api/reg-requests/:id', asyncRoute(async (req, res) => {
 // ─── Notificações ─────────────────────────────────────────────────────────────
 
 app.get('/api/notifications', asyncRoute(async (req, res) => {
-  const userId = parsePositiveId(req.query.user_id);
-  if (!userId) return res.status(400).json({ ok: false, error: 'user_id inválido.' });
-  const rows = await query('SELECT * FROM sgua_notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50', [userId]);
+  const rawId = req.query.user_id;
+  const parsed = rawId !== undefined ? Number(rawId) : null;
+  let rows;
+  if (parsed === 0 || parsed === null) {
+    rows = await query('SELECT * FROM sgua_notifications ORDER BY created_at DESC LIMIT 100');
+  } else {
+    if (!Number.isInteger(parsed) || parsed <= 0)
+      return res.status(400).json({ ok: false, error: 'user_id inválido.' });
+    rows = await query('SELECT * FROM sgua_notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50', [parsed]);
+  }
   res.json({ ok: true, data: rows });
 }));
 
@@ -1055,6 +1062,12 @@ app.put('/api/suggestions/:id', asyncRoute(async (req, res) => {
     const body = req.body || {};
     const fields = [];
     const vals = [];
+    const VALID_STATUS=['pendente','sugerida','em-analise','aplicada','implementada','descartada','ignorada'];
+    const VALID_PRIO=['alta','media','baixa'];
+    if(body.status!==undefined&&!VALID_STATUS.includes(body.status))
+      return res.status(400).json({ok:false,error:'Status inválido.'});
+    if(body.prioridade!==undefined&&!VALID_PRIO.includes(body.prioridade))
+      return res.status(400).json({ok:false,error:'Prioridade inválida.'});
     if(body.status !== undefined){ fields.push('status=$'+(fields.length+1)); vals.push(sanitizeText(body.status,20)); }
     if(body.prioridade !== undefined){ fields.push('prioridade=$'+(fields.length+1)); vals.push(sanitizeText(body.prioridade,20)); }
     if(body.obs !== undefined){ fields.push('obs=$'+(fields.length+1)); vals.push(sanitizeText(body.obs,500)); }

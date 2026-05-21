@@ -1351,7 +1351,7 @@ function Modal(p){
 }
 
 function Toast(p){
-  useEffect(function(){var t=setTimeout(p.onDone,3000);return function(){clearTimeout(t);};});
+  useEffect(function(){var t=setTimeout(p.onDone,3000);return function(){clearTimeout(t);};},[]);
   return h("div",{style:{position:"fixed",top:16,right:16,zIndex:9999,background:"#fff",border:"1.5px solid "+(p.color||C.g2),borderRadius:10,padding:"10px 18px",fontSize:13,color:p.color||C.g2,boxShadow:"0 2px 12px rgba(0,0,0,.12)"}},p.msg);
 }
 
@@ -3386,6 +3386,18 @@ var _EB=class ErrorBoundary extends React.Component{
   }
 };
 
+var TabEB=class TabErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(e){return{err:e};}
+  render(){
+    if(this.state.err){var self=this;return h('div',{style:{padding:32,color:'#A32D2D',textAlign:'center',fontFamily:'sans-serif'}},
+      h('p',{style:{fontSize:15,marginBottom:12}},'⚠️ Erro neste painel.'),
+      h('button',{onClick:function(){self.setState({err:null});},style:{padding:'6px 16px',borderRadius:8,border:'none',background:'#f3f4f1',cursor:'pointer',fontSize:13}},'Tentar novamente')
+    );}
+    return this.props.children;
+  }
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // I18N — dicionário multilíngue (PT/EN/ES)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3449,10 +3461,7 @@ function App(){
   var sCf=useState(null);var conf=sCf[0],setConf=sCf[1];
   var sSe=useState(function(){return lsGet("secs",{hero:true,alert:true,bloco:true,mapa:true,dash:true,acesso:true,news:true});});
   var secs=sSe[0],setSecs=sSe[1];
-  var sSo=useState(function(){return lsGet("sols",[
-    {id:"SOL-001",sol:"Maria Silva",org:"SESACRE",un:"CIMA Rio Branco",ev:"Capacitação",dt:"2026-04-10",st:"pendente"},
-    {id:"SOL-002",sol:"João Melo",org:"SEAGRI",un:"CIMA Feijó",ev:"Reunião",dt:"2026-04-05",st:"aprovada"}
-  ]);});var sols=sSo[0],setSols=sSo[1];
+  var sSo=useState(function(){return lsGet("sols",[]);});var sols=sSo[0],setSols=sSo[1];
   var sSf=useState({nome:"",org:"",email:"",un:"",ev:"",dt:"",dtFim:"",semPrevisao:false,hr:"",just:""});var sf=sSf[0],setSf=sSf[1];
   var sSv=useState(false);var senv=sSv[0],setSenv=sSv[1];
   var sRdy=useState(false);var remoteReady=sRdy[0],setRemoteReady=sRdy[1];
@@ -4431,12 +4440,12 @@ function App(){
 
         atab==="cfg"&&canDo("cfg")&&(setAtab&&setAtab("pers"),null),
 
-        atab==="rel"&&canDo("rel")&&h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2,pers:pers}),
+        atab==="rel"&&canDo("rel")&&h(TabEB,{key:"rel"},h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2,pers:pers})),
 
-        atab==="monitor"&&h(AdminMonitor,{log:monLog,setLog:setMonLog,dbOffline:dbOffline,health:healthScore,healthLabel:healthLabel,healthColor:healthColor,uptimeMin:uptimeMin,lastDbMs:lastDbMs,CD:CD,sysReport:sysReport,setSysReport:setSysReport,pers:pers,setPers:setPers,uns:uns,sols:sols,toast2:toast2,alertasDash:alertasDash,feeds:feeds}),
+        atab==="monitor"&&h(TabEB,{key:"monitor"},h(AdminMonitor,{log:monLog,setLog:setMonLog,dbOffline:dbOffline,health:healthScore,healthLabel:healthLabel,healthColor:healthColor,uptimeMin:uptimeMin,lastDbMs:lastDbMs,CD:CD,sysReport:sysReport,setSysReport:setSysReport,pers:pers,setPers:setPers,uns:uns,sols:sols,toast2:toast2,alertasDash:alertasDash,feeds:feeds})),
         atab==="pers"&&canDo("cfg")&&h(AdminPersonalizacao,{pers:pers,setPers:setPers,C:C,toast2:toast2,isMobile:isMobile}),
         atab==="backup"&&canDo("backup")&&h(AdminBackups,{toast2:toast2,C:C}),
-        atab==="notif"&&canDo("notif")&&h(AdminNotificacoes,{pers:pers,setPers:setPers,C:C,toast2:toast2,curUser:curUser}),
+        atab==="notif"&&canDo("notif")&&h(TabEB,{key:"notif"},h(AdminNotificacoes,{pers:pers,setPers:setPers,C:C,toast2:toast2,curUser:curUser})),
         atab==="alertas"&&canDo("cfg")&&h(AdminAlertas,{pers:pers,setPers:setPers,sysReport:sysReport,C:C,toast2:toast2,alertasDash:alertasDash}),
         atab==="regreqs"&&canDo("users")&&h(AdminRegReqs,{toast2:toast2,C:C,curUser:curUser,setUsers:setUsers,users:users}),
 
