@@ -882,6 +882,11 @@ app.post('/api/units/:id/photos', upload.single('photo'), asyncRoute(async (req,
   res.status(201).json({ ok: true, data });
 }));
 
+app.post('/api/upload/photo', upload.single('photo'), asyncRoute(async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: 'Nenhuma imagem enviada.' });
+  res.json({ ok: true, url: '/uploads/photos/' + req.file.filename });
+}));
+
 app.delete('/api/photos/:id', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });

@@ -256,7 +256,7 @@ async function apiSyncFeeds(feedsAtivos,newsExistentes){
         categoria:i.categoria||i.category||'Gestão',unidade:'',destaque:false,visivel:true,
         fonte:i.source_name||i.source||'',autor:i.source_name||i.source||'',orgaosPresentes:[],ocupacaoAtual:0};
     });
-    var newsAtualizada=(newsExistentes||[]).concat(novas);
+    var newsAtualizada=novas.concat(newsExistentes||[]);
     var feedsAtualizados=(data.feeds&&data.feeds.length)?data.feeds:feedsAtivos.map(function(f){
       return ativos.find(function(a){return a.id===f.id;})?Object.assign({},f,{sync:new Date().toISOString().slice(0,10)}):f;
     });
@@ -1620,13 +1620,28 @@ function FmUn(p){
     capacidade:init.capacidade||0,quartos:init.quartos||0,salas:init.salas||0,
     cozinha:init.cozinha||false,auditorio:init.auditorio||false,visivel:init.visivel!==false,
     descricao:init.descricao||'',historia:init.historia||'',decreto:init.decreto||'',
-    orgaosStr:(init.orgaos||[]).join(', '),foto:init.foto||''
+    orgaosStr:(init.orgaos||[]).join(', '),foto:init.foto||'',
+    galeria:init.galeria||[],uploadingFoto:false,uploadingGal:false
   });
   var f=sF[0],setF=sF[1];
   var upd=function(k,v){setF(function(x){return Object.assign({},x,{[k]:v});});};
   var inp={width:'100%',boxSizing:'border-box',padding:'8px 12px',border:'1px solid #DEE2D8',borderRadius:8,fontSize:13,fontFamily:'sans-serif'};
   var lbl={fontSize:11,color:'#6B7260',display:'block',marginBottom:4};
   var sec={fontSize:12,fontWeight:700,color:'#6B7260',marginBottom:10,letterSpacing:.5,borderBottom:'1px solid #DEE2D8',paddingBottom:6};
+  function uploadFoto(file,campo){
+    if(!file)return;
+    upd(campo==='foto'?'uploadingFoto':'uploadingGal',true);
+    var fd=new FormData();fd.append('photo',file);
+    fetch('/api/upload/photo',{method:'POST',body:fd})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d.ok){if(campo==='foto')upd('foto',d.url);
+          else setF(function(x){return Object.assign({},x,{galeria:x.galeria.concat([{url:d.url,leg:''}]),uploadingGal:false});});}
+        else{alert('Erro no upload: '+d.error);upd(campo==='foto'?'uploadingFoto':'uploadingGal',false);}
+      })
+      .catch(function(){alert('Falha no upload.');upd(campo==='foto'?'uploadingFoto':'uploadingGal',false);})
+      .finally(function(){if(campo==='foto')upd('uploadingFoto',false);});
+  }
   function save(){
     if(!f.nome.trim()||!f.municipio.trim()){alert('Nome e município são obrigatórios.');return;}
     p.onSave(Object.assign({},init,{
@@ -1639,7 +1654,7 @@ function FmUn(p){
       descricao:f.descricao,historia:f.historia,decreto:f.decreto,
       orgaos:f.orgaosStr?f.orgaosStr.split(',').map(function(s){return s.trim();}).filter(Boolean):[],
       foto:f.foto,
-      galeria:init.galeria||[],extras:init.extras||[],
+      galeria:f.galeria,extras:init.extras||[],
       orgaosPresentes:init.orgaosPresentes||[],
       ocupacaoAtual:init.ocupacaoAtual||0,ocupacoes:init.ocupacoes||[]
     }));
@@ -1673,10 +1688,38 @@ function FmUn(p){
       h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.visivel,onChange:function(e){upd('visivel',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Visível no sistema')
     ),
     h('div',null,h('label',{style:lbl},'Órgãos (separados por vírgula)'),h('input',{value:f.orgaosStr,onChange:function(e){upd('orgaosStr',e.target.value);},style:inp,placeholder:'SEMA, IMAC, Iteracre'})),
-    h('div',null,h('label',{style:lbl},'Foto (URL)'),h('input',{value:f.foto,onChange:function(e){upd('foto',e.target.value);},style:inp,placeholder:'https://...'})),
+    h('div',null,
+      h('label',{style:lbl},'Foto Principal'),
+      h('div',{style:{display:'flex',gap:8,alignItems:'center'}},
+        h('input',{value:f.foto,onChange:function(e){upd('foto',e.target.value);},style:Object.assign({},inp,{flex:1}),placeholder:'Cole uma URL ou use o botão 📷'}),
+        h('label',{style:{padding:'7px 14px',borderRadius:8,border:'1px solid #2E9E63',background:'#F0FAF5',color:'#1A7A4A',fontSize:12,cursor:f.uploadingFoto?'not-allowed':'pointer',fontWeight:600,whiteSpace:'nowrap',opacity:f.uploadingFoto?0.6:1}},
+          f.uploadingFoto?'Enviando…':'📷 Upload',
+          h('input',{type:'file',accept:'image/*',style:{display:'none'},disabled:f.uploadingFoto,onChange:function(e){uploadFoto(e.target.files&&e.target.files[0],'foto');e.target.value='';}})
+        )
+      ),
+      f.foto&&h('img',{src:f.foto,alt:'',style:{marginTop:8,height:80,borderRadius:8,objectFit:'cover',border:'1px solid #DEE2D8'}})
+    ),
     h('div',null,h('label',{style:lbl},'Decreto/Ato de criação'),h('input',{value:f.decreto,onChange:function(e){upd('decreto',e.target.value);},style:inp,placeholder:'Ex: Decreto Estadual nº ...'})),
     h('div',null,h('label',{style:lbl},'Descrição'),h('textarea',{value:f.descricao,onChange:function(e){upd('descricao',e.target.value);},rows:3,style:Object.assign({},inp,{resize:'vertical'}),placeholder:'Descrição da unidade...'})),
     h('div',null,h('label',{style:lbl},'Histórico (opcional)'),h('textarea',{value:f.historia,onChange:function(e){upd('historia',e.target.value);},rows:3,style:Object.assign({},inp,{resize:'vertical'}),placeholder:'Histórico da unidade...'})),
+    h('div',null,
+      h('div',{style:Object.assign({},sec,{marginTop:4})},'GALERIA DE FOTOS'),
+      f.galeria.length>0&&h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:10,marginBottom:12}},
+        f.galeria.map(function(foto,idx){
+          return h('div',{key:idx,style:{position:'relative',borderRadius:8,overflow:'hidden',border:'1px solid #DEE2D8'}},
+            h('img',{src:foto.url,alt:foto.leg||'',style:{width:'100%',height:90,objectFit:'cover',display:'block'}}),
+            h('input',{value:foto.leg||'',onChange:function(e){var g=f.galeria.slice();g[idx]=Object.assign({},g[idx],{leg:e.target.value});upd('galeria',g);},
+              style:{width:'100%',boxSizing:'border-box',padding:'4px 6px',fontSize:11,border:'none',borderTop:'1px solid #DEE2D8',fontFamily:'sans-serif'},placeholder:'Legenda...'}),
+            h('button',{onClick:function(){upd('galeria',f.galeria.filter(function(_,i){return i!==idx;}));},
+              style:{position:'absolute',top:4,right:4,background:'rgba(0,0,0,.55)',color:'#fff',border:'none',borderRadius:'50%',width:22,height:22,fontSize:13,cursor:'pointer',lineHeight:'22px',textAlign:'center',padding:0}},'×')
+          );
+        })
+      ),
+      h('label',{style:{display:'inline-flex',alignItems:'center',gap:8,padding:'8px 16px',borderRadius:8,border:'1px dashed #2E9E63',color:f.uploadingGal?'#6B7260':'#1A7A4A',fontSize:12,cursor:f.uploadingGal?'not-allowed':'pointer',background:'#F0FAF5',opacity:f.uploadingGal?0.6:1}},
+        f.uploadingGal?'Enviando…':'+ Adicionar foto à galeria',
+        h('input',{type:'file',accept:'image/*',style:{display:'none'},disabled:f.uploadingGal,onChange:function(e){uploadFoto(e.target.files&&e.target.files[0],'galeria');e.target.value='';}})
+      )
+    ),
     h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
       h('button',{onClick:p.onClose,style:{padding:'9px 20px',borderRadius:8,border:'1px solid #DEE2D8',background:'none',fontSize:13,cursor:'pointer',color:'#1E2218'}},'Cancelar'),
       h('button',{onClick:save,style:{padding:'9px 24px',borderRadius:8,border:'none',background:'#1A7A4A',color:'#fff',fontSize:13,fontWeight:700,cursor:'pointer'}},'Salvar unidade')
