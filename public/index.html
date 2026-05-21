@@ -253,7 +253,7 @@ async function apiSyncFeeds(feedsAtivos,newsExistentes){
     var novas=itens.filter(function(i){return i.title&&!titExist.has(i.title);}).map(function(i){
       return {id:Date.now()+Math.random(),titulo:i.title||'',resumo:(i.content||i.description||i.title||'').slice(0,200),
         conteudo:i.content||i.description||'',data:i.pub_date?i.pub_date.slice(0,10):new Date().toISOString().slice(0,10),
-        categoria:i.categoria||i.category||'Gestão',unidade:'',destaque:false,visivel:true,
+        categoria:i.categoria||i.category||'Geral',unidade:'',destaque:false,visivel:true,
         fonte:i.source_name||i.source||'',autor:i.source_name||i.source||'',orgaosPresentes:[],ocupacaoAtual:0};
     });
     var newsAtualizada=novas.concat(newsExistentes||[]);
@@ -1089,7 +1089,7 @@ var verifyPwd=function(p,hh){return sha256('sagcu:'+p)===hh;};
 var slabel=function(s){return{ativo:"Operacional",manutencao:"Manutenção",inativo:"Inativo"}[s]||s;};
 var scMap={ativo:[C.g2,C.gl],manutencao:[C.am,C.al],inativo:[C.rm,C.rl]};
 var formatData=function(d){if(!d)return "";try{return new Date(d+"T12:00:00").toLocaleDateString("pt-BR");}catch(_){return d;}};
-var CATS=["Monitoramento","Fiscalização","Capacitação","Programa REM","Gestão","Parceria","Evento","Legislação"];
+var CATS=["Geral","Monitoramento","Fiscalização","Capacitação","Programa REM","Gestão","Parceria","Evento","Legislação"];
 var PL={admin:"Administrador",gestor:"Gestor",viewer:"Visualizador",gestor_unidade:"Gestor de Unidade"};
 var PC={admin:[C.rm,C.rl],gestor:[C.b1,C.bl],viewer:[C.cm,C.cx],gestor_unidade:[C.t1,C.tl]};
 var PK={units:"Unidades",news:"Noticias",users:"Usuarios",sols:"Solicitacoes",feeds:"Feeds RSS",cfg:"Configuracoes",rel:"Relatorios",backup:"Backup",notif:"Notificacoes",ownUnits:"Unidades Proprias"};
@@ -1562,7 +1562,7 @@ function FmFd(p){
   return h('div',{style:{display:'flex',flexDirection:'column',gap:14}},
     h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Nome *'),h('input',{value:f.nome,onChange:function(e){upd('nome',e.target.value);},style:inp,placeholder:'Ex: Portal SEMA/AC'})),
     h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'URL do Feed *'),h('input',{value:f.url,onChange:function(e){upd('url',e.target.value);},style:inp,placeholder:'https://exemplo.com/feed'})),
-    h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Categoria'),h('select',{value:f.categoria,onChange:function(e){upd('categoria',e.target.value);},style:inp},CATS.map(function(c){return h('option',{key:c,value:c},c);}))),
+    h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Categoria'),h('input',{value:f.categoria,onChange:function(e){upd('categoria',e.target.value);},list:'cats-dl-fd',style:inp,placeholder:'Ex: Monitoramento'}),h('datalist',{id:'cats-dl-fd'},CATS.map(function(c){return h('option',{key:c,value:c});}))),
     h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.ativo,onChange:function(e){upd('ativo',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Feed ativo'),
     h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
       h('button',{onClick:p.onClose,style:{padding:'9px 20px',borderRadius:8,border:'1px solid #DEE2D8',background:'none',fontSize:13,cursor:'pointer',color:'#1E2218'}},'Cancelar'),
@@ -1591,7 +1591,7 @@ function FmNw(p){
     h('div',null,h('label',{style:lbl},'Conteúdo (HTML permitido)'),h('textarea',{value:f.conteudo,onChange:function(e){upd('conteudo',e.target.value);},rows:5,style:Object.assign({},inp,{resize:'vertical'}),placeholder:'<p>Conteúdo da notícia...</p>'})),
     h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
       h('div',null,h('label',{style:lbl},'Data'),h('input',{type:'date',value:f.data,onChange:function(e){upd('data',e.target.value);},style:inp})),
-      h('div',null,h('label',{style:lbl},'Categoria'),h('select',{value:f.categoria,onChange:function(e){upd('categoria',e.target.value);},style:inp},CATS.map(function(c){return h('option',{key:c,value:c},c);})))
+      h('div',null,h('label',{style:lbl},'Categoria'),h('input',{value:f.categoria,onChange:function(e){upd('categoria',e.target.value);},list:'cats-dl-nw',style:inp,placeholder:'Ex: Monitoramento'}),h('datalist',{id:'cats-dl-nw'},CATS.map(function(c){return h('option',{key:c,value:c});})))
     ),
     h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
       h('div',null,h('label',{style:lbl},'Unidade'),h('select',{value:f.unidade,onChange:function(e){upd('unidade',e.target.value);},style:inp},h('option',{value:''},'— Nenhuma'),uns.map(function(u){return h('option',{key:u.id,value:u.nome},u.nome);}))),
@@ -2249,8 +2249,10 @@ function AdminSugestoes(p){
   function fetchSugs(){
     setLoading(true);
     fetch('/api/suggestions').then(function(r){return r.json();}).then(function(d){
-      setItems(d.items||[]);setLoading(false);
-    }).catch(function(){setLoading(false);});
+      setLoading(false);
+      if(!d.ok){toast2('Erro ao carregar sugestões: '+(d.error||'falha'),C.rm);return;}
+      setItems(d.items||[]);
+    }).catch(function(){setLoading(false);toast2('Falha de conexão ao carregar sugestões.',C.rm);});
   }
   function gerarSugestoes(){
     var sugs=[];
@@ -2263,16 +2265,25 @@ function AdminSugestoes(p){
     if((!pers||!pers.logo)&&!jaTemTipo('visual')) sugs.push({texto:'Configure o logo da organização em Personalização para melhorar a identidade visual.',tipo:'visual',prioridade:'baixa',impacto:'Melhora identidade visual'});
     if(sugs.length===0){toast2('Nenhuma nova sugestão — sistema em boa forma!');return;}
     Promise.all(sugs.map(function(s){
-      return fetch('/api/suggestions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)});
-    })).then(function(){fetchSugs();toast2(sugs.length+' sugestão(ões) gerada(s).');});
+      return fetch('/api/suggestions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)}).then(function(r){return r.json();});
+    })).then(function(results){
+      var erros=results.filter(function(d){return !d.ok;}).length;
+      fetchSugs();
+      if(erros>0)toast2(sugs.length+' geradas, '+erros+' com erro.',C.am);
+      else toast2(sugs.length+' sugestão(ões) gerada(s).');
+    }).catch(function(){toast2('Falha ao gerar sugestões.',C.rm);});
   }
   function updateStatus(id,status){
     fetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})})
-      .then(function(){fetchSugs();toast2('Status atualizado.');});
+      .then(function(r){return r.json();})
+      .then(function(d){if(d.ok){fetchSugs();toast2('Status atualizado.');}else toast2('Erro: '+(d.error||'falha'),C.rm);})
+      .catch(function(){toast2('Falha de conexão.',C.rm);});
   }
   function updateObs(id){
     fetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({obs:obsMap[id]||''})})
-      .then(function(){fetchSugs();toast2('Observação salva.');});
+      .then(function(r){return r.json();})
+      .then(function(d){if(d.ok){fetchSugs();toast2('Observação salva.');}else toast2('Erro: '+(d.error||'falha'),C.rm);})
+      .catch(function(){toast2('Falha de conexão.',C.rm);});
   }
   var STATUS_COLORS={
     pendente:[C.am,C.al],sugerida:[C.b1,'#DCF0FF'],'em-analise':[C.pm,C.px],

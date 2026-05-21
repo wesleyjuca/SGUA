@@ -208,7 +208,7 @@ async function fetchFeedItems(feed) {
         category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
         source: feed.nome,
         source_name: feed.nome,
-        categoria: feed.categoria || 'Gestão'
+        categoria: feed.categoria || 'Geral'
       });
       if (items.length >= 8) break;
     }
@@ -231,7 +231,7 @@ async function fetchFeedItems(feed) {
           category: normalizeCategory(extractTag(block, 'category') || feed.categoria),
           source: feed.nome,
           source_name: feed.nome,
-          categoria: feed.categoria || 'Gestão'
+          categoria: feed.categoria || 'Geral'
         });
         if (items.length >= 8) break;
       }
@@ -815,7 +815,7 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
           source_name: item.source_name || feed.nome,
           link: item.link || null,
           category: item.category,
-          categoria: item.categoria || feed.categoria || 'Gestão',
+          categoria: item.categoria || feed.categoria || 'Geral',
           pub_date: item.date || null
         });
       });
@@ -1204,6 +1204,19 @@ app.listen(PORT, () => {
   if (process.env.RENDER) {
     console.warn('[Aviso] Render.com free tier: uploads de fotos em disco são temporários e serão perdidos a cada redeploy. Configure um Persistent Disk ou migre para Supabase Storage para fotos permanentes.');
   }
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS sgua_suggestions (
+      id SERIAL PRIMARY KEY,
+      texto TEXT NOT NULL,
+      tipo VARCHAR(40) DEFAULT 'sistema',
+      status VARCHAR(20) DEFAULT 'pendente',
+      prioridade VARCHAR(20) DEFAULT 'media',
+      impacto TEXT DEFAULT '',
+      obs TEXT DEFAULT '',
+      tags JSONB DEFAULT '[]',
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `).catch(e => console.error('[DB] sgua_suggestions create failed:', e.message));
 });
 
 // ─── Backup semanal automático (toda domingo às 02:00 horário de Brasília / 07:00 UTC) ────
@@ -1241,7 +1254,7 @@ cron.schedule('0 6 * * *', async () => {
           id: Date.now()+Math.random(), titulo:i.title,
           resumo:(i.description||i.content||i.title||'').slice(0,200),
           conteudo:i.description||i.content||'', data:i.date?i.date.slice(0,10):new Date().toISOString().slice(0,10),
-          categoria:f.categoria||'Gestão', unidade:'', destaque:false, visivel:true,
+          categoria:f.categoria||'Geral', unidade:'', destaque:false, visivel:true,
           fonte:f.nome, autor:f.nome, orgaosPresentes:[], ocupacaoAtual:0
         }));
         state.news = novas.concat(state.news||[]);
