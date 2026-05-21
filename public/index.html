@@ -1135,9 +1135,9 @@ var NWS=[
 ];
 
 var FDS=[
-  {id:1,nome:"Portal SEMA/AC",url:"https://sema.ac.gov.br/feed",ativo:true,categoria:"Gestão",sync:"2026-03-25"},
-  {id:2,nome:"INPE — Monitoramento Amazônia",url:"https://inpe.br/rss/amazonia",ativo:true,categoria:"Monitoramento",sync:"2026-03-24"},
-  {id:3,nome:"MMA — Ministério do Meio Ambiente",url:"https://mma.gov.br/feed",ativo:false,categoria:"Legislação",sync:"—"}
+  {id:1,nome:"Agência Brasil — Meio Ambiente",url:"https://agenciabrasil.ebc.com.br/rss/meio-ambiente/feed.rss",ativo:true,categoria:"Monitoramento",sync:"—"},
+  {id:2,nome:"Agência Brasil — Amazônia",url:"https://agenciabrasil.ebc.com.br/rss/amazonia/feed.rss",ativo:true,categoria:"Gestão",sync:"—"},
+  {id:3,nome:"Agência Brasil — Geral",url:"https://agenciabrasil.ebc.com.br/rss/geral/feed.rss",ativo:false,categoria:"Legislação",sync:"—"}
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3493,6 +3493,8 @@ function App(){
   var sUns=useState(function(){return lsGet("uns",UNS);});var uns=sUns[0],setUns=sUns[1];
   var sNws=useState(function(){return lsGet("news",NWS);});var news=sNws[0],setNews=sNws[1];
   var sFds=useState(function(){return lsGet("feeds",FDS);});var feeds=sFds[0],setFeeds=sFds[1];
+  var sTestRes=useState({});var testRes=sTestRes[0],setTestRes=sTestRes[1];
+  var sSyncWarn=useState([]);var syncWarnings=sSyncWarn[0],setSyncWarnings=sSyncWarn[1];
   // Invalida localStorage de usuários quando schema de USERS muda (previne hash stale)
   if(lsGet('usersVer',0)!==USERS_VER){lsSet('usersVer',USERS_VER);lsSet('users',USERS);}
   var sUsr=useState(function(){return lsGet("users",USERS);});var users=sUsr[0],setUsers=sUsr[1];
@@ -3704,6 +3706,7 @@ function App(){
           return remoto?remoto:f;
         });
       });
+      setSyncWarnings(resp.warnings||[]);
       var errosCount=resp.warnings?resp.warnings.length:0;
       if(errosCount>0){
         var nomes=resp.warnings.map(function(w){var m=w.match(/feed "([^"]+)"/);return m?m[1]:'?';}).join(', ');
@@ -3713,6 +3716,13 @@ function App(){
     }).catch(function(e){
       toast2("Erro na sincronização: "+(e&&e.message?e.message:'desconhecido'),C.rm);
     });
+  }
+  function testFeed(f){
+    setTestRes(function(r){return Object.assign({},r,{[f.id]:{loading:true}});});
+    fetch('/api/feeds/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome})})
+      .then(function(r){return r.json();})
+      .then(function(d){setTestRes(function(r){return Object.assign({},r,{[f.id]:d});});})
+      .catch(function(){setTestRes(function(r){return Object.assign({},r,{[f.id]:{ok:false,error:'Falha na conexão'}});});});
   }
 
   var alts=[
@@ -4449,12 +4459,18 @@ function App(){
                   h("div",{style:{display:"flex",gap:6,alignItems:"flex-start",flexWrap:"wrap"}},
                     h("button",{onClick:function(){togFd(f.id);},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+(f.ativo?C.g2:C.cl),background:f.ativo?C.gx:"none",color:f.ativo?C.g2:C.cm,fontSize:11,cursor:"pointer",fontWeight:600}},f.ativo?"🟢 Ativo":"⏸ Pausado"),
                     h("button",{onClick:function(){syncFeeds([f.id]);},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.bl,background:C.bl,color:C.b1,fontSize:11,cursor:"pointer"}},"↻ Sync"),
+                    h("button",{onClick:function(){testFeed(f);},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.pm,background:C.px,color:C.pm,fontSize:11,cursor:"pointer"}},testRes[f.id]&&testRes[f.id].loading?"⏳ Testando…":"🔍 Testar"),
                     h("button",{onClick:function(){setModal({t:"fd",d:Object.assign({},f)});},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.cl,background:"none",color:C.cd,fontSize:11,cursor:"pointer"}},"Editar"),
                     h("button",{onClick:function(){setConf({nome:f.nome,fn:function(){delFd(f.id);}});},style:{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:11,cursor:"pointer"}},"Excluir")
                   )
-                )
+                ),
+                (function(){var tr=testRes[f.id];if(!tr||tr.loading)return null;return h("div",{style:{marginTop:8,padding:"6px 10px",borderRadius:7,background:tr.ok?C.gx:C.rl,border:"1px solid "+(tr.ok?C.g2:C.rm),fontSize:11,color:tr.ok?C.g2:C.rm}},tr.ok?"✅ "+tr.count+" item(s) encontrado(s)":"❌ Erro: "+tr.error);})()
               );
             })
+          ),
+          syncWarnings.length>0&&h("div",{style:{marginTop:10,padding:"10px 14px",background:C.al,border:"1px solid "+C.am,borderRadius:9}},
+            h("div",{style:{fontSize:12,fontWeight:700,color:C.am,marginBottom:4}},"⚠️ Avisos do último sync:"),
+            syncWarnings.map(function(w,i){return h("div",{key:i,style:{fontSize:11,color:C.am}},w);})
           )
         ),
 

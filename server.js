@@ -887,6 +887,16 @@ app.post('/api/upload/photo', upload.single('photo'), asyncRoute(async (req, res
   res.json({ ok: true, url: '/uploads/photos/' + req.file.filename });
 }));
 
+app.post('/api/feeds/test', asyncRoute(async (req, res) => {
+  const { url, nome } = req.body || {};
+  if (!url || typeof url !== 'string' || !isSafeUrl(url))
+    return res.status(400).json({ ok: false, error: 'URL inválida.' });
+  const feed = { url: url.trim(), nome: nome || 'Teste', categoria: 'Gestão', ativo: true };
+  const result = await fetchFeedItems(feed);
+  if (!result.ok) return res.json({ ok: false, error: result.error, items: [] });
+  res.json({ ok: true, count: result.items.length, items: result.items.slice(0, 3) });
+}));
+
 app.delete('/api/photos/:id', asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
@@ -1228,12 +1238,13 @@ cron.schedule('0 6 * * *', async () => {
         if(!result.ok){ warnings.push(f.nome+': '+result.error); continue; }
         const existTitles = new Set((state.news||[]).map(n=>n.titulo));
         const novas = result.items.filter(i=>!existTitles.has(i.title)).map(i=>({
-          id: Date.now()+Math.random(), titulo:i.title, resumo:(i.description||'').slice(0,200),
-          conteudo:i.description||'', data:i.date?i.date.slice(0,10):new Date().toISOString().slice(0,10),
+          id: Date.now()+Math.random(), titulo:i.title,
+          resumo:(i.description||i.content||i.title||'').slice(0,200),
+          conteudo:i.description||i.content||'', data:i.date?i.date.slice(0,10):new Date().toISOString().slice(0,10),
           categoria:f.categoria||'Gestão', unidade:'', destaque:false, visivel:true,
           fonte:f.nome, autor:f.nome, orgaosPresentes:[], ocupacaoAtual:0
         }));
-        state.news = (state.news||[]).concat(novas);
+        state.news = novas.concat(state.news||[]);
         state.feeds = (state.feeds||[]).map(fd=>fd.id===f.id?{...fd,sync:new Date().toISOString().slice(0,10)}:fd);
         totalAdded += novas.length;
       } catch(e){warnings.push(f.nome+': '+e.message);}
