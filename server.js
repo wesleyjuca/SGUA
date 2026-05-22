@@ -1,5 +1,8 @@
 'use strict';
 
+// Bypass SSL certificate validation for outbound feed requests (gov BR sites often have expired/self-signed certs)
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -183,7 +186,7 @@ function normalizeDate(rawDate) {
 
 async function fetchFeedItems(feed) {
   const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 8000);
+  const timeout = setTimeout(() => ctrl.abort(), 5000);
   try {
     const response = await fetch(feed.url, {
       headers: { 'User-Agent': 'SGUA-RSS-Sync/1.0 (+https://sema.ac.gov.br)' },
@@ -255,7 +258,7 @@ function itemPassaFiltro(item, palavrasChave) {
 async function discoverRssUrl(url) {
   try {
     const ctrl = new AbortController();
-    const tmr = setTimeout(() => ctrl.abort(), 5000);
+    const tmr = setTimeout(() => ctrl.abort(), 3000);
     const resp = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'SGUA-RSS-Discover/1.0' } });
     clearTimeout(tmr);
     const html = await resp.text();
@@ -271,7 +274,7 @@ async function discoverRssUrl(url) {
 
 async function fetchPageArticles(feed) {
   const ctrl = new AbortController();
-  const timeout = setTimeout(() => ctrl.abort(), 10000);
+  const timeout = setTimeout(() => ctrl.abort(), 7000);
   try {
     const response = await fetch(feed.url, {
       headers: { 'User-Agent': 'SGUA-News-Scraper/1.0' },
@@ -1160,7 +1163,12 @@ app.post('/api/feeds/scrape', asyncRoute(async (req, res) => {
   if (!url || typeof url !== 'string' || !isSafeUrl(url))
     return res.status(400).json({ ok: false, error: 'URL inválida.' });
   const feed = { url: url.trim(), nome: nome || 'Teste', categoria: categoria || 'Geral', ativo: true };
-  const result = await fetchSmartItems(feed);
+  let result;
+  try {
+    result = await fetchSmartItems(feed);
+  } catch (e) {
+    return res.json({ ok: false, error: e.message || 'Erro ao buscar feed.', metodo: 'erro', items: [] });
+  }
   if (!result.ok) return res.json({ ok: false, error: result.error, metodo: result.metodo || 'rss', items: [] });
   res.json({ ok: true, count: result.items.length, metodo: result.metodo || 'rss', rss_url: result.rss_url || null, items: result.items.slice(0, 3) });
 }));
@@ -1177,7 +1185,7 @@ app.post('/api/feeds/autodiscover', asyncRoute(async (req, res) => {
   // Tentar descobrir via HTML <link rel="alternate">
   try {
     const ctrl = new AbortController();
-    const tmr = setTimeout(()=>ctrl.abort(),5000);
+    const tmr = setTimeout(()=>ctrl.abort(),3000);
     const resp = await fetch(url,{signal:ctrl.signal,headers:{'User-Agent':'SGUA-RSS-Discover/1.0'}});
     clearTimeout(tmr);
     const html = await resp.text();

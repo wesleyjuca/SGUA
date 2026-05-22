@@ -1575,7 +1575,7 @@ function FmFd(p){
     fetch('/api/feeds/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome||'Teste',categoria:f.categoria||'Geral'})})
       .then(function(r){return r.json();})
       .then(function(d){setVerif(d);setVerifying(false);})
-      .catch(function(){setVerif({ok:false,error:'Falha de conexão'});setVerifying(false);});
+      .catch(function(){setVerif({ok:false,error:'Servidor não respondeu. Verifique se a URL está acessível publicamente e tente novamente.'});setVerifying(false);});
   }
   function autoDescobrirRSS(){
     if(!f.url.trim()||!f.url.match(/^https?:\/\//)){setErrFd('Digite a URL do site primeiro.');return;}
@@ -1602,8 +1602,11 @@ function FmFd(p){
         h('button',{type:'button',onClick:verificarRSS,disabled:verifying,style:{padding:'8px 10px',borderRadius:8,border:'1px solid #1A7A4A',background:'none',cursor:'pointer',fontSize:11,whiteSpace:'nowrap',color:'#1A7A4A'}},verifying?'⏳…':'🔍 Verificar'),
         h('button',{type:'button',onClick:autoDescobrirRSS,disabled:discovering,style:{padding:'8px 10px',borderRadius:8,border:'1px solid #1565A8',background:'none',cursor:'pointer',fontSize:11,whiteSpace:'nowrap',color:'#1565A8'}},discovering?'⏳…':'🌐 Descobrir')
       ),
-      verif&&h('div',{style:{marginTop:4,padding:'5px 8px',borderRadius:6,background:verif.ok?'#E8F5E9':'#FFEBEE',border:'1px solid '+(verif.ok?'#1A7A4A':'#D32F2F'),fontSize:11,color:verif.ok?'#1A7A4A':'#D32F2F'}},
-        (function(){var metodLabel={rss:'via RSS',rss_discovered:'via RSS descoberto',html:'via scraping HTML'};return verif.ok?('✅ '+verif.count+' artigo(s) encontrado(s) '+((metodLabel[verif.metodo])||'')+(verif.items&&verif.items[0]?' — "'+verif.items[0].title.slice(0,50)+'"':'')):('❌ '+verif.error);})()
+      verif&&h('div',null,
+        h('div',{style:{marginTop:4,padding:'5px 8px',borderRadius:6,background:verif.ok?'#E8F5E9':'#FFEBEE',border:'1px solid '+(verif.ok?'#1A7A4A':'#D32F2F'),fontSize:11,color:verif.ok?'#1A7A4A':'#D32F2F'}},
+          (function(){var metodLabel={rss:'via RSS',rss_discovered:'via RSS descoberto',html:'via scraping HTML'};return verif.ok?('✅ '+verif.count+' artigo(s) encontrado(s) '+((metodLabel[verif.metodo])||'')+(verif.items&&verif.items[0]?' — "'+verif.items[0].title.slice(0,50)+'"':'')):('❌ '+verif.error);})()
+        ),
+        !verif.ok&&h('div',{style:{fontSize:11,color:'#555',marginTop:4,padding:'5px 8px',background:'#FFF8E1',borderRadius:6}},'💡 Você ainda pode salvar o feed — ele será validado automaticamente após o cadastro.')
       ),
       discoRes&&h('div',{style:{marginTop:4}},
         discoRes.encontrados&&discoRes.encontrados.length>0
