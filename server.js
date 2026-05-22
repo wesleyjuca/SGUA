@@ -158,16 +158,17 @@ function extractTag(block, tagName) {
 }
 
 function normalizeCategory(rawCategory) {
-  const category = (rawCategory || '').toLowerCase();
-  if (!category) return 'Monitoramento';
+  const category = (rawCategory || '').toLowerCase().trim();
+  if (!category || category.includes('geral')) return 'Geral';
   if (category.includes('fiscal')) return 'Fiscalização';
   if (category.includes('legis')) return 'Legislação';
   if (category.includes('parceria')) return 'Parceria';
-  if (category.includes('programa')) return 'Programa REM';
+  if (category.includes('programa') || category.includes('rem')) return 'Programa REM';
   if (category.includes('evento')) return 'Evento';
   if (category.includes('capac')) return 'Capacitação';
   if (category.includes('gest')) return 'Gestão';
-  return 'Monitoramento';
+  if (category.includes('monitor') || category.includes('ambient')) return 'Monitoramento';
+  return 'Geral';
 }
 
 function today() {
@@ -210,7 +211,7 @@ async function fetchFeedItems(feed) {
         source_name: feed.nome,
         categoria: feed.categoria || 'Geral'
       });
-      if (items.length >= 8) break;
+      if (items.length >= 20) break;
     }
 
     // Atom — <entry> fallback (feeds gov.br, etc.)
@@ -233,7 +234,7 @@ async function fetchFeedItems(feed) {
           source_name: feed.nome,
           categoria: feed.categoria || 'Geral'
         });
-        if (items.length >= 8) break;
+        if (items.length >= 20) break;
       }
     }
 
@@ -243,6 +244,134 @@ async function fetchFeedItems(feed) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function itemPassaFiltro(item, palavrasChave) {
+  if (!palavrasChave || !palavrasChave.trim()) return true;
+  const haystack = ((item.title || '') + ' ' + (item.description || '')).toLowerCase();
+  return palavrasChave.split(',').map(function(p){return p.trim().toLowerCase();}).filter(Boolean).some(function(p){return haystack.includes(p);});
+}
+
+async function discoverRssUrl(url) {
+  try {
+    const ctrl = new AbortController();
+    const tmr = setTimeout(() => ctrl.abort(), 5000);
+    const resp = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'SGUA-RSS-Discover/1.0' } });
+    clearTimeout(tmr);
+    const html = await resp.text();
+    const linkRx = /<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/gi;
+    const m = linkRx.exec(html);
+    if (m) {
+      const found = m[2];
+      try { return found.startsWith('http') ? found : new URL(found, url).href; } catch { return null; }
+    }
+    return null;
+  } catch { return null; }
+}
+
+async function fetchPageArticles(feed) {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 10000);
+  try {
+    const response = await fetch(feed.url, {
+      headers: { 'User-Agent': 'SGUA-News-Scraper/1.0' },
+      signal: ctrl.signal
+    });
+    if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
+    const html = await response.text();
+    const items = [];
+
+    // Extract Open Graph tags as single "featured article"
+    const ogTitle = (html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) || [])[1] || '';
+    const ogDesc = (html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) || [])[1] || '';
+    const ogUrl = (html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/i) || [])[1] || '';
+    if (ogTitle && ogTitle.length > 10) {
+      items.push({
+        title: ogTitle.slice(0, 180),
+        description: ogDesc.slice(0, 500),
+        link: isSafeUrl(ogUrl) ? ogUrl : (isSafeUrl(feed.url) ? feed.url : ''),
+        date: today(),
+        category: normalizeCategory(feed.categoria),
+        source: feed.nome,
+        source_name: feed.nome,
+        categoria: feed.categoria || 'Geral'
+      });
+    }
+
+    // Extract article blocks: <article> tags or <h2>/<h3> + following <p>
+    const articleRx = /<article\b[^>]*>([\s\S]*?)<\/article>/gi;
+    let am;
+    while ((am = articleRx.exec(html)) !== null && items.length < 20) {
+      const block = am[1];
+      const titleMatch = block.match(/<h[123][^>]*>([\s\S]*?)<\/h[123]>/i);
+      const pMatch = block.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+      const linkMatch = block.match(/<a[^>]+href=["']([^"']+)["'][^>]*>/i);
+      const title = decodeXmlEntities(titleMatch ? titleMatch[1] : '');
+      if (!title || title.length < 5) continue;
+      const desc = decodeXmlEntities(pMatch ? pMatch[1] : '').slice(0, 300);
+      let link = '';
+      if (linkMatch) {
+        try { link = linkMatch[1].startsWith('http') ? linkMatch[1] : new URL(linkMatch[1], feed.url).href; } catch { link = ''; }
+      }
+      if (items.find(function(i){return i.title===title;})) continue;
+      items.push({
+        title: title.slice(0, 180),
+        description: desc,
+        link: isSafeUrl(link) ? link : '',
+        date: today(),
+        category: normalizeCategory(feed.categoria),
+        source: feed.nome,
+        source_name: feed.nome,
+        categoria: feed.categoria || 'Geral'
+      });
+    }
+
+    // Fallback: extract h2/h3 + next <p> patterns from full HTML
+    if (items.length < 3) {
+      const headRx = /<h[23][^>]*>([\s\S]*?)<\/h[23]>[\s\S]{0,200}?<p[^>]*>([\s\S]*?)<\/p>/gi;
+      let hm;
+      while ((hm = headRx.exec(html)) !== null && items.length < 15) {
+        const title = decodeXmlEntities(hm[1]).slice(0, 180);
+        if (!title || title.length < 10) continue;
+        if (items.find(function(i){return i.title===title;})) continue;
+        const desc = decodeXmlEntities(hm[2]).slice(0, 300);
+        items.push({
+          title,
+          description: desc,
+          link: isSafeUrl(feed.url) ? feed.url : '',
+          date: today(),
+          category: normalizeCategory(feed.categoria),
+          source: feed.nome,
+          source_name: feed.nome,
+          categoria: feed.categoria || 'Geral'
+        });
+      }
+    }
+
+    if (items.length === 0) return { ok: false, error: 'Nenhum artigo encontrado na página' };
+    return { ok: true, items };
+  } catch (error) {
+    return { ok: false, error: error.name === 'AbortError' ? 'timeout' : error.message };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchSmartItems(feed) {
+  // 1. Try RSS/Atom
+  const rss = await fetchFeedItems(feed);
+  if (rss.ok && rss.items.length > 0) return Object.assign({}, rss, { metodo: 'rss' });
+
+  // 2. Try to discover RSS URL from the page HTML
+  const rssUrl = await discoverRssUrl(feed.url);
+  if (rssUrl && rssUrl !== feed.url) {
+    const r2 = await fetchFeedItems(Object.assign({}, feed, { url: rssUrl }));
+    if (r2.ok && r2.items.length > 0) return Object.assign({}, r2, { metodo: 'rss_discovered', rss_url: rssUrl });
+  }
+
+  // 3. Fallback: HTML scraping
+  const scraped = await fetchPageArticles(feed);
+  return Object.assign({}, scraped, { metodo: 'html' });
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -801,13 +930,14 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
 
   await Promise.all(
     activeFeeds.map(async (feed) => {
-      const result = await fetchFeedItems(feed);
+      const result = await fetchSmartItems(feed);
       if (!result.ok) {
         warnings.push(`Falha no feed "${feed.nome}": ${result.error}`);
         return;
       }
       feedUpdates.set(feed.id, today());
-      result.items.forEach((item) => {
+      const filteredItems = result.items.filter(function(item){return itemPassaFiltro(item, feed.palavras_chave||'');});
+      filteredItems.forEach((item) => {
         toInsert.push({
           title: item.title.slice(0, 180),
           content: (item.description || item.title).slice(0, 4000),
@@ -879,6 +1009,7 @@ app.post('/api/feeds', asyncRoute(async (req, res) => {
   const categoria = sanitizeText(body.categoria||'Geral', 100);
   const frequencia = ['diaria','semanal','manual'].includes(body.frequencia) ? body.frequencia : 'diaria';
   const prioridade = parseInt(body.prioridade)||0;
+  const palavras_chave = sanitizeText(body.palavras_chave||'', 500);
   if (!nome || !url || !isSafeUrl(url))
     return res.status(400).json({ ok: false, error: 'Nome e URL válida são obrigatórios.' });
   const existing = await queryOne('SELECT id FROM sgua_feeds WHERE url=$1',[url]);
@@ -889,8 +1020,8 @@ app.post('/api/feeds', asyncRoute(async (req, res) => {
   const statusInicial = !validacao.ok ? (validacao.error==='timeout' ? 'sem_resposta' : 'invalido') : 'aguardando';
   const atvFinal = body.ativo !== false && validacao.ok;
   const [feed] = await query(
-    'INSERT INTO sgua_feeds (nome,url,categoria,ativo,status,prioridade,frequencia,ultimo_erro) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
-    [nome, url, categoria, atvFinal, statusInicial, prioridade, frequencia, validacao.ok?'':String(validacao.error||'').slice(0,500)]
+    'INSERT INTO sgua_feeds (nome,url,categoria,ativo,status,prioridade,frequencia,ultimo_erro,palavras_chave) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
+    [nome, url, categoria, atvFinal, statusInicial, prioridade, frequencia, validacao.ok?'':String(validacao.error||'').slice(0,500), palavras_chave]
   );
   await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
     [feed.id,'validacao',validacao.ok, validacao.ok?`${validacao.items.length} itens encontrados`:String(validacao.error||'').slice(0,500)]);
@@ -922,6 +1053,7 @@ app.put('/api/feeds/:id', asyncRoute(async (req, res) => {
   if (body.ativo !== undefined) addField('ativo', atvFinal);
   if (body.prioridade !== undefined) addField('prioridade', parseInt(body.prioridade)||0);
   if (body.frequencia !== undefined && ['diaria','semanal','manual'].includes(body.frequencia)) addField('frequencia', body.frequencia);
+  if (body.palavras_chave !== undefined) addField('palavras_chave', sanitizeText(String(body.palavras_chave||''), 500));
   vals.push(id);
   const [feed] = await query(`UPDATE sgua_feeds SET ${fields.join(',')} WHERE id=$${vals.length} RETURNING *`, vals);
   if (urlMudou) await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
@@ -952,27 +1084,44 @@ app.post('/api/feeds/:id/sync', asyncRoute(async (req, res) => {
   const feed = await queryOne('SELECT * FROM sgua_feeds WHERE id=$1',[id]);
   if (!feed) return res.status(404).json({ ok: false, error: 'Feed não encontrado.' });
   await query('UPDATE sgua_feeds SET status=$1, updated_at=now() WHERE id=$2',['sincronizando',id]);
-  const result = await fetchFeedItems(feed);
+  const result = await fetchSmartItems(feed);
   if (!result.ok) {
     const errStatus = result.error==='timeout' ? 'sem_resposta' : 'invalido';
     await query('UPDATE sgua_feeds SET status=$1,ultimo_erro=$2,falhas_consecutivas=falhas_consecutivas+1,updated_at=now() WHERE id=$3',
       [errStatus, String(result.error||'').slice(0,500), id]);
     await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',[id,'sync',false,String(result.error||'').slice(0,500)]);
+    const fdCheck = await queryOne('SELECT falhas_consecutivas FROM sgua_feeds WHERE id=$1',[id]);
+    if (fdCheck && fdCheck.falhas_consecutivas >= 5) {
+      await query('UPDATE sgua_feeds SET ativo=false, updated_at=now() WHERE id=$1',[id]);
+      await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
+        [id,'auto_pause',false,'Feed pausado automaticamente após 5 falhas consecutivas']);
+    }
     return res.json({ ok: false, error: result.error });
   }
+  const toInsert = result.items.filter(function(item){return itemPassaFiltro(item, feed.palavras_chave);});
   let added = 0;
-  for (const item of result.items) {
+  for (const item of toInsert) {
     const { rowCount } = await pool.query(
       'INSERT INTO news (title,content,source,link,category,is_rss) VALUES ($1,$2,$3,$4,$5,true) ON CONFLICT (title,source) DO NOTHING',
       [item.title.slice(0,180),(item.description||item.title).slice(0,4000),item.source,item.link||null,item.category]);
     added += rowCount;
   }
-  await query('UPDATE sgua_feeds SET status=$1,ultimo_sync=now(),ultimo_erro=$2,falhas_consecutivas=0,total_noticias=total_noticias+$3,updated_at=now() WHERE id=$4',
-    ['ativo','',added,id]);
+  await query('UPDATE sgua_feeds SET status=$1,ultimo_sync=now(),ultimo_erro=$2,falhas_consecutivas=0,total_noticias=total_noticias+$3,metodo_detec=$4,updated_at=now() WHERE id=$5',
+    ['ativo','',added,result.metodo||'rss',id]);
   await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem,itens_adicionados) VALUES ($1,$2,$3,$4,$5)',
     [id,'sync',true,`Sync: ${added} nova(s)`,added]);
   const feedAtualizado = await queryOne('SELECT * FROM sgua_feeds WHERE id=$1',[id]);
   res.json({ ok:true, added, feed: feedAtualizado });
+}));
+
+app.post('/api/feeds/scrape', asyncRoute(async (req, res) => {
+  const { url, nome, categoria } = req.body || {};
+  if (!url || typeof url !== 'string' || !isSafeUrl(url))
+    return res.status(400).json({ ok: false, error: 'URL inválida.' });
+  const feed = { url: url.trim(), nome: nome || 'Teste', categoria: categoria || 'Geral', ativo: true };
+  const result = await fetchSmartItems(feed);
+  if (!result.ok) return res.json({ ok: false, error: result.error, metodo: result.metodo || 'rss', items: [] });
+  res.json({ ok: true, count: result.items.length, metodo: result.metodo || 'rss', rss_url: result.rss_url || null, items: result.items.slice(0, 3) });
 }));
 
 app.post('/api/feeds/autodiscover', asyncRoute(async (req, res) => {
@@ -1373,17 +1522,31 @@ app.listen(PORT, async () => {
       impacto TEXT DEFAULT '', obs TEXT DEFAULT '', tags JSONB DEFAULT '[]',
       created_at TIMESTAMPTZ DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS sgua_feeds (
-      id SERIAL PRIMARY KEY, nome VARCHAR(200) NOT NULL, url TEXT NOT NULL,
-      categoria VARCHAR(100) DEFAULT 'Geral', ativo BOOLEAN DEFAULT true,
-      status VARCHAR(30) DEFAULT 'aguardando', prioridade INTEGER DEFAULT 0,
-      frequencia VARCHAR(20) DEFAULT 'diaria', ultimo_sync TIMESTAMPTZ,
-      ultimo_erro TEXT DEFAULT '', total_noticias INTEGER DEFAULT 0,
-      falhas_consecutivas INTEGER DEFAULT 0,
-      created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+  id SERIAL PRIMARY KEY,
+  nome VARCHAR(200) NOT NULL,
+  url TEXT NOT NULL,
+  categoria VARCHAR(100) DEFAULT 'Geral',
+  ativo BOOLEAN DEFAULT true,
+  status VARCHAR(30) DEFAULT 'aguardando',
+  prioridade INTEGER DEFAULT 0,
+  frequencia VARCHAR(20) DEFAULT 'diaria',
+  palavras_chave TEXT DEFAULT '',
+  metodo_detec VARCHAR(20) DEFAULT 'rss',
+  ultimo_sync TIMESTAMPTZ,
+  ultimo_erro TEXT DEFAULT '',
+  total_noticias INTEGER DEFAULT 0,
+  falhas_consecutivas INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT sgua_feeds_url_unique UNIQUE (url)
+)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS sgua_feed_logs (
       id SERIAL PRIMARY KEY, feed_id INTEGER NOT NULL, tipo VARCHAR(20) DEFAULT 'sync',
       ok BOOLEAN DEFAULT true, mensagem TEXT DEFAULT '',
       itens_adicionados INTEGER DEFAULT 0, created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`ALTER TABLE sgua_feeds ADD COLUMN IF NOT EXISTS palavras_chave TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE sgua_feeds ADD COLUMN IF NOT EXISTS metodo_detec VARCHAR(20) DEFAULT 'rss'`).catch(()=>{});
+    try { await pool.query(`ALTER TABLE sgua_feeds ADD CONSTRAINT sgua_feeds_url_unique UNIQUE (url)`); } catch(_){}
     // Migrar feeds do app_state se sgua_feeds estiver vazia
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
     if (exFeeds.length === 0) {
@@ -1397,7 +1560,7 @@ app.listen(PORT, async () => {
       for (const f of toMigrate) {
         if (!f.url || !f.nome) continue;
         await pool.query(
-          'INSERT INTO sgua_feeds (nome, url, categoria, ativo, status) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+          'INSERT INTO sgua_feeds (nome, url, categoria, ativo, status) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (url) DO NOTHING',
           [String(f.nome).slice(0,200), String(f.url).trim(), String(f.categoria||'Geral').slice(0,100), f.ativo !== false, 'aguardando']
         ).catch(()=>{});
       }
@@ -1434,23 +1597,30 @@ cron.schedule('0 6 * * *', async () => {
     for (const f of feeds) {
       try {
         await pool.query('UPDATE sgua_feeds SET status=$1,updated_at=now() WHERE id=$2',['sincronizando',f.id]);
-        const result = await fetchFeedItems(f);
+        const result = await fetchSmartItems(f);
         if (!result.ok) {
           const errStatus = result.error==='timeout' ? 'sem_resposta' : 'invalido';
           await pool.query('UPDATE sgua_feeds SET status=$1,ultimo_erro=$2,falhas_consecutivas=falhas_consecutivas+1,updated_at=now() WHERE id=$3',
             [errStatus, String(result.error||'').slice(0,500), f.id]);
           warnings.push(f.nome+': '+result.error);
+          const fdCheck2 = await queryOne('SELECT falhas_consecutivas FROM sgua_feeds WHERE id=$1',[f.id]);
+          if (fdCheck2 && fdCheck2.falhas_consecutivas >= 5) {
+            await pool.query('UPDATE sgua_feeds SET ativo=false, updated_at=now() WHERE id=$1',[f.id]);
+            await pool.query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
+              [f.id,'auto_pause',false,'Feed pausado automaticamente após 5 falhas consecutivas']);
+          }
           continue;
         }
+        const toInsertCron = result.items.filter(function(item){return itemPassaFiltro(item, f.palavras_chave||'');});
         let added = 0;
-        for (const item of result.items) {
+        for (const item of toInsertCron) {
           const { rowCount } = await pool.query(
             'INSERT INTO news (title,content,source,link,category,is_rss) VALUES ($1,$2,$3,$4,$5,true) ON CONFLICT (title,source) DO NOTHING',
             [item.title.slice(0,180),(item.description||item.title).slice(0,4000),item.source,item.link||null,item.category]);
           added += rowCount;
         }
-        await pool.query('UPDATE sgua_feeds SET status=$1,ultimo_sync=now(),ultimo_erro=$2,falhas_consecutivas=0,total_noticias=total_noticias+$3,updated_at=now() WHERE id=$4',
-          ['ativo','',added,f.id]);
+        await pool.query('UPDATE sgua_feeds SET status=$1,ultimo_sync=now(),ultimo_erro=$2,falhas_consecutivas=0,total_noticias=total_noticias+$3,metodo_detec=$4,updated_at=now() WHERE id=$5',
+          ['ativo','',added,result.metodo||'rss',f.id]);
         await pool.query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem,itens_adicionados) VALUES ($1,$2,$3,$4,$5)',
           [f.id,'sync',true,`Cron sync: ${added} nova(s)`,added]);
         totalAdded += added;
@@ -1459,7 +1629,7 @@ cron.schedule('0 6 * * *', async () => {
         if (stateRow) {
           const state = stateRow.value;
           const existTitles = new Set((state.news||[]).map(n=>n.titulo));
-          const novas = result.items.filter(i=>!existTitles.has(i.title)).map(i=>({
+          const novas = toInsertCron.filter(i=>!existTitles.has(i.title)).map(i=>({
             id: Date.now()+Math.random(), titulo:i.title,
             resumo:(i.description||i.content||i.title||'').slice(0,200),
             conteudo:i.description||i.content||'',

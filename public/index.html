@@ -406,7 +406,7 @@ function runSysCheck(uns,sols,monLog,dbOffline,alertRules,feedsParam){
   var jsErrs=monLog.filter(function(e){return e.type==='js_err';}).length;
   if(jsErrs>=3) alertas.push({sev:'alta',titulo:'Erros JavaScript',det:jsErrs+' erros detectados na sessão.',sug:'Abrir DevTools (F12 → Console) para identificar erros.'});
   if(dbOffline) alertas.push({sev:'alta',titulo:'Banco offline',det:'Supabase inacessível. Dados persistidos localmente.',sug:'Verificar conectividade e configurações do Supabase.'});
-  var feedsComErro=(feedsParam||[]).filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';});
+  var feedsComErro=(feedsParam||[]).filter(function(f){return f.status==='invalido'||f.status==='sem_resposta';});
   if(feedsComErro.length) alertas.push({tipo:'feed_erro',sev:'warn',msg:feedsComErro.length+' feed(s) com erro na última sincronização',sug:'Verifique as URLs dos feeds em Admin → Feeds RSS.'});
   var inativas=uns.filter(function(u){return !u.visivel;});
   if(inativas.length>0) alertas.push({sev:'baixa',titulo:'Unidades ocultas',det:inativas.length+' unidade(s) ocultas do público.',sug:'Verificar se a ocultação é intencional em Unidades.'});
@@ -1558,7 +1558,7 @@ function CalendarioSol(p){
 // ─── FmFd — Formulário de Feed RSS ───────────────────────────────────────────
 function FmFd(p){
   var init=p.init||{};
-  var sF=useState({nome:init.nome||'',url:init.url||'',categoria:init.categoria||'Geral',ativo:init.ativo!==false,prioridade:init.prioridade||0,frequencia:init.frequencia||'diaria'});
+  var sF=useState({nome:init.nome||'',url:init.url||'',categoria:init.categoria||'Geral',ativo:init.ativo!==false,prioridade:init.prioridade||0,frequencia:init.frequencia||'diaria',palavras_chave:init.palavras_chave||''});
   var f=sF[0],setF=sF[1];
   var upd=function(k,v){setF(function(x){return Object.assign({},x,{[k]:v});});};
   var sCatCust=useState(CATS.indexOf(init.categoria||'Geral')===-1&&!!(init.categoria));
@@ -1571,7 +1571,7 @@ function FmFd(p){
   function verificarRSS(){
     if(!f.url.trim()||!f.url.match(/^https?:\/\//)){alert('Digite uma URL válida primeiro.');return;}
     setVerifying(true);setVerif(null);
-    fetch('/api/feeds/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome||'Teste'})})
+    fetch('/api/feeds/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome||'Teste',categoria:f.categoria||'Geral'})})
       .then(function(r){return r.json();})
       .then(function(d){setVerif(d);setVerifying(false);})
       .catch(function(){setVerif({ok:false,error:'Falha de conexão'});setVerifying(false);});
@@ -1600,7 +1600,7 @@ function FmFd(p){
         h('button',{type:'button',onClick:autoDescobrirRSS,disabled:discovering,style:{padding:'8px 10px',borderRadius:8,border:'1px solid #1565A8',background:'none',cursor:'pointer',fontSize:11,whiteSpace:'nowrap',color:'#1565A8'}},discovering?'⏳…':'🌐 Descobrir')
       ),
       verif&&h('div',{style:{marginTop:4,padding:'5px 8px',borderRadius:6,background:verif.ok?'#E8F5E9':'#FFEBEE',border:'1px solid '+(verif.ok?'#1A7A4A':'#D32F2F'),fontSize:11,color:verif.ok?'#1A7A4A':'#D32F2F'}},
-        verif.ok?'✅ '+verif.count+' itens encontrados'+(verif.items&&verif.items[0]?' — "'+verif.items[0].title.slice(0,50)+'"':''):'❌ '+verif.error
+        (function(){var metodLabel={rss:'via RSS',rss_discovered:'via RSS descoberto',html:'via scraping HTML'};return verif.ok?('✅ '+verif.count+' artigo(s) encontrado(s) '+((metodLabel[verif.metodo])||'')+(verif.items&&verif.items[0]?' — "'+verif.items[0].title.slice(0,50)+'"':'')):('❌ '+verif.error);})()
       ),
       discoRes&&h('div',{style:{marginTop:4}},
         discoRes.encontrados&&discoRes.encontrados.length>0
@@ -1630,6 +1630,10 @@ function FmFd(p){
           h('option',{value:'diaria'},'Diária'),h('option',{value:'semanal'},'Semanal'),h('option',{value:'manual'},'Manual'))),
       h('div',null,h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Prioridade'),
         h('input',{type:'number',min:0,max:100,value:f.prioridade,onChange:function(e){upd('prioridade',parseInt(e.target.value)||0);},style:inp}))
+    ),
+    h('div',null,
+      h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Palavras-chave (filtro, opcional)'),
+      h('input',{value:f.palavras_chave,onChange:function(e){upd('palavras_chave',e.target.value);},style:inp,placeholder:'Ex: Acre, desmatamento, fiscalização (separar por vírgula)'})
     ),
     h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.ativo,onChange:function(e){upd('ativo',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Feed ativo'),
     h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
@@ -2342,7 +2346,7 @@ function AdminSugestoes(p){
     if(!uns.length&&!jaTemTipo('setup')) sugs.push({texto:'Cadastre unidades ambientais para começar a usar o sistema.',tipo:'setup',prioridade:'alta',impacto:'Habilita todo o fluxo de gestão'});
     if(uns.filter(function(u){return !u.capacidade;}).length>0&&!jaTemTipo('dados')){var semCap=uns.filter(function(u){return !u.capacidade;}).length;sugs.push({texto:'Defina a capacidade de '+semCap+' unidade(s) sem capacidade configurada.',tipo:'dados',prioridade:'media',impacto:'Melhora métricas de ocupação e alertas'});}
     if(sols.filter(function(s){return s.st==='pendente';}).length>3&&!jaTemTipo('gestao')){var np=sols.filter(function(s){return s.st==='pendente';}).length;sugs.push({texto:np+' solicitações pendentes aguardam análise.',tipo:'gestao',prioridade:'alta',impacto:'Reduz tempo de resposta'});}
-    if(feeds&&feeds.filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length>0&&!jaTemTipo('feed_erro')){var fe=feeds.filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length;sugs.push({texto:fe+' feed(s) RSS com erro na última sincronização.',tipo:'feed_erro',prioridade:'media',impacto:'Afeta atualização de notícias'});}
+    if(feeds&&feeds.filter(function(f){return f.status==='invalido'||f.status==='sem_resposta';}).length>0&&!jaTemTipo('feed_erro')){var fe=feeds.filter(function(f){return f.status==='invalido'||f.status==='sem_resposta';}).length;sugs.push({texto:fe+' feed(s) RSS com erro na última sincronização.',tipo:'feed_erro',prioridade:'media',impacto:'Afeta atualização de notícias'});}
     if((!pers||!pers.logo)&&!jaTemTipo('visual')) sugs.push({texto:'Configure o logo da organização em Personalização para melhorar a identidade visual.',tipo:'visual',prioridade:'baixa',impacto:'Melhora identidade visual'});
     if(sugs.length===0){toast2('Nenhuma nova sugestão — sistema em boa forma!');return;}
     Promise.all(sugs.map(function(s){
@@ -3851,7 +3855,7 @@ function App(){
   var adminInsights=[
     uns.filter(function(u){return u.status==="manutencao";}).length>0&&"Priorizar plano de manutenção para unidades indisponíveis e atualizar previsão de retorno.",
     uns.filter(function(u){return u.visivel&&u.taxaUso>85;}).length>1&&"Há concentração de uso em unidades de alta demanda. Avaliar redistribuição de agendas.",
-    feeds.filter(function(f){return f.ativo&&f.sync==="—";}).length>0&&"Existem feeds ativos sem sincronização inicial. Execute o sync para alimentar as notícias automaticamente.",
+    feeds.filter(function(f){return f.ativo&&!f.ultimo_sync;}).length>0&&"Existem feeds ativos sem sincronização inicial. Execute o sync para alimentar as notícias automaticamente.",
     news.filter(function(n){return n.visivel;}).length<3&&"Poucas notícias públicas ativas. Recomenda-se publicar ao menos 3 para manter a home atualizada."
   ].filter(Boolean);
 
@@ -4399,8 +4403,8 @@ function App(){
               ),
               (function(){
                 var feedsAtivos=(feeds||[]).filter(function(f){return f.ativo;}).length;
-                var feedsSemSync=(feeds||[]).filter(function(f){return f.ativo&&(!f.sync||f.sync==='—');}).length;
-                var feedsComErro=(feeds||[]).filter(function(f){return f.lastStatus==='erro'||f.lastStatus==='timeout';}).length;
+                var feedsSemSync=(feeds||[]).filter(function(f){return f.ativo&&!f.ultimo_sync;}).length;
+                var feedsComErro=(feeds||[]).filter(function(f){return f.status==='invalido'||f.status==='sem_resposta';}).length;
                 return h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+(feedsComErro>0?C.rm:feedsSemSync>0?C.am:C.b1)}},
                   h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"FEEDS RSS"),
                   h("div",{style:{fontSize:32,fontWeight:800,color:feedsComErro>0?C.rm:C.cd,marginBottom:4}},feedsAtivos),
@@ -4584,10 +4588,12 @@ function App(){
                       h(Pill,{t:f.ativo?"Ativo":"Inativo",c:f.ativo?C.g2:C.cm,b:f.ativo?C.gx:C.cx,s:10}),
                       h(Pill,{t:sp.t,c:sp.c,b:sp.b,s:10}),
                       h(Pill,{t:f.frequencia||'diaria',c:C.b1,b:C.bl,s:10}),
-                      f.prioridade>0&&h(Pill,{t:"P"+f.prioridade,c:C.pm,b:C.px,s:10})
+                      f.prioridade>0&&h(Pill,{t:"P"+f.prioridade,c:C.pm,b:C.px,s:10}),
+                      f.metodo_detec&&f.metodo_detec!=='rss'&&h(Pill,{t:f.metodo_detec==='html'?'🌐 HTML':'🔍 RSS desc',c:'#5C4033',b:'#EFEBE9',s:10})
                     ),
                     h("div",{style:{fontSize:14,fontWeight:700,color:C.cd}},f.nome),
                     h("div",{style:{fontSize:11,color:C.cm,fontFamily:"monospace",marginTop:2,wordBreak:"break-all"}},f.url),
+                    f.palavras_chave&&h("div",{style:{fontSize:10,color:C.cm,marginTop:2}},"Filtro: "+f.palavras_chave.slice(0,60)),
                     h("div",{style:{display:"flex",gap:12,flexWrap:"wrap",marginTop:4,fontSize:11,color:C.cm}},
                       f.ultimo_sync&&h("span",null,"🕐 "+new Date(f.ultimo_sync).toLocaleString('pt-BR')),
                       f.total_noticias>0&&h("span",{style:{color:C.g2}},"📰 "+f.total_noticias+" notícias"),
