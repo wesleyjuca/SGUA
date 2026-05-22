@@ -693,30 +693,49 @@ app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
 // ─── News CRUD ────────────────────────────────────────────────────────────────
 
 app.get('/api/news', asyncRoute(async (_req, res) => {
-  const data = await query(
-    `SELECT n.id, n.title, n.content, n.source, n.link, n.category, n.is_rss,
-            n.created_at, u.name AS author_name
-     FROM news n
+  const rows = await query(
+    `SELECT n.*, u.name AS author_name FROM news n
      LEFT JOIN users u ON u.id = n.author_id
-     ORDER BY n.id DESC`
+     ORDER BY n.created_at DESC LIMIT 200`
   );
+  const data = rows.map(function(n) {
+    return {
+      id: n.id,
+      titulo: n.title,
+      resumo: n.resumo || (n.content||'').replace(/<[^>]+>/g,'').slice(0,120),
+      conteudo: n.content || '',
+      data: n.data_pub ? String(n.data_pub).slice(0,10) : String(n.created_at||'').slice(0,10),
+      categoria: n.category || 'Geral',
+      unidade: n.unidade || '',
+      destaque: !!n.destaque,
+      visivel: n.visivel !== false,
+      fonte: n.fonte || n.source || '',
+      autor: n.autor_nome || n.author_name || '',
+      link: n.link || '',
+      is_rss: !!n.is_rss,
+    };
+  });
   res.json({ ok: true, data });
 }));
 
 app.post('/api/news', asyncRoute(async (req, res) => {
-  const title = sanitizeText(req.body.title, 180);
-  const content = sanitizeText(req.body.content, 4000);
-  const author_id = parsePositiveId(req.body.author_id);
-
-  if (!title || !content) {
-    return res.status(400).json({ ok: false, error: 'Título e conteúdo são obrigatórios.' });
-  }
-
-  const data = await queryOne(
-    'INSERT INTO news(title, content, author_id) VALUES ($1, $2, $3) RETURNING *',
-    [title, content, author_id]
+  const b = req.body || {};
+  const title = sanitizeText(b.titulo || b.title, 180);
+  const content = sanitizeText(b.conteudo || b.content, 4000);
+  if (!title) return res.status(400).json({ ok: false, error: 'Título obrigatório.' });
+  const row = await queryOne(
+    `INSERT INTO news (title, content, source, link, category, is_rss,
+       visivel, destaque, resumo, unidade, autor_nome, fonte, data_pub)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+    [title, content,
+     sanitizeText(b.fonte||b.source||'',200), b.link||null,
+     sanitizeText(b.categoria||b.category||'Geral',100),
+     !!b.is_rss, b.visivel!==false, !!b.destaque,
+     sanitizeText(b.resumo||'',500), sanitizeText(b.unidade||'',200),
+     sanitizeText(b.autor||b.autor_nome||'',200), sanitizeText(b.fonte||b.source||'',200),
+     b.data||null]
   );
-  res.status(201).json({ ok: true, data });
+  res.status(201).json({ ok: true, data: row });
 }));
 
 app.put('/api/news/:id', asyncRoute(async (req, res) => {
@@ -726,12 +745,29 @@ app.put('/api/news/:id', asyncRoute(async (req, res) => {
   const existing = await queryOne('SELECT * FROM news WHERE id = $1', [id]);
   if (!existing) return res.status(404).json({ ok: false, error: 'Notícia não encontrada.' });
 
-  const title = sanitizeText(req.body.title ?? existing.title, 180);
-  const content = sanitizeText(req.body.content ?? existing.content, 4000);
+  const b = req.body || {};
+  const title = sanitizeText(b.titulo ?? b.title ?? existing.title, 180);
+  const content = sanitizeText(b.conteudo ?? b.content ?? existing.content, 4000);
+  const visivel = b.visivel !== undefined ? !!b.visivel : (existing.visivel !== false);
+  const destaque = b.destaque !== undefined ? !!b.destaque : !!existing.destaque;
 
   const data = await queryOne(
-    'UPDATE news SET title = $1, content = $2 WHERE id = $3 RETURNING *',
-    [title, content, id]
+    `UPDATE news SET
+       title=$1, content=$2,
+       source=COALESCE($3,source), link=COALESCE($4,link),
+       category=COALESCE($5,category),
+       visivel=$6, destaque=$7,
+       resumo=COALESCE($8,resumo), unidade=COALESCE($9,unidade),
+       autor_nome=COALESCE($10,autor_nome), fonte=COALESCE($11,fonte),
+       data_pub=COALESCE($12,data_pub)
+     WHERE id=$13 RETURNING *`,
+    [title, content,
+     b.fonte||b.source||null, b.link||null,
+     sanitizeText(b.categoria||b.category||'',100)||null,
+     visivel, destaque,
+     sanitizeText(b.resumo||'',500)||null, sanitizeText(b.unidade||'',200)||null,
+     sanitizeText(b.autor||b.autor_nome||'',200)||null, sanitizeText(b.fonte||b.source||'',200)||null,
+     b.data||null, id]
   );
   res.json({ ok: true, data });
 }));
@@ -926,6 +962,7 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
 
   const warnings = [];
   const feedUpdates = new Map();
+  const feedAddedMap = new Map();
   const toInsert = [];
 
   await Promise.all(
@@ -939,6 +976,7 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
       const filteredItems = result.items.filter(function(item){return itemPassaFiltro(item, feed.palavras_chave||'');});
       filteredItems.forEach((item) => {
         toInsert.push({
+          feedId: feed.id,
           title: item.title.slice(0, 180),
           content: (item.description || item.title).slice(0, 4000),
           source: item.source,
@@ -961,18 +999,21 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
       [item.title, item.content, item.source, item.link, item.category]
     );
     added += rowCount;
+    if (rowCount > 0) {
+      feedAddedMap.set(item.feedId, (feedAddedMap.get(item.feedId)||0) + 1);
+    }
   }
 
   // Update sgua_feeds status
   await Promise.all(activeFeeds.map(async (f) => {
     if (feedUpdates.has(f.id)) {
-      await pool.query('UPDATE sgua_feeds SET status=$1,ultimo_sync=now(),ultimo_erro=$2,falhas_consecutivas=0,total_noticias=total_noticias+$3,updated_at=now() WHERE url=$4',
-        ['ativo','',0,f.url]).catch(()=>{});
+      await pool.query('UPDATE sgua_feeds SET status=$1,ultimo_sync=now(),ultimo_erro=$2,falhas_consecutivas=0,total_noticias=total_noticias+$3,updated_at=now() WHERE id=$4',
+        ['ativo','',feedAddedMap.get(f.id)||0,f.id]).catch(()=>{});
     } else {
       const hasWarn = warnings.find(w => w.startsWith(`Falha no feed "${f.nome}"`));
       if (hasWarn) {
-        await pool.query('UPDATE sgua_feeds SET status=$1,ultimo_erro=$2,falhas_consecutivas=falhas_consecutivas+1,updated_at=now() WHERE url=$3',
-          [hasWarn.includes('timeout')?'sem_resposta':'invalido', hasWarn.slice(0,500), f.url]).catch(()=>{});
+        await pool.query('UPDATE sgua_feeds SET status=$1,ultimo_erro=$2,falhas_consecutivas=falhas_consecutivas+1,updated_at=now() WHERE id=$3',
+          [hasWarn.includes('timeout')?'sem_resposta':'invalido', hasWarn.slice(0,500), f.id]).catch(()=>{});
       }
     }
   }));
@@ -1546,6 +1587,13 @@ app.listen(PORT, async () => {
       itens_adicionados INTEGER DEFAULT 0, created_at TIMESTAMPTZ DEFAULT now())`);
     await pool.query(`ALTER TABLE sgua_feeds ADD COLUMN IF NOT EXISTS palavras_chave TEXT DEFAULT ''`).catch(()=>{});
     await pool.query(`ALTER TABLE sgua_feeds ADD COLUMN IF NOT EXISTS metodo_detec VARCHAR(20) DEFAULT 'rss'`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS visivel BOOLEAN DEFAULT true`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS destaque BOOLEAN DEFAULT false`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS resumo TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS unidade TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS autor_nome TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS fonte TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS data_pub DATE`).catch(()=>{});
     try { await pool.query(`ALTER TABLE sgua_feeds ADD CONSTRAINT sgua_feeds_url_unique UNIQUE (url)`); } catch(_){}
     // Migrar feeds do app_state se sgua_feeds estiver vazia
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
@@ -1624,25 +1672,6 @@ cron.schedule('0 6 * * *', async () => {
         await pool.query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem,itens_adicionados) VALUES ($1,$2,$3,$4,$5)',
           [f.id,'sync',true,`Cron sync: ${added} nova(s)`,added]);
         totalAdded += added;
-        // Also update app_state.news for frontend news state
-        const stateRow = await queryOne("SELECT value FROM app_state WHERE key='sgua'");
-        if (stateRow) {
-          const state = stateRow.value;
-          const existTitles = new Set((state.news||[]).map(n=>n.titulo));
-          const novas = toInsertCron.filter(i=>!existTitles.has(i.title)).map(i=>({
-            id: Date.now()+Math.random(), titulo:i.title,
-            resumo:(i.description||i.content||i.title||'').slice(0,200),
-            conteudo:i.description||i.content||'',
-            data:i.date?i.date.slice(0,10):new Date().toISOString().slice(0,10),
-            categoria:f.categoria||'Geral', unidade:'', destaque:false, visivel:true,
-            fonte:f.nome, autor:f.nome, orgaosPresentes:[], ocupacaoAtual:0
-          }));
-          if (novas.length) {
-            state.news = novas.concat(state.news||[]);
-            await pool.query("INSERT INTO app_state (key,value,updated_at) VALUES ('sgua',$1,now()) ON CONFLICT (key) DO UPDATE SET value=$1,updated_at=now()",
-              [JSON.stringify(state)]);
-          }
-        }
       } catch(e){ warnings.push(f.nome+': '+e.message); }
     }
     console.log(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
