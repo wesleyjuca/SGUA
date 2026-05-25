@@ -41,3 +41,31 @@ test('sanitizeHtml defined in index.html', () => {
   const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   assert.ok(src.includes('function sanitizeHtml('));
 });
+
+test('GET /api/requests usa LEFT JOIN', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('LEFT JOIN units') || src.includes('LEFT JOIN units un'),
+    'requests query deve usar LEFT JOIN para tolerar unidades deletadas');
+});
+
+test('feedAddedMap usa f.id como chave no UPDATE', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('feedAddedMap.get(f.id)'),
+    'bulk sync deve rastrear contagem por f.id');
+});
+
+test('SkelNewsCard definido no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('SkelNewsCard'), 'skeleton loader de notícias deve existir');
+});
+
+test('Tip component definido no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function Tip('), 'componente Tip de tooltip deve existir');
+});
+
+test('SMTP vars documentadas no .env.example', () => {
+  const ex = fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8');
+  assert.ok(ex.includes('SMTP_HOST') && ex.includes('SMTP_USER') && ex.includes('SMTP_PASS'),
+    'variáveis SMTP devem estar no .env.example');
+});

@@ -36,6 +36,9 @@ code{font-family:monospace}
 .sgua-dark>div:first-child{background:#0D1A14!important;border-color:#1E2D26!important}
 .sgua-dark>div:first-child .sdm-item{color:#9BA88F!important}
 .sgua-dark>div:last-child{background:#111815!important}
+/* skeleton shimmer */
+@keyframes sgua-shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
+.sgua-skel{background:linear-gradient(90deg,#e8ede8 25%,#f4f7f4 50%,#e8ede8 75%);background-size:800px 100%;animation:sgua-shimmer 1.4s infinite linear;border-radius:6px}
 </style>
 </head>
 <body>
@@ -1345,6 +1348,13 @@ function Pill(p){return h("span",{style:{fontSize:p.s||11,fontWeight:500,padding
 function Bar(p){var v=p.v||0,cor=v>80?C.rm:v>60?C.am:C.g2;return h("div",{style:{height:6,background:C.cl,borderRadius:3,overflow:"hidden"}},h("div",{style:{height:"100%",width:Math.min(100,v)+"%",background:cor,borderRadius:3}}));}
 function Card(p){return h("div",{style:Object.assign({background:"#fff",border:"1px solid "+C.cl,borderRadius:14},p.style||{}),onClick:p.onClick},p.children);}
 function StatBox(p){return h("div",{style:{background:C.cx,borderRadius:12,padding:"14px 18px"}},h("div",{style:{fontSize:11,color:C.cm,marginBottom:4}},p.label),h("div",{style:{fontSize:24,fontWeight:600,color:p.color||C.g2,lineHeight:1}},p.value));}
+
+function SkelNewsCard(){return h(Card,{style:{padding:'13px 16px'}},h('div',{style:{display:'flex',gap:8,marginBottom:8}},h('span',{className:'sgua-skel',style:{width:60,height:16,display:'inline-block'}}),h('span',{className:'sgua-skel',style:{width:40,height:16,display:'inline-block'}})),h('div',{className:'sgua-skel',style:{height:16,marginBottom:6,width:'80%'}}),h('div',{className:'sgua-skel',style:{height:11,width:'50%'}}));}
+function SkelUnitCard(){return h(Card,{style:{padding:'14px 16px'}},h('div',{style:{display:'flex',gap:12,alignItems:'center'}},h('div',{className:'sgua-skel',style:{width:44,height:44,borderRadius:10,flexShrink:0}}),h('div',{style:{flex:1}},h('div',{className:'sgua-skel',style:{height:14,marginBottom:6,width:'60%'}}),h('div',{className:'sgua-skel',style:{height:11,width:'40%'}}))));}
+function SkelFeedCard(){return h(Card,{style:{padding:'14px 16px'}},h('div',{style:{display:'flex',gap:6,marginBottom:8}},h('span',{className:'sgua-skel',style:{width:50,height:16,display:'inline-block'}}),h('span',{className:'sgua-skel',style:{width:40,height:16,display:'inline-block'}})),h('div',{className:'sgua-skel',style:{height:14,marginBottom:6,width:'70%'}}),h('div',{className:'sgua-skel',style:{height:11,width:'45%'}}));}
+function Tip(p){var sv=useState(false);var v=sv[0],setV=sv[1];return h('span',{style:{position:'relative',display:'inline-flex',verticalAlign:'middle',marginLeft:4}},h('span',{onMouseEnter:function(){setV(true);},onMouseLeave:function(){setV(false);},style:{width:15,height:15,borderRadius:'50%',border:'1px solid #aaa',fontSize:9,color:'#888',cursor:'help',display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none',flexShrink:0}},'?'),v&&h('div',{style:{position:'absolute',left:18,top:-6,background:'rgba(30,34,24,.92)',color:'#fff',fontSize:11,padding:'6px 10px',borderRadius:8,zIndex:1000,maxWidth:240,lineHeight:1.5,boxShadow:'0 2px 12px rgba(0,0,0,.25)',pointerEvents:'none'}},p.txt));}
+function MiniBarChart(p){var dados=p.dados,cor=p.cor,hh=p.h||36,w=p.w||140;if(!dados||!dados.length)return null;var max=Math.max.apply(null,dados.concat([1]));var bw=Math.max(2,Math.floor(w/dados.length)-2);return h('svg',{width:w,height:hh,style:{overflow:'visible'}},dados.map(function(v,i){var bh=Math.max(2,Math.round((v/max)*(hh-8)));return h('rect',{key:i,x:i*(bw+2),y:hh-8-bh,width:bw,height:bh,rx:2,fill:cor,opacity:0.85});}));}
+function SparkLine(p){var dados=p.dados,cor=p.cor,hh=p.h||28,w=p.w||100;if(!dados||dados.length<2)return null;var max=Math.max.apply(null,dados.concat([1])),mn=Math.min.apply(null,dados.concat([0]));var pts=dados.map(function(v,i){var x=Math.round((i/(dados.length-1))*w);var y=Math.round(hh-(((v-mn)/(max-mn||1))*(hh-4)));return x+','+y;}).join(' ');return h('svg',{width:w,height:hh},h('polyline',{points:pts,fill:'none',stroke:cor,strokeWidth:2}));}
 
 function Modal(p){
   return h("div",{onClick:p.onClose,style:{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}},
@@ -3602,6 +3612,7 @@ function App(){
   var sNws=useState(function(){return lsGet("news",NWS);});var news=sNws[0],setNews=sNws[1];
   var sFds=useState([]);var feeds=sFds[0],setFeeds=sFds[1];
   var sFdsLoaded=useState(false);var feedsLoaded=sFdsLoaded[0],setFeedsLoaded=sFdsLoaded[1];
+  var sNwLoaded=useState(false);var newsLoaded=sNwLoaded[0],setNewsLoaded=sNwLoaded[1];
   var sSavFd=useState(false);var savingFd=sSavFd[0],setSavingFd=sSavFd[1];
   var sTestRes=useState({});var testRes=sTestRes[0],setTestRes=sTestRes[1];
   var sSyncWarn=useState([]);var syncWarnings=sSyncWarn[0],setSyncWarnings=sSyncWarn[1];
@@ -3635,7 +3646,14 @@ function App(){
   var sNo=useState([]);var notifs=sNo[0],setNotifs=sNo[1];
   var sNO=useState(false);var notifOpen=sNO[0],setNotifOpen=sNO[1];
   var sNav=useState(false);var navOpen=sNav[0],setNavOpen=sNav[1];
+  var sQAdm=useState('');var qAdm=sQAdm[0],setQAdm=sQAdm[1];
   var _appStart=useRef(Date.now());
+
+  // Derived admin search filters
+  var _qL=qAdm.toLowerCase().trim();
+  var qUns=_qL?uns.filter(function(u){return ((u.nome||'')+' '+(u.municipio||'')).toLowerCase().includes(_qL);}):uns;
+  var qNews=_qL?news.filter(function(n){return ((n.titulo||'')+' '+(n.categoria||'')).toLowerCase().includes(_qL);}):news;
+  var qSols=_qL?sols.filter(function(s){return ((s.sol||s.nome||'')+' '+(s.ev||'')+' '+(s.un||'')).toLowerCase().includes(_qL);}):sols;
 
   // Recompute palette reactively when pers changes
   var _tema=PERS_TEMAS[pers.temaAtual]||PERS_TEMAS.verde;
@@ -3797,7 +3815,7 @@ function App(){
   function recarregarNews(){
     fetch('/api/news').then(function(r){return r.json();}).then(function(d){
       if(d.ok&&Array.isArray(d.data))setNews(d.data);
-    }).catch(function(){});
+    }).catch(function(){}).finally(function(){setNewsLoaded(true);});
   }
   useEffect(function(){recarregarNews();},[]);
   function saveNw(f){
@@ -4388,7 +4406,11 @@ function App(){
         )
       ),
       // Conteúdo admin
-      h("div",{style:{flex:1,padding:"24px 28px",overflowY:"auto",background:C.cx}},
+      h("div",{style:{flex:1,overflowY:"auto",background:C.cx,display:"flex",flexDirection:"column"}},
+        h("div",{style:{padding:"10px 28px 0",borderBottom:"1px solid "+C.cl,background:C.cx,flexShrink:0}},
+          h("input",{value:qAdm,onChange:function(e){setQAdm(e.target.value);},placeholder:"🔍 Buscar em unidades, notícias, solicitações...",style:{width:"100%",maxWidth:460,padding:"7px 12px",borderRadius:8,border:"1px solid "+C.cl,background:"#fff",fontSize:12,boxSizing:"border-box",color:C.cd,marginBottom:10}})
+        ),
+        h("div",{style:{flex:1,padding:"24px 28px",overflowY:"auto"}},
 
         atab==="dash"&&curUser&&curUser.perfil==='gestor_unidade'&&h(PgGestorDash,{curUser:curUser,uns:uns,sols:sols,C:C,toast2:toast2,setUns:setUns,setSols:setSols,setAtab:setAtab}),
         atab==="dash"&&curUser&&curUser.perfil!=='gestor_unidade'&&(function(){
@@ -4544,7 +4566,8 @@ function App(){
             h("button",{onClick:function(){setModal({t:"un",d:null});},style:{padding:"9px 20px",borderRadius:9,border:"none",background:C.g2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"+ Nova unidade")
           ),
           h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
-            uns.map(function(u){var scr=scMap[u.status]||[C.cm,C.cx];var sc=scr[0],sbg=scr[1];
+            uns.length===0&&!remoteReady&&[0,1,2].map(function(i){return h(SkelUnitCard,{key:i});}),
+            qUns.map(function(u){var scr=scMap[u.status]||[C.cm,C.cx];var sc=scr[0],sbg=scr[1];
               return h(Card,{key:u.id,style:{padding:"14px 16px",opacity:u.visivel?1:.65}},
                 h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}},
                   h("div",{style:{display:"flex",gap:12,alignItems:"center"}},
@@ -4570,7 +4593,8 @@ function App(){
             h("button",{onClick:function(){setModal({t:"nw",d:null});},style:{padding:"9px 20px",borderRadius:9,border:"none",background:C.g2,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer"}},"+ Nova notícia")
           ),
           h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
-            news.map(function(n){var cc=getCC(n.categoria);
+            !newsLoaded&&[0,1,2,3].map(function(i){return h(SkelNewsCard,{key:i});}),
+            newsLoaded&&qNews.map(function(n){var cc=getCC(n.categoria);
               return h(Card,{key:n.id,style:{padding:"13px 16px",opacity:n.visivel?1:.55}},
                 h("div",{style:{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:10}},
                   h("div",{style:{flex:1,minWidth:200}},
@@ -4616,7 +4640,7 @@ function App(){
               lastSync&&h("span",{style:{color:C.cm}},"Último sync: "+new Date(lastSync).toLocaleDateString('pt-BR'))
             );
           })(),
-          !feedsLoaded&&h("div",{style:{textAlign:"center",padding:20,color:C.cm}},"Carregando feeds..."),
+          !feedsLoaded&&h("div",{style:{display:"flex",flexDirection:"column",gap:10}},[0,1,2].map(function(i){return h(SkelFeedCard,{key:i});})),
           feedsLoaded&&feeds.length===0&&h("div",{style:{textAlign:"center",padding:32,color:C.cm,background:C.cx,borderRadius:12}},"Nenhum feed cadastrado. Clique em '+ Novo feed' para adicionar."),
           feedsLoaded&&feeds.length>0&&h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
             feeds.map(function(f){
@@ -4681,7 +4705,7 @@ function App(){
         atab==="sols"&&canDo("sols")&&h("div",null,
           h("h2",{style:{fontSize:20,fontWeight:700,margin:"0 0 20px",color:C.cd}},"Solicitações de uso"),
           h("div",{style:{display:"flex",flexDirection:"column",gap:8}},
-            sols.map(function(s){var cm={pendente:[C.am,C.al],aprovada:[C.g2,C.gl],rejeitada:[C.rm,C.rl]}[s.st]||[C.cm,C.cx];
+            qSols.map(function(s){var cm={pendente:[C.am,C.al],aprovada:[C.g2,C.gl],rejeitada:[C.rm,C.rl]}[s.st]||[C.cm,C.cx];
               return h(Card,{key:s.id,style:{padding:"14px 16px"}},
                 h("div",{style:{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:10}},
                   h("div",null,
@@ -4701,7 +4725,7 @@ function App(){
 
         atab==="users"&&canDo("users")&&h(AdminUsers,{users:users,setUsers:setUsers,curUser:curUser,toast2:toast2,setConf:setConf,uns:uns}),
 
-        atab==="cfg"&&canDo("cfg")&&(setAtab&&setAtab("pers"),null),
+        atab==="cfg"&&canDo("cfg")&&h(AdminPersonalizacao,{pers:pers,setPers:setPers,C:C,toast2:toast2,isMobile:isMobile}),
 
         atab==="rel"&&canDo("rel")&&h(TabEB,{key:"rel"},h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2,pers:pers})),
 
@@ -4712,6 +4736,7 @@ function App(){
         atab==="alertas"&&canDo("cfg")&&h(AdminAlertas,{pers:pers,setPers:setPers,sysReport:sysReport,C:C,toast2:toast2,alertasDash:alertasDash}),
         atab==="regreqs"&&canDo("users")&&h(AdminRegReqs,{toast2:toast2,C:C,curUser:curUser,setUsers:setUsers,users:users}),
 
+        ) // end inner padding div
       )
     ),
 

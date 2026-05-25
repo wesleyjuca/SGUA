@@ -788,7 +788,7 @@ app.get('/api/requests', asyncRoute(async (_req, res) => {
   const data = await query(
     `SELECT r.*, un.name AS unit_name
      FROM requests r
-     INNER JOIN units un ON un.id = r.unit_id
+     LEFT JOIN units un ON un.id = r.unit_id
      ORDER BY r.id DESC`
   );
   res.json({ ok: true, data });
@@ -862,7 +862,7 @@ app.get('/api/state', asyncRoute(async (_req, res) => {
   const [units, newsRows, reqs, userRows] = await Promise.all([
     query('SELECT * FROM units ORDER BY id'),
     query('SELECT n.*, u.name AS author_name FROM news n LEFT JOIN users u ON u.id = n.author_id ORDER BY n.created_at DESC'),
-    query('SELECT r.*, u.name AS unit_name FROM requests r JOIN units u ON u.id = r.unit_id ORDER BY r.created_at DESC'),
+    query('SELECT r.*, u.name AS unit_name FROM requests r LEFT JOIN units u ON u.id = r.unit_id ORDER BY r.created_at DESC'),
     query('SELECT * FROM users ORDER BY id'),
   ]);
 
