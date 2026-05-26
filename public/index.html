@@ -1568,7 +1568,7 @@ function CalendarioSol(p){
 // ─── FmFd — Formulário de Feed RSS ───────────────────────────────────────────
 function FmFd(p){
   var init=p.init||{};
-  var sF=useState({nome:init.nome||'',url:init.url||'',categoria:init.categoria||'Geral',ativo:init.ativo!==false,prioridade:init.prioridade||0,frequencia:init.frequencia||'diaria',palavras_chave:init.palavras_chave||''});
+  var sF=useState({nome:init.nome||'',url:init.url||'',categoria:init.categoria||'Geral',ativo:init.ativo!==false,prioridade:init.prioridade||0,frequencia:init.frequencia||'diaria',palavras_chave:init.palavras_chave||'',quantidade_diaria:init.quantidade_diaria||10,usar_ia:init.usar_ia||false,prompt_ia:init.prompt_ia||''});
   var f=sF[0],setF=sF[1];
   var upd=function(k,v){setErrFd('');setF(function(x){return Object.assign({},x,{[k]:v});});};
   var sCatCust=useState(CATS.indexOf(init.categoria||'Geral')===-1&&!!(init.categoria));
@@ -1650,6 +1650,20 @@ function FmFd(p){
     h('div',null,
       h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Palavras-chave (filtro, opcional)'),
       h('input',{value:f.palavras_chave,onChange:function(e){upd('palavras_chave',e.target.value);},style:inp,placeholder:'Ex: Acre, desmatamento, fiscalização (separar por vírgula)'})
+    ),
+    h('div',null,
+      h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Máx. notícias por dia ',h(Tip,{txt:'Limite de artigos que este feed pode publicar por dia. O contador reseta à meia-noite.'})),
+      h('input',{type:'number',min:1,max:100,value:f.quantidade_diaria,onChange:function(e){upd('quantidade_diaria',parseInt(e.target.value)||10);},style:inp})
+    ),
+    p.iaDisponivel&&h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+      h('input',{type:'checkbox',id:'usar_ia_fd',checked:f.usar_ia||false,onChange:function(e){upd('usar_ia',e.target.checked);}}),
+      h('label',{htmlFor:'usar_ia_fd',style:{fontSize:12,color:'#1E2218',cursor:'pointer'}},
+        '🤖 Sintetizar com IA ',h(Tip,{txt:'Usa Claude IA para reescrever artigos HTML em formato editorial. Requer ANTHROPIC_API_KEY configurado no servidor.'})
+      )
+    ),
+    f.usar_ia&&h('div',null,
+      h('label',{style:{fontSize:11,color:'#6B7260',display:'block',marginBottom:4}},'Instrução adicional para IA (opcional)'),
+      h('input',{value:f.prompt_ia,onChange:function(e){upd('prompt_ia',e.target.value);},style:inp,placeholder:'Ex: Foque em impacto ambiental no Acre...'})
     ),
     h('label',{style:{display:'flex',alignItems:'center',gap:8,fontSize:13,cursor:'pointer'}},h('input',{type:'checkbox',checked:f.ativo,onChange:function(e){upd('ativo',e.target.checked);},style:{accentColor:'#1A7A4A',width:15,height:15}}),'Feed ativo'),
     h('div',{style:{display:'flex',gap:8,justifyContent:'flex-end',marginTop:8}},
@@ -3646,6 +3660,7 @@ function App(){
   var sNo=useState([]);var notifs=sNo[0],setNotifs=sNo[1];
   var sNO=useState(false);var notifOpen=sNO[0],setNotifOpen=sNO[1];
   var sNav=useState(false);var navOpen=sNav[0],setNavOpen=sNav[1];
+  var sIA=useState(false);var iaDisponivel=sIA[0],setIaDisponivel=sIA[1];
   var sQAdm=useState('');var qAdm=sQAdm[0],setQAdm=sQAdm[1];
   var _appStart=useRef(Date.now());
 
@@ -3660,6 +3675,7 @@ function App(){
   C=Object.assign({},_tema,{b1:pers.corSecundaria||"#1565A8",bl:"#DCF0FF",t1:"#7B4D1A",tl:"#FAEBD7",am:"#C4832A",al:"#FFF3E0",rm:"#A32D2D",rl:"#FCEBEB",pm:"#5B3FA8",px:"#EDE9FB",cl:"#DEE2D8",cx:"#F7F8F5",cm:"#6B7260",cd:"#1E2218"});
 
 
+  useEffect(function(){fetch('/api/ai/status').then(function(r){return r.json();}).then(function(d){if(d.ok)setIaDisponivel(d.disponivel);}).catch(function(){});},[]);
   useEffect(function(){lsSet('uns',uns);},[uns]);
   useEffect(function(){lsSet('news',news);},[news]);
   useEffect(function(){lsSet('sols',sols);},[sols]);
@@ -4120,7 +4136,7 @@ function App(){
     // Modais
     modal&&modal.t==="un"&&h(Modal,{titulo:modal.d&&modal.d.id?"Editar unidade":"Nova unidade",onClose:function(){setModal(null);},wide:true},h(FmUn,{init:modal.d,uns:uns,onSave:saveUn,onClose:function(){setModal(null);}})),
     modal&&modal.t==="nw"&&h(Modal,{titulo:modal.d&&modal.d.id?"Editar notícia":"Nova notícia",onClose:function(){setModal(null);},wide:true},h(FmNw,{init:modal.d,uns:uns,onSave:saveNw,onClose:function(){setModal(null);}})),
-    modal&&modal.t==="fd"&&h(Modal,{titulo:modal.d&&modal.d.id?"Editar feed":"Novo feed RSS",onClose:function(){setModal(null);}},h(FmFd,{init:modal.d,onSave:saveFd,onClose:function(){setModal(null);},saving:savingFd})),
+    modal&&modal.t==="fd"&&h(Modal,{titulo:modal.d&&modal.d.id?"Editar feed":"Novo feed RSS",onClose:function(){setModal(null);}},h(FmFd,{init:modal.d,onSave:saveFd,onClose:function(){setModal(null);},saving:savingFd,iaDisponivel:iaDisponivel})),
 
     h(Navbar),
 
@@ -4656,7 +4672,8 @@ function App(){
                       h(Pill,{t:sp.t,c:sp.c,b:sp.b,s:10}),
                       h(Pill,{t:f.frequencia||'diaria',c:C.b1,b:C.bl,s:10}),
                       f.prioridade>0&&h(Pill,{t:"P"+f.prioridade,c:C.pm,b:C.px,s:10}),
-                      f.metodo_detec&&f.metodo_detec!=='rss'&&h(Pill,{t:f.metodo_detec==='html'?'🌐 HTML':'🔍 RSS desc',c:'#5C4033',b:'#EFEBE9',s:10})
+                      f.metodo_detec&&f.metodo_detec!=='rss'&&h(Pill,{t:f.metodo_detec==='html'?'🌐 HTML':'🔍 RSS desc',c:'#5C4033',b:'#EFEBE9',s:10}),
+                      f.usar_ia&&h(Pill,{t:'🤖 IA',c:'#5B3FA8',b:'#EDE9FB',s:10})
                     ),
                     h("div",{style:{fontSize:14,fontWeight:700,color:C.cd}},f.nome),
                     h("div",{style:{fontSize:11,color:C.cm,fontFamily:"monospace",marginTop:2,wordBreak:"break-all"}},f.url),
@@ -4664,6 +4681,7 @@ function App(){
                     h("div",{style:{display:"flex",gap:12,flexWrap:"wrap",marginTop:4,fontSize:11,color:C.cm}},
                       f.ultimo_sync&&h("span",null,"🕐 "+new Date(f.ultimo_sync).toLocaleString('pt-BR')),
                       f.total_noticias>0&&h("span",{style:{color:C.g2}},"📰 "+f.total_noticias+" notícias"),
+                      f.quantidade_diaria>0&&h("span",{style:{color:(f.noticias_hoje||(0))>=(f.quantidade_diaria||10)?C.rm:C.g2}},"📅 "+(f.noticias_hoje||0)+"/"+(f.quantidade_diaria||10)+" hoje"),
                       f.falhas_consecutivas>0&&h("span",{style:{color:C.rm,fontWeight:600}},"⚠️ "+f.falhas_consecutivas+" falhas")
                     ),
                     f.ultimo_erro&&h("div",{style:{marginTop:4,fontSize:11,color:C.rm,background:C.rl,padding:"3px 8px",borderRadius:5}},"Erro: "+String(f.ultimo_erro).slice(0,120)),

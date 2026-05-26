@@ -69,3 +69,18 @@ test('SMTP vars documentadas no .env.example', () => {
   assert.ok(ex.includes('SMTP_HOST') && ex.includes('SMTP_USER') && ex.includes('SMTP_PASS'),
     'variáveis SMTP devem estar no .env.example');
 });
+
+test('POST /api/feeds usa fetchSmartItems', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('fetchSmartItems(feedObj)'), 'validação de feed deve usar fetchSmartItems');
+});
+
+test('quantidade_diaria presente no schema feeds', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('quantidade_diaria'), 'coluna quantidade_diaria deve existir no schema feeds');
+});
+
+test('synthesizeArticle definida no server', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('function synthesizeArticle'), 'função synthesizeArticle deve estar definida');
+});
