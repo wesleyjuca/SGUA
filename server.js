@@ -12,7 +12,19 @@ const multer = require('multer');
 const cron = require('node-cron');
 let nodemailer; try { nodemailer = require('nodemailer'); } catch(e) { nodemailer = null; }
 let Anthropic; try { Anthropic = require('@anthropic-ai/sdk'); } catch(e) { Anthropic = null; }
+let bcrypt; try { bcrypt = require('bcryptjs'); } catch(e) { bcrypt = null; }
+let jwt; try { jwt = require('jsonwebtoken'); } catch(e) { jwt = null; }
+let createSupabaseClient; try { createSupabaseClient = require('@supabase/supabase-js').createClient; } catch(e) { createSupabaseClient = null; }
+const pino = require('pino');
+const pinoHttp = require('pino-http');
 const { Pool } = require('pg');
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  transport: process.env.NODE_ENV !== 'production'
+    ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:standard', ignore: 'pid,hostname' } }
+    : undefined
+});
 
 const app = express();
 
@@ -57,7 +69,7 @@ const upload = multer({
 });
 
 if (!process.env.DATABASE_URL) {
-  console.error('Erro: DATABASE_URL é obrigatória no ambiente.');
+  logger.error('Erro: DATABASE_URL é obrigatória no ambiente.');
   process.exit(1);
 }
 
@@ -70,7 +82,7 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  console.error('[Pool] Erro inesperado em cliente inativo:', err.message);
+  logger.error('[Pool] Erro inesperado em cliente inativo:', err.message);
 });
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -131,7 +143,7 @@ function pgError(err, res) {
   if (err.code === '23503') {
     return res.status(400).json({ ok: false, error: 'Referência inválida.' });
   }
-  console.error('[DB]', err.message);
+  logger.error('[DB]', err.message);
   return res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
 }
 
@@ -464,7 +476,7 @@ Responda APENAS com JSON válido no formato: {"titulo":"...","resumo":"...","con
     if (jsonStart === -1 || jsonEnd === -1) return null;
     return JSON.parse(text.slice(jsonStart, jsonEnd + 1));
   } catch(e) {
-    console.error('[IA] synthesizeArticle falhou:', e.message);
+    logger.error('[IA] synthesizeArticle falhou:', e.message);
     return null;
   }
 }
@@ -472,42 +484,70 @@ Responda APENAS com JSON válido no formato: {"titulo":"...","resumo":"...","con
 // ─── Helper: inserir artigo com cota diária e síntese IA ─────────────────────
 
 async function inserirArtigo(item, feed) {
-  // Verificar e resetar cota diária se necessário
-  const fdRow = await queryOne('SELECT noticias_hoje, quantidade_diaria, ultima_reset, usar_ia, prompt_ia FROM sgua_feeds WHERE id=$1', [feed.id]);
-  if (!fdRow) return 0;
-  const hoje = today();
-  if (fdRow.ultima_reset && String(fdRow.ultima_reset).slice(0,10) < hoje) {
-    await pool.query('UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=$1 WHERE id=$2', [hoje, feed.id]).catch(e=>console.error('[inserirArtigo] reset cota falhou:', e.message));
-    fdRow.noticias_hoje = 0;
-  }
-  const qtdMax = fdRow.quantidade_diaria || 10;
-  if ((fdRow.noticias_hoje || 0) >= qtdMax) return 0; // cota atingida
-
-  let title = item.title.slice(0, 180);
-  let content = (item.description || item.title).slice(0, 4000);
-  let resumo = item.resumo || '';
-
-  // Síntese IA (apenas quando usar_ia=true e metodo HTML)
-  if (fdRow.usar_ia && item._metodo === 'html' && Anthropic && process.env.ANTHROPIC_API_KEY) {
-    const synth = await synthesizeArticle(title, content, feed.categoria || 'Geral', fdRow.prompt_ia || '');
-    if (synth) {
-      if (synth.titulo) title = String(synth.titulo).slice(0, 180);
-      if (synth.conteudo) content = String(synth.conteudo).slice(0, 4000);
-      if (synth.resumo) resumo = String(synth.resumo).slice(0, 500);
+  return withTransaction(async (client) => {
+    // SELECT FOR UPDATE evita race condition na cota diária
+    const { rows } = await client.query(
+      'SELECT noticias_hoje, quantidade_diaria, ultima_reset, usar_ia, prompt_ia FROM sgua_feeds WHERE id=$1 FOR UPDATE',
+      [feed.id]
+    );
+    const fdRow = rows[0];
+    if (!fdRow) return 0;
+    const hoje = today();
+    if (fdRow.ultima_reset && String(fdRow.ultima_reset).slice(0,10) < hoje) {
+      await client.query('UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=$1 WHERE id=$2', [hoje, feed.id]);
+      fdRow.noticias_hoje = 0;
     }
-  }
+    const qtdMax = fdRow.quantidade_diaria || 10;
+    if ((fdRow.noticias_hoje || 0) >= qtdMax) return 0;
 
-  const { rowCount } = await pool.query(
-    'INSERT INTO news (title,content,source,link,category,is_rss,resumo) VALUES ($1,$2,$3,$4,$5,true,$6) ON CONFLICT (title,source) DO NOTHING',
-    [title, content, item.source || feed.nome, item.link || null, item.category || 'Geral', resumo]
-  );
-  if (rowCount > 0) {
-    await pool.query('UPDATE sgua_feeds SET noticias_hoje=noticias_hoje+1 WHERE id=$1', [feed.id]).catch(e=>console.error('[inserirArtigo] incremento cota falhou:', e.message));
-  }
-  return rowCount;
+    let title = item.title.slice(0, 180);
+    let content = (item.description || item.title).slice(0, 4000);
+    let resumo = item.resumo || '';
+
+    // Síntese IA fora da transação (chamada de rede — não bloqueia lock)
+    if (fdRow.usar_ia && item._metodo === 'html' && Anthropic && process.env.ANTHROPIC_API_KEY) {
+      // Commit parcial para liberar lock durante síntese IA
+      const synth = await synthesizeArticle(title, content, feed.categoria || 'Geral', fdRow.prompt_ia || '');
+      if (synth) {
+        if (synth.titulo) title = String(synth.titulo).slice(0, 180);
+        if (synth.conteudo) content = String(synth.conteudo).slice(0, 4000);
+        if (synth.resumo) resumo = String(synth.resumo).slice(0, 500);
+      }
+    }
+
+    const { rowCount } = await client.query(
+      'INSERT INTO news (title,content,source,link,category,is_rss,resumo) VALUES ($1,$2,$3,$4,$5,true,$6) ON CONFLICT (title,source) DO NOTHING',
+      [title, content, item.source || feed.nome, item.link || null, item.category || 'Geral', resumo]
+    );
+    if (rowCount > 0) {
+      await client.query('UPDATE sgua_feeds SET noticias_hoje=noticias_hoje+1 WHERE id=$1', [feed.id]);
+    }
+    return rowCount;
+  }).catch(e => { logger.error({ err: e }, '[inserirArtigo] erro na transação'); return 0; });
 }
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
+
+// ─── JWT Secret ───────────────────────────────────────────────────────────────
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+  const crypto = require('crypto');
+  const s = crypto.randomBytes(48).toString('hex');
+  logger.warn('[Auth] JWT_SECRET não configurado — usando segredo volátil. Tokens serão invalidados no próximo restart.');
+  return s;
+})();
+const JWT_EXPIRES = process.env.JWT_EXPIRES || '12h';
+
+// ─── Supabase Storage (optional) ──────────────────────────────────────────────
+let supabaseStorage = null;
+if (createSupabaseClient && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  const sb = createSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+  supabaseStorage = sb.storage;
+  logger.info('[Storage] Supabase Storage habilitado.');
+}
+
+// ─── Middleware ───────────────────────────────────────────────────────────────
+
+app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/api/health' } }));
 
 // CORS para GitHub Pages (frontend estático em wesleyjuca.github.io)
 // Origens permitidas configuráveis via ALLOWED_ORIGINS (lista separada por vírgula); fallback para o padrão.
@@ -521,7 +561,7 @@ app.use((req, res, next) => {
   if (origin && allowed.includes(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -529,6 +569,21 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(PUBLIC_DIR));
+
+// ─── Auth middleware ──────────────────────────────────────────────────────────
+
+function requireAuth(req, res, next) {
+  if (!jwt) return next(); // JWT not installed — skip auth (development only)
+  const header = req.headers['authorization'] || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
+  try {
+    req.admin = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch (e) {
+    return res.status(401).json({ ok: false, error: 'Token inválido ou expirado.' });
+  }
+}
 
 // ─── Utility routes ───────────────────────────────────────────────────────────
 
@@ -547,13 +602,96 @@ app.get('/api/health/db', async (_req, res) => {
     await pool.query('SELECT 1');
     res.json({ ok: true, db: 'postgresql', now: new Date().toISOString() });
   } catch (err) {
-    console.error('[Health/DB]', err.message);
+    logger.error('[Health/DB]', err.message);
     res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.', detail: err.message });
   }
 });
 
 // Diagnóstico de conexão — mostra host/usuário sem expor a senha
-app.get('/api/debug/db', (_req, res) => {
+// ─── Auth endpoints ───────────────────────────────────────────────────────────
+
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, message: { ok: false, error: 'Muitas tentativas de login.' } });
+
+app.post('/api/auth/login', authLimiter, asyncRoute(async (req, res) => {
+  if (!jwt || !bcrypt) return res.status(503).json({ ok: false, error: 'Módulos de autenticação indisponíveis.' });
+  const email = sanitizeText((req.body || {}).email || '', 200).toLowerCase();
+  const senha = String((req.body || {}).senha || '').slice(0, 128);
+  if (!email || !senha) return res.status(400).json({ ok: false, error: 'E-mail e senha são obrigatórios.' });
+  const user = await queryOne('SELECT * FROM sgua_admin_users WHERE email=$1 AND ativo=true', [email]);
+  if (!user) return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
+  const valid = await bcrypt.compare(senha, user.password_hash);
+  if (!valid) return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
+  const payload = {
+    id: user.id, email: user.email, nome: user.nome,
+    perfil: user.perfil, permissoes: user.permissoes || {}
+  };
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+  res.json({ ok: true, token, user: Object.assign({}, payload, { ativo: true }) });
+}));
+
+app.get('/api/auth/me', requireAuth, asyncRoute(async (req, res) => {
+  const user = await queryOne('SELECT id,email,nome,perfil,permissoes,ativo FROM sgua_admin_users WHERE id=$1', [req.admin.id]);
+  if (!user) return res.status(404).json({ ok: false, error: 'Usuário não encontrado.' });
+  res.json({ ok: true, user });
+}));
+
+app.post('/api/auth/users', requireAuth, asyncRoute(async (req, res) => {
+  if (!bcrypt) return res.status(503).json({ ok: false, error: 'bcryptjs indisponível.' });
+  if (req.admin.perfil !== 'admin') return res.status(403).json({ ok: false, error: 'Acesso negado.' });
+  const body = req.body || {};
+  const email = sanitizeText(body.email || '', 200).toLowerCase();
+  const nome = sanitizeText(body.nome || '', 200);
+  const senha = String(body.senha || '').slice(0, 128);
+  const perfil = ['admin','gestor','viewer','gestor_unidade'].includes(body.perfil) ? body.perfil : 'gestor';
+  if (!email || !senha || !nome) return res.status(400).json({ ok: false, error: 'email, nome e senha são obrigatórios.' });
+  if (!validateEmail(email)) return res.status(400).json({ ok: false, error: 'E-mail inválido.' });
+  if (senha.length < 6) return res.status(400).json({ ok: false, error: 'Senha deve ter no mínimo 6 caracteres.' });
+  const hash = await bcrypt.hash(senha, 12);
+  try {
+    const row = await queryOne(
+      'INSERT INTO sgua_admin_users (email,nome,password_hash,perfil,permissoes) VALUES ($1,$2,$3,$4,$5) RETURNING id,email,nome,perfil',
+      [email, nome, hash, perfil, JSON.stringify(body.permissoes || {})]
+    );
+    res.status(201).json({ ok: true, data: row });
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ ok: false, error: 'E-mail já cadastrado.' });
+    throw e;
+  }
+}));
+
+app.put('/api/auth/users/:id', requireAuth, asyncRoute(async (req, res) => {
+  if (!bcrypt) return res.status(503).json({ ok: false, error: 'bcryptjs indisponível.' });
+  if (req.admin.perfil !== 'admin') return res.status(403).json({ ok: false, error: 'Acesso negado.' });
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const body = req.body || {};
+  const updates = [];
+  const params = [];
+  if (body.nome) { updates.push(`nome=$${params.length+1}`); params.push(sanitizeText(body.nome, 200)); }
+  if (body.perfil && ['admin','gestor','viewer','gestor_unidade'].includes(body.perfil)) {
+    updates.push(`perfil=$${params.length+1}`); params.push(body.perfil);
+  }
+  if (typeof body.ativo === 'boolean') { updates.push(`ativo=$${params.length+1}`); params.push(body.ativo); }
+  if (body.permissoes) { updates.push(`permissoes=$${params.length+1}`); params.push(JSON.stringify(body.permissoes)); }
+  if (body.senha) {
+    if (body.senha.length < 6) return res.status(400).json({ ok: false, error: 'Senha mínima 6 caracteres.' });
+    const hash = await bcrypt.hash(String(body.senha).slice(0, 128), 12);
+    updates.push(`password_hash=$${params.length+1}`); params.push(hash);
+  }
+  if (!updates.length) return res.status(400).json({ ok: false, error: 'Nenhum campo para atualizar.' });
+  params.push(id);
+  await query(`UPDATE sgua_admin_users SET ${updates.join(',')} WHERE id=$${params.length}`, params);
+  res.json({ ok: true });
+}));
+
+app.get('/api/auth/users', requireAuth, asyncRoute(async (req, res) => {
+  if (req.admin.perfil !== 'admin') return res.status(403).json({ ok: false, error: 'Acesso negado.' });
+  const rows = await query('SELECT id,email,nome,perfil,permissoes,ativo,created_at FROM sgua_admin_users ORDER BY id');
+  res.json({ ok: true, data: rows });
+}));
+
+// ─── Debug (protected) ───────────────────────────────────────────────────────
+app.get('/api/debug/db', requireAuth, (_req, res) => {
   try {
     const url = new URL(process.env.DATABASE_URL || '');
     res.json({
@@ -594,7 +732,7 @@ app.get('/api/users', asyncRoute(async (_req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.post('/api/users', asyncRoute(async (req, res) => {
+app.post('/api/users', requireAuth, asyncRoute(async (req, res) => {
   const name = sanitizeText(req.body.name, 120);
   const email = sanitizeText(req.body.email, 160).toLowerCase();
   const role = sanitizeText(req.body.role, 20) || 'viewer';
@@ -616,7 +754,7 @@ app.post('/api/users', asyncRoute(async (req, res) => {
   }
 }));
 
-app.put('/api/users/:id', asyncRoute(async (req, res) => {
+app.put('/api/users/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
 
@@ -645,7 +783,7 @@ app.put('/api/users/:id', asyncRoute(async (req, res) => {
   }
 }));
 
-app.delete('/api/users/:id', asyncRoute(async (req, res) => {
+app.delete('/api/users/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   await query('DELETE FROM users WHERE id = $1', [id]);
@@ -659,7 +797,7 @@ app.get('/api/units', asyncRoute(async (_req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.post('/api/units', asyncRoute(async (req, res) => {
+app.post('/api/units', requireAuth, asyncRoute(async (req, res) => {
   const payload = req.body || {};
   const name = sanitizeText(payload.name, 140);
   const address = sanitizeText(payload.address, 255) || null;
@@ -687,7 +825,7 @@ app.post('/api/units', asyncRoute(async (req, res) => {
   res.status(201).json({ ok: true, data });
 }));
 
-app.put('/api/units/:id', asyncRoute(async (req, res) => {
+app.put('/api/units/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
 
@@ -734,7 +872,7 @@ app.put('/api/units/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.delete('/api/units/:id', asyncRoute(async (req, res) => {
+app.delete('/api/units/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const photos = await query('SELECT filename FROM unit_photos WHERE unit_id = $1', [id]);
@@ -762,7 +900,7 @@ app.get('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.post('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
+app.post('/api/units/:id/occupancy', requireAuth, asyncRoute(async (req, res) => {
   const unitId = parsePositiveId(req.params.id);
   if (!unitId) return res.status(400).json({ ok: false, error: 'ID da unidade inválido.' });
 
@@ -806,7 +944,7 @@ app.post('/api/units/:id/occupancy', asyncRoute(async (req, res) => {
   }
 }));
 
-app.put('/api/occupancy/:id/checkout', asyncRoute(async (req, res) => {
+app.put('/api/occupancy/:id/checkout', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID de ocupação inválido.' });
 
@@ -860,7 +998,7 @@ app.get('/api/news', asyncRoute(async (_req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.post('/api/news', asyncRoute(async (req, res) => {
+app.post('/api/news', requireAuth, asyncRoute(async (req, res) => {
   const b = req.body || {};
   const title = sanitizeText(b.titulo || b.title, 180);
   const content = sanitizeText(b.conteudo || b.content, 4000);
@@ -880,7 +1018,7 @@ app.post('/api/news', asyncRoute(async (req, res) => {
   res.status(201).json({ ok: true, data: row });
 }));
 
-app.put('/api/news/:id', asyncRoute(async (req, res) => {
+app.put('/api/news/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
 
@@ -914,7 +1052,7 @@ app.put('/api/news/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.delete('/api/news/:id', asyncRoute(async (req, res) => {
+app.delete('/api/news/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   await query('DELETE FROM news WHERE id = $1', [id]);
@@ -958,7 +1096,7 @@ app.post('/api/requests', asyncRoute(async (req, res) => {
   res.status(201).json({ ok: true, data });
 }));
 
-app.put('/api/requests/:id', asyncRoute(async (req, res) => {
+app.put('/api/requests/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
 
@@ -984,7 +1122,7 @@ app.put('/api/requests/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.delete('/api/requests/:id', asyncRoute(async (req, res) => {
+app.delete('/api/requests/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   await query('DELETE FROM requests WHERE id = $1', [id]);
@@ -1081,7 +1219,7 @@ app.get('/api/state', asyncRoute(async (_req, res) => {
   res.json(state);
 }));
 
-app.put('/api/state', asyncRoute(async (req, res) => {
+app.put('/api/state', requireAuth, asyncRoute(async (req, res) => {
   const state = req.body;
   if (!state || typeof state !== 'object') return res.status(400).json({ ok: false, error: 'Payload inválido.' });
   await query(
@@ -1093,7 +1231,7 @@ app.put('/api/state', asyncRoute(async (req, res) => {
 
 // ─── RSS Feed sync ────────────────────────────────────────────────────────────
 
-app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
+app.post('/api/feeds/sync', requireAuth, asyncRoute(async (req, res) => {
   const body = req.body || {};
   const feeds = Array.isArray(body.feeds) ? body.feeds : [];
   const activeFeeds = feeds.filter((f) => f && f.ativo && typeof f.url === 'string' && f.url.trim());
@@ -1164,7 +1302,7 @@ app.get('/api/feeds', asyncRoute(async (req, res) => {
   res.json({ ok: true, feeds: feedsComLogs });
 }));
 
-app.post('/api/feeds', asyncRoute(async (req, res) => {
+app.post('/api/feeds', requireAuth, asyncRoute(async (req, res) => {
   const body = req.body || {};
   const nome = sanitizeText(body.nome||'', 200);
   const url = (body.url||'').trim();
@@ -1194,7 +1332,7 @@ app.post('/api/feeds', asyncRoute(async (req, res) => {
   res.status(201).json({ ok:true, feed, validacao:{ok:validacao.ok, count:validacao.ok?validacao.items.length:0, metodo:metodoInicial, error:validacao.ok?null:validacao.error} });
 }));
 
-app.put('/api/feeds/:id', asyncRoute(async (req, res) => {
+app.put('/api/feeds/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const existing = await queryOne('SELECT * FROM sgua_feeds WHERE id=$1',[id]);
@@ -1230,7 +1368,7 @@ app.put('/api/feeds/:id', asyncRoute(async (req, res) => {
   res.json({ ok:true, feed, validacao: urlMudou?{ok:validacao.ok,count:validacao.ok?validacao.items.length:0,error:validacao.ok?null:validacao.error}:null });
 }));
 
-app.delete('/api/feeds/:id', asyncRoute(async (req, res) => {
+app.delete('/api/feeds/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   await query('DELETE FROM sgua_feed_logs WHERE feed_id=$1',[id]);
@@ -1239,7 +1377,7 @@ app.delete('/api/feeds/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.post('/api/feeds/:id/toggle', asyncRoute(async (req, res) => {
+app.post('/api/feeds/:id/toggle', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const rows = await query('UPDATE sgua_feeds SET ativo=NOT ativo, updated_at=now() WHERE id=$1 RETURNING *',[id]);
@@ -1247,7 +1385,7 @@ app.post('/api/feeds/:id/toggle', asyncRoute(async (req, res) => {
   res.json({ ok: true, feed: rows[0] });
 }));
 
-app.post('/api/feeds/:id/sync', asyncRoute(async (req, res) => {
+app.post('/api/feeds/:id/sync', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const feed = await queryOne('SELECT * FROM sgua_feeds WHERE id=$1',[id]);
@@ -1282,7 +1420,7 @@ app.post('/api/feeds/:id/sync', asyncRoute(async (req, res) => {
   res.json({ ok:true, added, feed: feedAtualizado });
 }));
 
-app.post('/api/feeds/scrape', asyncRoute(async (req, res) => {
+app.post('/api/feeds/scrape', requireAuth, asyncRoute(async (req, res) => {
   const { url, nome, categoria } = req.body || {};
   if (!url || typeof url !== 'string' || !isSafeUrl(url))
     return res.status(400).json({ ok: false, error: 'URL inválida.' });
@@ -1297,7 +1435,7 @@ app.post('/api/feeds/scrape', asyncRoute(async (req, res) => {
   res.json({ ok: true, count: result.items.length, metodo: result.metodo || 'rss', rss_url: result.rss_url || null, items: result.items.slice(0, 3) });
 }));
 
-app.post('/api/feeds/autodiscover', asyncRoute(async (req, res) => {
+app.post('/api/feeds/autodiscover', requireAuth, asyncRoute(async (req, res) => {
   const { url } = req.body || {};
   if (!url || !isSafeUrl(url)) return res.status(400).json({ ok: false, error: 'URL inválida.' });
   let base;
@@ -1341,7 +1479,7 @@ app.get('/api/units/:id/photos', asyncRoute(async (req, res) => {
   res.json({ ok: true, data });
 }));
 
-app.post('/api/units/:id/photos', upload.single('photo'), asyncRoute(async (req, res) => {
+app.post('/api/units/:id/photos', requireAuth, upload.single('photo'), asyncRoute(async (req, res) => {
   const unitId = parsePositiveId(req.params.id);
   if (!unitId || !req.file) {
     if (req.file) fs.unlink(req.file.path, () => {});
@@ -1365,12 +1503,24 @@ app.post('/api/units/:id/photos', upload.single('photo'), asyncRoute(async (req,
   res.status(201).json({ ok: true, data });
 }));
 
-app.post('/api/upload/photo', upload.single('photo'), asyncRoute(async (req, res) => {
+app.post('/api/upload/photo', requireAuth, upload.single('photo'), asyncRoute(async (req, res) => {
   if (!req.file) return res.status(400).json({ ok: false, error: 'Nenhuma imagem enviada.' });
+  if (supabaseStorage) {
+    const { data, error } = await supabaseStorage.from('photos').upload(
+      `uploads/${req.file.filename}`, req.file.buffer || fs.readFileSync(req.file.path),
+      { contentType: req.file.mimetype, upsert: false }
+    );
+    if (!error && data) {
+      const { data: pub } = supabaseStorage.from('photos').getPublicUrl(`uploads/${req.file.filename}`);
+      fs.unlink(req.file.path, () => {});
+      return res.json({ ok: true, url: pub.publicUrl });
+    }
+    logger.warn({ err: error }, '[Storage] Supabase upload falhou — usando disco local');
+  }
   res.json({ ok: true, url: '/uploads/photos/' + req.file.filename });
 }));
 
-app.post('/api/feeds/test', asyncRoute(async (req, res) => {
+app.post('/api/feeds/test', requireAuth, asyncRoute(async (req, res) => {
   const { url, nome } = req.body || {};
   if (!url || typeof url !== 'string' || !isSafeUrl(url))
     return res.status(400).json({ ok: false, error: 'URL inválida.' });
@@ -1380,7 +1530,7 @@ app.post('/api/feeds/test', asyncRoute(async (req, res) => {
   res.json({ ok: true, count: result.items.length, metodo: result.metodo||'rss', rss_url: result.rss_url||null, items: result.items.slice(0, 3) });
 }));
 
-app.delete('/api/photos/:id', asyncRoute(async (req, res) => {
+app.delete('/api/photos/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const photo = await queryOne('SELECT * FROM unit_photos WHERE id = $1', [id]);
@@ -1393,7 +1543,7 @@ app.delete('/api/photos/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.put('/api/photos/:id/banner', asyncRoute(async (req, res) => {
+app.put('/api/photos/:id/banner', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const photo = await queryOne('SELECT * FROM unit_photos WHERE id = $1', [id]);
@@ -1411,7 +1561,7 @@ app.get('/api/backup', asyncRoute(async (_req, res) => {
   res.json({ ok: true, data: rows });
 }));
 
-app.post('/api/backup', asyncRoute(async (req, res) => {
+app.post('/api/backup', requireAuth, asyncRoute(async (req, res) => {
   const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua'");
   if (!row) return res.status(404).json({ ok: false, error: 'Estado não encontrado.' });
   const json = JSON.stringify(row.value);
@@ -1433,7 +1583,7 @@ app.get('/api/backup/:id', asyncRoute(async (req, res) => {
   res.json({ ok: true, data: row });
 }));
 
-app.post('/api/backup/:id/restore', asyncRoute(async (req, res) => {
+app.post('/api/backup/:id/restore', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const backup = await queryOne('SELECT snapshot FROM sgua_backups WHERE id = $1', [id]);
@@ -1445,7 +1595,7 @@ app.post('/api/backup/:id/restore', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete('/api/backup/:id', asyncRoute(async (req, res) => {
+app.delete('/api/backup/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   await query('DELETE FROM sgua_backups WHERE id = $1', [id]);
@@ -1472,7 +1622,7 @@ app.post('/api/reg-requests', asyncRoute(async (req, res) => {
   res.status(201).json({ ok: true, data: result });
 }));
 
-app.put('/api/reg-requests/:id', asyncRoute(async (req, res) => {
+app.put('/api/reg-requests/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const body = req.body || {};
@@ -1502,7 +1652,7 @@ app.get('/api/notifications', asyncRoute(async (req, res) => {
   res.json({ ok: true, data: rows });
 }));
 
-app.post('/api/notifications', asyncRoute(async (req, res) => {
+app.post('/api/notifications', requireAuth, asyncRoute(async (req, res) => {
   const body = req.body || {};
   const result = await queryOne(
     'INSERT INTO sgua_notifications (user_id, tipo, canal, titulo, corpo) VALUES ($1,$2,$3,$4,$5) RETURNING *',
@@ -1512,14 +1662,14 @@ app.post('/api/notifications', asyncRoute(async (req, res) => {
   res.status(201).json({ ok: true, data: result });
 }));
 
-app.put('/api/notifications/read-all', asyncRoute(async (req, res) => {
+app.put('/api/notifications/read-all', requireAuth, asyncRoute(async (req, res) => {
   const userId = parsePositiveId((req.body||{}).user_id);
   if (!userId) return res.status(400).json({ ok: false, error: 'user_id inválido.' });
   await query('UPDATE sgua_notifications SET lida=true WHERE user_id=$1', [userId]);
   res.json({ ok: true });
 }));
 
-app.put('/api/notifications/:id/read', asyncRoute(async (req, res) => {
+app.put('/api/notifications/:id/read', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   await query('UPDATE sgua_notifications SET lida=true WHERE id=$1', [id]);
@@ -1553,7 +1703,7 @@ app.post('/api/suggestions', asyncRoute(async (req, res) => {
   } catch(e) { res.json({ ok: false, error: e.message }); }
 }));
 
-app.put('/api/suggestions/:id', asyncRoute(async (req, res) => {
+app.put('/api/suggestions/:id', requireAuth, asyncRoute(async (req, res) => {
   try {
     const id = parsePositiveId(req.params.id);
     if(!id) return res.json({ ok: false, error: 'ID inválido' });
@@ -1605,7 +1755,7 @@ app.get('/api/email/config', (_req, res) => {
   });
 });
 
-app.post('/api/email/test', asyncRoute(async (req, res) => {
+app.post('/api/email/test', requireAuth, asyncRoute(async (req, res) => {
   const to = sanitizeText((req.body||{}).to || '', 200);
   if (!to || !to.includes('@')) return res.json({ ok: false, error: 'E-mail inválido.' });
   const transporter = createTransporter();
@@ -1624,7 +1774,7 @@ app.post('/api/email/test', asyncRoute(async (req, res) => {
   }
 }));
 
-app.post('/api/email/send', asyncRoute(async (req, res) => {
+app.post('/api/email/send', requireAuth, asyncRoute(async (req, res) => {
   const body = req.body || {};
   const to = sanitizeText(body.to || '', 200);
   const subject = sanitizeText(body.subject || 'Notificação SGUA', 200);
@@ -1672,26 +1822,51 @@ app.use((err, _req, res, _next) => {
     || msg.includes('tenant') || msg.includes('user not found')
     || msg.includes('password') || msg.includes('ssl') || msg.includes('database');
   if (isDbErr) {
-    console.error('[DB]', err.message);
+    logger.error('[DB]', err.message);
     return res.status(503).json({ ok: false, error: 'Serviço de banco de dados indisponível.' });
   }
-  console.error(err);
+  logger.error(err);
   res.status(500).json({ ok: false, error: 'Erro interno no servidor.' });
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const server = app.listen(PORT, async () => {
-  console.log(`SGUA executando em http://localhost:${PORT}`);
-  console.log(`Banco: PostgreSQL (Supabase)`);
+  logger.info(`SGUA executando em http://localhost:${PORT}`);
+  logger.info(`Banco: PostgreSQL (Supabase)`);
   // Avisos de configuração opcional (não fatais)
-  if (!process.env.ANTHROPIC_API_KEY) console.warn('[Config] ANTHROPIC_API_KEY ausente — síntese de artigos por IA desabilitada.');
-  if (!process.env.SMTP_HOST) console.warn('[Config] SMTP_HOST ausente — notificações por e-mail desabilitadas.');
+  if (!process.env.ANTHROPIC_API_KEY) logger.warn('[Config] ANTHROPIC_API_KEY ausente — síntese de artigos por IA desabilitada.');
+  if (!process.env.SMTP_HOST) logger.warn('[Config] SMTP_HOST ausente — notificações por e-mail desabilitadas.');
   if (process.env.RENDER) {
-    console.warn('[Aviso] Render.com free tier: uploads de fotos em disco são temporários e serão perdidos a cada redeploy. Configure um Persistent Disk ou migre para Supabase Storage para fotos permanentes.');
+    logger.warn('[Aviso] Render.com free tier: uploads de fotos em disco são temporários e serão perdidos a cada redeploy. Configure um Persistent Disk ou migre para Supabase Storage para fotos permanentes.');
   }
   // Auto-criar tabelas
   try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_admin_users (
+      id SERIAL PRIMARY KEY,
+      email VARCHAR(200) NOT NULL UNIQUE,
+      nome VARCHAR(200) NOT NULL DEFAULT 'Admin',
+      password_hash TEXT NOT NULL,
+      perfil VARCHAR(30) DEFAULT 'gestor',
+      permissoes JSONB DEFAULT '{}',
+      ativo BOOLEAN DEFAULT true,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )`);
+    // Seed admin padrão se a tabela estiver vazia
+    if (bcrypt) {
+      const { rows: admins } = await pool.query('SELECT id FROM sgua_admin_users LIMIT 1');
+      if (admins.length === 0) {
+        const defaultEmail = process.env.ADMIN_EMAIL || 'admin@sema.ac.gov.br';
+        const defaultPass = process.env.ADMIN_PASSWORD || 'SemaAC@2026';
+        const hash = await bcrypt.hash(defaultPass, 12);
+        await pool.query(
+          `INSERT INTO sgua_admin_users (email,nome,password_hash,perfil,permissoes) VALUES ($1,$2,$3,'admin',$4)
+           ON CONFLICT (email) DO NOTHING`,
+          [defaultEmail, 'Administrador SEMA', hash, JSON.stringify({units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true,backup:true,notif:true,ownUnits:false})]
+        );
+        logger.info('[Auth] Admin padrão criado: ' + defaultEmail);
+      }
+    }
     await pool.query(`CREATE TABLE IF NOT EXISTS sgua_suggestions (
       id SERIAL PRIMARY KEY, texto TEXT NOT NULL, tipo VARCHAR(40) DEFAULT 'sistema',
       status VARCHAR(20) DEFAULT 'pendente', prioridade VARCHAR(20) DEFAULT 'media',
@@ -1759,31 +1934,31 @@ const server = app.listen(PORT, async () => {
           [String(f.nome).slice(0,200), String(f.url).trim(), String(f.categoria||'Geral').slice(0,100), f.ativo !== false, 'aguardando']
         ).catch(()=>{});
       }
-      console.log('[DB] Feeds migrados para sgua_feeds');
+      logger.info('[DB] Feeds migrados para sgua_feeds');
     }
-  } catch(e) { console.error('[DB] startup init failed:', e.message); }
+  } catch(e) { logger.error('[DB] startup init failed:', e.message); }
 });
 
 // ─── Robustez de processo: erros não tratados + desligamento gracioso ──────────
 process.on('unhandledRejection', (reason) => {
-  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+  logger.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
 });
 process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+  logger.error('[uncaughtException]', err && err.stack ? err.stack : err);
 });
 let _shuttingDown = false;
 function gracefulShutdown(signal) {
   if (_shuttingDown) return;
   _shuttingDown = true;
-  console.log(`[Shutdown] Sinal ${signal} recebido — encerrando com segurança...`);
+  logger.info(`[Shutdown] Sinal ${signal} recebido — encerrando com segurança...`);
   server.close(() => {
     pool.end().then(() => {
-      console.log('[Shutdown] Conexões encerradas. Até logo.');
+      logger.info('[Shutdown] Conexões encerradas. Até logo.');
       process.exit(0);
     }).catch(() => process.exit(0));
   });
   // Failsafe: força saída se o close demorar demais
-  setTimeout(() => { console.warn('[Shutdown] Timeout — forçando saída.'); process.exit(1); }, 10000).unref();
+  setTimeout(() => { logger.warn('[Shutdown] Timeout — forçando saída.'); process.exit(1); }, 10000).unref();
 }
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
@@ -1793,16 +1968,16 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 cron.schedule('0 7 * * 0', async () => {
   try {
     const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua'");
-    if (!row) { console.warn('[Backup] app_state não encontrado.'); return; }
+    if (!row) { logger.warn('[Backup] app_state não encontrado.'); return; }
     const json = JSON.stringify(row.value);
     const sizeKb = Math.ceil(Buffer.byteLength(json, 'utf8') / 1024);
     const label = `Auto — ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Rio_Branco' })}`;
     await query('INSERT INTO sgua_backups (label, snapshot, size_kb) VALUES ($1, $2, $3)', [label, row.value, sizeKb]);
     // Retenção: manter apenas os 30 backups mais recentes
     await query('DELETE FROM sgua_backups WHERE id NOT IN (SELECT id FROM sgua_backups ORDER BY created_at DESC LIMIT 30)');
-    console.log(`[Backup] Automático concluído — ${sizeKb} KB`);
+    logger.info(`[Backup] Automático concluído — ${sizeKb} KB`);
   } catch (err) {
-    console.error('[Backup] Falha no backup automático:', err.message);
+    logger.error('[Backup] Falha no backup automático:', err.message);
   }
 }, { timezone: 'UTC' });
 
@@ -1810,7 +1985,7 @@ cron.schedule('0 7 * * 0', async () => {
 cron.schedule('0 6 * * *', async () => {
   try {
     const feeds = await query('SELECT * FROM sgua_feeds WHERE ativo=true AND (frequencia=\'diaria\' OR frequencia=\'semanal\')');
-    if (!feeds.length) { console.log('[CRON-RSS] Sem feeds ativos'); return; }
+    if (!feeds.length) { logger.info('[CRON-RSS] Sem feeds ativos'); return; }
     let totalAdded = 0;
     const warnings = [];
     for (const f of feeds) {
@@ -1844,14 +2019,14 @@ cron.schedule('0 6 * * *', async () => {
         totalAdded += added;
       } catch(e){ warnings.push(f.nome+': '+e.message); }
     }
-    console.log(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
-  } catch(e){ console.error('[CRON-RSS] Falha:',e.message); }
+    logger.info(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
+  } catch(e){ logger.error('[CRON-RSS] Falha:',e.message); }
 }, { timezone: 'UTC' });
 
 // Cron: reset cota diária (meia-noite UTC)
 cron.schedule('0 0 * * *', async () => {
   try {
     await pool.query("UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=CURRENT_DATE WHERE ultima_reset < CURRENT_DATE OR ultima_reset IS NULL");
-    console.log('[CRON-RESET] Cotas diárias resetadas');
-  } catch(e){ console.error('[CRON-RESET] Falha:',e.message); }
+    logger.info('[CRON-RESET] Cotas diárias resetadas');
+  } catch(e){ logger.error('[CRON-RESET] Falha:',e.message); }
 }, { timezone: 'UTC' });

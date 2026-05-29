@@ -119,3 +119,41 @@ test('alert() bloqueante substituído por notify() no frontend', () => {
   assert.ok(src.includes('function notify('), 'helper notify() deve existir');
   assert.ok(alertCount <= 1, 'alert() só deve aparecer como fallback dentro de notify()');
 });
+
+test('POST /api/auth/login endpoint definido no server', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("'/api/auth/login'"), 'endpoint de login JWT deve existir');
+});
+
+test('requireAuth middleware definido no server', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('function requireAuth('), 'middleware requireAuth deve estar definido');
+});
+
+test('sgua_admin_users criado no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_admin_users'), 'tabela sgua_admin_users deve ser criada no startup');
+});
+
+test('apiFetch definido no frontend com suporte a JWT', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function apiFetch('), 'helper apiFetch deve existir');
+  assert.ok(src.includes('Authorization'), 'apiFetch deve enviar header Authorization');
+});
+
+test('manifest.json existe para PWA', () => {
+  assert.doesNotThrow(() => {
+    const data = fs.readFileSync(path.join(ROOT, 'public', 'manifest.json'), 'utf8');
+    const manifest = JSON.parse(data);
+    assert.ok(manifest.name && manifest.icons, 'manifest deve ter name e icons');
+  });
+});
+
+test('service worker sw.js existe', () => {
+  assert.ok(fs.existsSync(path.join(ROOT, 'public', 'sw.js')), 'sw.js deve existir');
+});
+
+test('JWT_SECRET documentado no .env.example', () => {
+  const ex = fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8');
+  assert.ok(ex.includes('JWT_SECRET'), 'JWT_SECRET deve estar documentado');
+});

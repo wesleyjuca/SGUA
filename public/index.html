@@ -40,6 +40,12 @@ code{font-family:monospace}
 @keyframes sgua-shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
 .sgua-skel{background:linear-gradient(90deg,#e8ede8 25%,#f4f7f4 50%,#e8ede8 75%);background-size:800px 100%;animation:sgua-shimmer 1.4s infinite linear;border-radius:6px}
 </style>
+<link rel="manifest" href="/manifest.json"/>
+<meta name="theme-color" content="#0F5C3A"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="SEMA/AC"/>
 </head>
 <body>
 <div id="app-loading">
@@ -219,6 +225,25 @@ function lsClear(){
   }
 }
 
+// ─── apiFetch — fetch wrapper com JWT automático ────────────────────────────
+function apiFetch(url, opts) {
+  var token;
+  try { token = localStorage.getItem('__sgua_jwt') || ''; } catch(e) { token = ''; }
+  var o = Object.assign({}, opts || {});
+  var h = Object.assign({}, o.headers || {});
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  o.headers = h;
+  return fetch(url, o).then(function(r) {
+    if (r.status === 401) {
+      try {
+        localStorage.removeItem('__sgua_jwt');
+        if (typeof window !== 'undefined' && window.__sguaReLogin) window.__sguaReLogin();
+      } catch(e) {}
+    }
+    return r;
+  });
+}
+
 // Supabase — persistência direta (sem servidor intermediário)
 // Guard: se o CDN não carregar, o app continua funcionando com localStorage
 var _supa=null;
@@ -262,7 +287,7 @@ async function apiSyncFeeds(feedsAtivos,newsExistentes){
   var ativos=(feedsAtivos||[]).filter(function(f){return f.ativo;});
   if(!ativos.length) return {ok:false,added:0,news:newsExistentes||[],feeds:feedsAtivos||[],warnings:['Nenhum feed ativo.']};
   try {
-    var r=await fetch('/api/feeds/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feeds:ativos})});
+    var r=await apiFetch('/api/feeds/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feeds:ativos})});
     var data=await r.json();
     if(!data.ok) return {ok:false,added:0,news:newsExistentes||[],feeds:feedsAtivos||[],warnings:[data.error||'Erro no servidor de feeds.']};
     var itens=data.items||[];
@@ -1589,7 +1614,7 @@ function FmFd(p){
   function verificarRSS(){
     if(!f.url.trim()||!f.url.match(/^https?:\/\//)){setErrFd('Digite uma URL válida primeiro.');return;}
     setVerifying(true);setVerif(null);
-    fetch('/api/feeds/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome||'Teste',categoria:f.categoria||'Geral'})})
+    apiFetch('/api/feeds/scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome||'Teste',categoria:f.categoria||'Geral'})})
       .then(function(r){return r.json();})
       .then(function(d){setVerif(d);setVerifying(false);})
       .catch(function(){setVerif({ok:false,error:'Servidor não respondeu. Verifique se a URL está acessível publicamente e tente novamente.'});setVerifying(false);});
@@ -1597,7 +1622,7 @@ function FmFd(p){
   function autoDescobrirRSS(){
     if(!f.url.trim()||!f.url.match(/^https?:\/\//)){setErrFd('Digite a URL do site primeiro.');return;}
     setDiscovering(true);setDiscoRes(null);
-    fetch('/api/feeds/autodiscover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url})})
+    apiFetch('/api/feeds/autodiscover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url})})
       .then(function(r){return r.json();})
       .then(function(d){setDiscoRes(d);setDiscovering(false);})
       .catch(function(){setDiscoRes({ok:false,encontrados:[]});setDiscovering(false);});
@@ -1758,7 +1783,7 @@ function FmUn(p){
     if(!file)return;
     upd(campo==='foto'?'uploadingFoto':'uploadingGal',true);
     var fd=new FormData();fd.append('photo',file);
-    fetch('/api/upload/photo',{method:'POST',body:fd})
+    apiFetch('/api/upload/photo',{method:'POST',body:fd})
       .then(function(r){return r.json();})
       .then(function(d){
         if(d.ok){if(campo==='foto')upd('foto',d.url);
@@ -1977,17 +2002,41 @@ function TelaLogin(p){
   function doLogin(){
     var lockSec=getLockSeconds();
     if(lockSec>0){setErr("Muitas tentativas. Aguarde "+lockSec+"s para tentar novamente.");return;}
-    var u=users.find(function(x){return x.email.toLowerCase()===email.toLowerCase()&&verifyPwd(pwd,x.pwdHash);});
-    if(!u){
-      var next=attempts+1;
-      setAttempts(next);localStorage.setItem('__sgua_attempts',String(next));
-      if(next>=5){var ts=Date.now();setLockTs(ts);localStorage.setItem('__sgua_lock_ts',String(ts));localStorage.setItem('__sgua_attempts','0');setAttempts(0);}
-      setErr("E-mail ou senha incorretos."+(next>=5?" Conta bloqueada por 5 minutos.":next>=3?" Mais "+(5-next)+" tentativa(s) antes do bloqueio.":""));
-      onAuthFail({type:'auth_fail',sev:'warn',msg:'Login falhou para: '+email.slice(0,40),src:'TelaLogin',det:'Credenciais inválidas',sug:'Verificar email/senha ou usar recuperação.'});return;
-    }
-    localStorage.setItem('__sgua_attempts','0');setAttempts(0);
-    if(!u.ativo){setErr("Conta desativada. Contate o administrador.");onAuthFail({type:'auth_fail',sev:'warn',msg:'Login bloqueado — conta inativa: '+email.slice(0,40),src:'TelaLogin',det:'Conta desativada',sug:'Reativar o usuário no painel de administração.'});return;}
-    onLogin(u);
+    // Tentar auth server-side via JWT
+    fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,senha:pwd})})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(!d.ok){
+          var next=attempts+1;
+          setAttempts(next);localStorage.setItem('__sgua_attempts',String(next));
+          if(next>=5){var ts=Date.now();setLockTs(ts);localStorage.setItem('__sgua_lock_ts',String(ts));localStorage.setItem('__sgua_attempts','0');setAttempts(0);}
+          setErr(d.error||"E-mail ou senha incorretos."+(next>=5?" Conta bloqueada por 5 minutos.":next>=3?" Mais "+(5-next)+" tentativa(s) antes do bloqueio.":""));
+          onAuthFail({type:'auth_fail',sev:'warn',msg:'Login falhou para: '+email.slice(0,40),src:'TelaLogin',det:d.error||'Credenciais inválidas',sug:'Verificar email/senha.'});
+          return;
+        }
+        // Sucesso server-side
+        try{localStorage.setItem('__sgua_jwt',d.token);}catch(e){}
+        localStorage.setItem('__sgua_attempts','0');setAttempts(0);
+        // Montar objeto curUser com shape esperado pelo app
+        var u=Object.assign({unitIds:[],criadoEm:new Date().toISOString().slice(0,10)},
+          {permissoes:{units:true,news:true,users:true,sols:true,feeds:true,cfg:true,rel:true,backup:true,notif:true,ownUnits:false}},
+          d.user);
+        onLogin(u);
+      })
+      .catch(function(){
+        // Fallback para auth client-side (offline / sem servidor)
+        var u=users.find(function(x){return x.email.toLowerCase()===email.toLowerCase()&&verifyPwd(pwd,x.pwdHash);});
+        if(!u){
+          var next=attempts+1;
+          setAttempts(next);localStorage.setItem('__sgua_attempts',String(next));
+          if(next>=5){var ts=Date.now();setLockTs(ts);localStorage.setItem('__sgua_lock_ts',String(ts));localStorage.setItem('__sgua_attempts','0');setAttempts(0);}
+          setErr("E-mail ou senha incorretos."+(next>=5?" Conta bloqueada por 5 minutos.":next>=3?" Mais "+(5-next)+" tentativa(s) antes do bloqueio.":""));
+          onAuthFail({type:'auth_fail',sev:'warn',msg:'Login falhou: '+email.slice(0,40),src:'TelaLogin',det:'Credenciais inválidas',sug:'Verificar email/senha.'});return;
+        }
+        localStorage.setItem('__sgua_attempts','0');setAttempts(0);
+        if(!u.ativo){setErr("Conta desativada. Contate o administrador.");return;}
+        onLogin(u);
+      });
   }
   function doForgot(){
     var u=users.find(function(x){return x.email.toLowerCase()===resetEmail.toLowerCase();});
@@ -2376,7 +2425,7 @@ function AdminSugestoes(p){
   useEffect(function(){fetchSugs();},[]);
   function fetchSugs(){
     setLoading(true);
-    fetch('/api/suggestions').then(function(r){return r.json();}).then(function(d){
+    apiFetch('/api/suggestions').then(function(r){return r.json();}).then(function(d){
       setLoading(false);
       if(!d.ok){toast2('Erro ao carregar sugestões: '+(d.error||'falha'),C.rm);return;}
       setItems(d.items||[]);
@@ -2393,7 +2442,7 @@ function AdminSugestoes(p){
     if((!pers||!pers.logo)&&!jaTemTipo('visual')) sugs.push({texto:'Configure o logo da organização em Personalização para melhorar a identidade visual.',tipo:'visual',prioridade:'baixa',impacto:'Melhora identidade visual'});
     if(sugs.length===0){toast2('Nenhuma nova sugestão — sistema em boa forma!');return;}
     Promise.all(sugs.map(function(s){
-      return fetch('/api/suggestions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)}).then(function(r){return r.json();});
+      return apiFetch('/api/suggestions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(s)}).then(function(r){return r.json();});
     })).then(function(results){
       var erros=results.filter(function(d){return !d.ok;}).length;
       fetchSugs();
@@ -2402,13 +2451,13 @@ function AdminSugestoes(p){
     }).catch(function(){toast2('Falha ao gerar sugestões.',C.rm);});
   }
   function updateStatus(id,status){
-    fetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})})
+    apiFetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status})})
       .then(function(r){return r.json();})
       .then(function(d){if(d.ok){fetchSugs();toast2('Status atualizado.');}else toast2('Erro: '+(d.error||'falha'),C.rm);})
       .catch(function(){toast2('Falha de conexão.',C.rm);});
   }
   function updateObs(id){
-    fetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({obs:obsMap[id]||''})})
+    apiFetch('/api/suggestions/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({obs:obsMap[id]||''})})
       .then(function(r){return r.json();})
       .then(function(d){if(d.ok){fetchSugs();toast2('Observação salva.');}else toast2('Erro: '+(d.error||'falha'),C.rm);})
       .catch(function(){toast2('Falha de conexão.',C.rm);});
@@ -2711,12 +2760,12 @@ function NotifPanel(p){
   var notifs=p.notifs||[],setNotifs=p.setNotifs,curUser=p.curUser,C=p.C,onClose=p.onClose;
   var unread=notifs.filter(function(n){return !n.lida;}).length;
   function markRead(id){
-    fetch('/api/notifications/'+id+'/read',{method:'PUT'})
+    apiFetch('/api/notifications/'+id+'/read',{method:'PUT'})
       .then(function(){setNotifs(function(ns){return ns.map(function(n){return n.id===id?Object.assign({},n,{lida:true}):n;});});});
   }
   function markAll(){
     if(!curUser)return;
-    fetch('/api/notifications/read-all',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:curUser.id})})
+    apiFetch('/api/notifications/read-all',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:curUser.id})})
       .then(function(){setNotifs(function(ns){return ns.map(function(n){return Object.assign({},n,{lida:true});});});});
   }
   var recentes=notifs.slice(0,10);
@@ -2758,12 +2807,12 @@ function AdminNotificacoes(p){
   var sEmailLog=useState([]);var emailLog=sEmailLog[0],setEmailLog=sEmailLog[1];
   var sTesting=useState(false);var testing=sTesting[0],setTesting=sTesting[1];
   useEffect(function(){
-    fetch('/api/email/config').then(function(r){return r.json();}).then(function(d){if(d.ok)setEmailConfig(d);}).catch(function(){});
+    apiFetch('/api/email/config').then(function(r){return r.json();}).then(function(d){if(d.ok)setEmailConfig(d);}).catch(function(){});
   },[]);
   useEffect(function(){
     if(tab!=='historico')return;
     setLoad(true);
-    fetch('/api/notifications?user_id=0')
+    apiFetch('/api/notifications?user_id=0')
       .then(function(r){return r.json();})
       .then(function(r){if(r.ok)setHist(r.data||[]);setLoad(false);})
       .catch(function(){setLoad(false);});
@@ -2777,7 +2826,7 @@ function AdminNotificacoes(p){
     if(!emailTo||!emailTo.includes('@')){toast2('Digite um e-mail válido.',C.rm);return;}
     setTesting(true);
     var t0=Date.now();
-    fetch('/api/email/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:emailTo})})
+    apiFetch('/api/email/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:emailTo})})
       .then(function(r){return r.json();})
       .then(function(d){
         var ms=Date.now()-t0;
@@ -2877,14 +2926,14 @@ function AdminBackups(p){
   var sBusy=useState(false);var busy=sBusy[0],setBusy=sBusy[1];
   function loadList(){
     setLoad(true);
-    fetch('/api/backup').then(function(r){return r.json();})
+    apiFetch('/api/backup').then(function(r){return r.json();})
       .then(function(r){if(r.ok)setList(r.data||[]);setLoad(false);})
       .catch(function(){setLoad(false);});
   }
   useEffect(function(){loadList();},[]);
   function doBackup(){
     setBusy(true);
-    fetch('/api/backup',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    apiFetch('/api/backup',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
       .then(function(r){return r.json();})
       .then(function(r){
         setBusy(false);
@@ -2894,7 +2943,7 @@ function AdminBackups(p){
   }
   function doRestore(id,label){
     if(!window.confirm('Restaurar backup "'+label+'"?\nO estado atual do sistema será substituído.'))return;
-    fetch('/api/backup/'+id+'/restore',{method:'POST'})
+    apiFetch('/api/backup/'+id+'/restore',{method:'POST'})
       .then(function(r){return r.json();})
       .then(function(r){
         if(r.ok){toast2('Restaurado. Recarregando…');setTimeout(function(){window.location.reload();},1500);}
@@ -2903,7 +2952,7 @@ function AdminBackups(p){
   }
   function doDelete(id){
     if(!window.confirm('Excluir este backup?'))return;
-    fetch('/api/backup/'+id,{method:'DELETE'})
+    apiFetch('/api/backup/'+id,{method:'DELETE'})
       .then(function(){loadList();toast2('Backup excluído.',C.am);});
   }
   return h('div',null,
@@ -2953,7 +3002,7 @@ function PgSolicitarAcesso(p){
   function submit(){
     if(!f.nome.trim()||!f.email.trim()||!f.justificativa.trim()){toast2('Preencha os campos obrigatórios.',C.rm);return;}
     setSending(true);
-    fetch('/api/reg-requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})
+    apiFetch('/api/reg-requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})
       .then(function(r){return r.json();})
       .then(function(r){setSending(false);if(r.ok)setOk(true);else toast2(r.error||'Erro ao enviar.',C.rm);})
       .catch(function(){setSending(false);toast2('Erro de conexão.',C.rm);});
@@ -3004,13 +3053,13 @@ function AdminRegReqs(p){
   var sObs=useState({});var obsMap=sObs[0],setObsMap=sObs[1];
   useEffect(function(){
     setLoad(true);
-    fetch('/api/reg-requests').then(function(r){return r.json();})
+    apiFetch('/api/reg-requests').then(function(r){return r.json();})
       .then(function(r){if(r.ok)setReqs(r.data||[]);setLoad(false);})
       .catch(function(){setLoad(false);});
   },[]);
   function review(rq,status){
     var obs=obsMap[rq.id]||'';
-    fetch('/api/reg-requests/'+rq.id,{method:'PUT',headers:{'Content-Type':'application/json'},
+    apiFetch('/api/reg-requests/'+rq.id,{method:'PUT',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({status:status,obs:obs,reviewed_by:curUser?curUser.id:null})})
       .then(function(r){return r.json();})
       .then(function(r){
@@ -3669,10 +3718,17 @@ function App(){
   var sNav=useState(false);var navOpen=sNav[0],setNavOpen=sNav[1];
   var sIA=useState(false);var iaDisponivel=sIA[0],setIaDisponivel=sIA[1];
   var sQAdm=useState('');var qAdm=sQAdm[0],setQAdm=sQAdm[1];
+  var sQAdmD=useState('');var qAdmDebounced=sQAdmD[0],setQAdmDebounced=sQAdmD[1];
   var _appStart=useRef(Date.now());
 
-  // Derived admin search filters
-  var _qL=qAdm.toLowerCase().trim();
+  // Debounce: atualiza qAdmDebounced 300ms após digitação
+  useEffect(function(){
+    var t=setTimeout(function(){setQAdmDebounced(qAdm);},300);
+    return function(){clearTimeout(t);};
+  },[qAdm]);
+
+  // Derived admin search filters (usam valor debounced)
+  var _qL=qAdmDebounced.toLowerCase().trim();
   var qUns=_qL?uns.filter(function(u){return ((u.nome||'')+' '+(u.municipio||'')).toLowerCase().includes(_qL);}):uns;
   var qNews=_qL?news.filter(function(n){return ((n.titulo||'')+' '+(n.categoria||'')).toLowerCase().includes(_qL);}):news;
   var qSols=_qL?sols.filter(function(s){return ((s.sol||s.nome||'')+' '+(s.ev||'')+' '+(s.un||'')).toLowerCase().includes(_qL);}):sols;
@@ -3682,7 +3738,12 @@ function App(){
   C=Object.assign({},_tema,{b1:pers.corSecundaria||"#1565A8",bl:"#DCF0FF",t1:"#7B4D1A",tl:"#FAEBD7",am:"#C4832A",al:"#FFF3E0",rm:"#A32D2D",rl:"#FCEBEB",pm:"#5B3FA8",px:"#EDE9FB",cl:"#DEE2D8",cx:"#F7F8F5",cm:"#6B7260",cd:"#1E2218"});
 
 
-  useEffect(function(){fetch('/api/ai/status').then(function(r){return r.json();}).then(function(d){if(d.ok)setIaDisponivel(d.disponivel);}).catch(function(){});},[]);
+  // Registrar callback global para re-login quando token expira (usado por apiFetch)
+  useEffect(function(){
+    window.__sguaReLogin=function(){setCurUser(null);setShowLogin(true);};
+    return function(){try{delete window.__sguaReLogin;}catch(e){}};
+  },[]);
+  useEffect(function(){apiFetch('/api/ai/status').then(function(r){return r.json();}).then(function(d){if(d.ok)setIaDisponivel(d.disponivel);}).catch(function(){});},[]);
   useEffect(function(){lsSet('uns',uns);},[uns]);
   useEffect(function(){lsSet('news',news);},[news]);
   useEffect(function(){lsSet('sols',sols);},[sols]);
@@ -3694,7 +3755,7 @@ function App(){
   // Buscar notificações do usuário logado
   useEffect(function(){
     if(!curUser||!curUser.id)return;
-    fetch('/api/notifications?user_id='+curUser.id)
+    apiFetch('/api/notifications?user_id='+curUser.id)
       .then(function(r){return r.json();})
       .then(function(r){if(r.ok)setNotifs(r.data||[]);})
       .catch(function(){});
@@ -3826,7 +3887,7 @@ function App(){
   }
   function createNotif(userId,tipo,titulo,corpo,canal){
     if(!userId)return;
-    fetch('/api/notifications',{method:'POST',headers:{'Content-Type':'application/json'},
+    apiFetch('/api/notifications',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({user_id:userId,tipo:tipo,canal:canal||'sistema',titulo:titulo,corpo:corpo||''})
     }).then(function(r){return r.json();}).then(function(r){
       if(r.ok&&curUser&&userId===curUser.id)setNotifs(function(ns){return [r.data].concat(ns);});
@@ -3838,7 +3899,7 @@ function App(){
   function delUn(id){setUns(function(us){return us.filter(function(u){return u.id!==id;});});setConf(null);toast2("Excluída.",C.am);}
   function togUn(id){setUns(function(us){return us.map(function(u){return u.id===id?Object.assign({},u,{visivel:!u.visivel}):u;});});}
   function recarregarNews(){
-    fetch('/api/news').then(function(r){return r.json();}).then(function(d){
+    apiFetch('/api/news').then(function(r){return r.json();}).then(function(d){
       if(d.ok&&Array.isArray(d.data))setNews(d.data);
     }).catch(function(){}).finally(function(){setNewsLoaded(true);});
   }
@@ -3846,7 +3907,7 @@ function App(){
   function saveNw(f){
     var method=f.id?'PUT':'POST';
     var apiUrl=f.id?'/api/news/'+f.id:'/api/news';
-    fetch(apiUrl,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})
+    apiFetch(apiUrl,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})
       .then(function(r){return r.json();})
       .then(function(d){
         if(!d.ok){toast2('Erro ao salvar: '+(d.error||'falha'),C.rm);return;}
@@ -3857,7 +3918,7 @@ function App(){
       .catch(function(){toast2('Falha ao salvar notícia.',C.rm);});
   }
   function delNw(id){
-    fetch('/api/news/'+id,{method:'DELETE'})
+    apiFetch('/api/news/'+id,{method:'DELETE'})
       .then(function(r){return r.json();})
       .then(function(d){
         if(d.ok){recarregarNews();setConf(null);toast2('Notícia removida.',C.am);}
@@ -3868,12 +3929,12 @@ function App(){
   function togNw(id){
     var n=news.find(function(x){return x.id===id;});
     if(!n)return;
-    fetch('/api/news/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({visivel:!n.visivel})})
+    apiFetch('/api/news/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({visivel:!n.visivel})})
       .then(function(r){return r.json();})
       .then(function(d){if(d.ok)setNews(function(ns){return ns.map(function(x){return x.id===id?Object.assign({},x,{visivel:!x.visivel}):x;});});});
   }
   function recarregarFeeds(){
-    fetch('/api/feeds').then(function(r){return r.json();}).then(function(d){
+    apiFetch('/api/feeds').then(function(r){return r.json();}).then(function(d){
       if(d.ok)setFeeds(d.feeds||[]);
       setFeedsLoaded(true);
     }).catch(function(){setFeedsLoaded(true);});
@@ -3883,7 +3944,7 @@ function App(){
     var method=f.id?'PUT':'POST';
     var apiUrl=f.id?'/api/feeds/'+f.id:'/api/feeds';
     setSavingFd(true);
-    fetch(apiUrl,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})
+    apiFetch(apiUrl,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})
       .then(function(r){return r.json();})
       .then(function(d){
         setSavingFd(false);
@@ -3896,7 +3957,7 @@ function App(){
       .catch(function(){setSavingFd(false);toast2('Falha ao salvar feed.',C.rm);});
   }
   function delFd(id){
-    fetch('/api/feeds/'+id,{method:'DELETE'})
+    apiFetch('/api/feeds/'+id,{method:'DELETE'})
       .then(function(r){return r.json();})
       .then(function(d){
         if(d.ok){recarregarFeeds();setConf(null);toast2('Feed removido.',C.am);}
@@ -3905,7 +3966,7 @@ function App(){
       .catch(function(){toast2('Falha de conexão.',C.rm);});
   }
   function togFd(id){
-    fetch('/api/feeds/'+id+'/toggle',{method:'POST'})
+    apiFetch('/api/feeds/'+id+'/toggle',{method:'POST'})
       .then(function(r){return r.json();})
       .then(function(d){if(d.ok)setFeeds(function(fs){return fs.map(function(f){return f.id===d.feed.id?Object.assign({},f,d.feed):f;});});})
       .catch(function(){toast2('Falha ao alternar feed.',C.rm);});
@@ -3926,7 +3987,7 @@ function App(){
   }
   function testFeed(f){
     setTestRes(function(r){return Object.assign({},r,{[f.id]:{loading:true}});});
-    fetch('/api/feeds/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome})})
+    apiFetch('/api/feeds/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url,nome:f.nome})})
       .then(function(r){return r.json();})
       .then(function(d){setTestRes(function(r){return Object.assign({},r,{[f.id]:d});});})
       .catch(function(){setTestRes(function(r){return Object.assign({},r,{[f.id]:{ok:false,error:'Falha na conexão'}});});});
@@ -4713,9 +4774,9 @@ function App(){
                       h("button",{onClick:function(){setConf({nome:f.nome,fn:function(){delFd(f.id);}});},style:{padding:"5px 10px",borderRadius:7,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:11,cursor:"pointer"}},"Excluir")
                     ),
                     h("div",{style:{display:"flex",gap:4}},
-                      h("button",{onClick:function(){fetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:Math.max(0,(f.prioridade||0)-1)})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↓"),
+                      h("button",{onClick:function(){apiFetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:Math.max(0,(f.prioridade||0)-1)})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↓"),
                       h("span",{style:{fontSize:10,color:C.cm,padding:"3px 4px"}},"P"+(f.prioridade||0)),
-                      h("button",{onClick:function(){fetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:(f.prioridade||0)+1})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↑")
+                      h("button",{onClick:function(){apiFetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:(f.prioridade||0)+1})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↑")
                     ),
                     tr&&!tr.loading&&h("div",{style:{fontSize:11,padding:"4px 8px",borderRadius:6,background:tr.ok?C.gx:C.rl,border:"1px solid "+(tr.ok?C.g2:C.rm),color:tr.ok?C.g2:C.rm,marginTop:2}},tr.ok?"✅ "+tr.count+" itens":"❌ "+tr.error)
                   )
@@ -4793,6 +4854,22 @@ try{
   var r=document.getElementById("root");
   if(r){r.innerHTML='<div style="padding:40px;font-family:sans-serif;color:#A32D2D;text-align:center"><h2>Erro ao inicializar</h2><p id="errmsg" style="margin-top:8px;font-size:14px"></p></div>';document.getElementById('errmsg').textContent=e.message;}
   var el=document.getElementById("app-loading");if(el)el.style.display="none";
+}
+
+// ─── PWA Service Worker ──────────────────────────────────────────────────────
+if('serviceWorker' in navigator){
+  window.addEventListener('load',function(){
+    navigator.serviceWorker.register('/sw.js').then(function(reg){
+      reg.addEventListener('updatefound',function(){
+        var nw=reg.installing;
+        nw.addEventListener('statechange',function(){
+          if(nw.state==='installed'&&navigator.serviceWorker.controller){
+            notify('Nova versão disponível. Recarregue para atualizar.','#1565A8');
+          }
+        });
+      });
+    }).catch(function(){});
+  });
 }
 
 </script>
