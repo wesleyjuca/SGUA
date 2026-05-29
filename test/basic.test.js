@@ -84,3 +84,38 @@ test('synthesizeArticle definida no server', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   assert.ok(src.includes('function synthesizeArticle'), 'função synthesizeArticle deve estar definida');
 });
+
+test('POST /api/feeds/sync não referencia variável toInsert removida', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(!src.includes('items: toInsert'), 'resposta de /api/feeds/sync não deve usar toInsert indefinido');
+});
+
+test('desligamento gracioso registrado (SIGTERM/SIGINT)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("process.on('SIGTERM'") && src.includes("process.on('SIGINT'"),
+    'handlers de desligamento gracioso devem existir');
+});
+
+test('handlers de erro de processo definidos', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("process.on('unhandledRejection'") && src.includes("process.on('uncaughtException'"),
+    'handlers unhandledRejection e uncaughtException devem existir');
+});
+
+test('índices de banco criados no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('CREATE INDEX IF NOT EXISTS'), 'startup deve criar índices idempotentes');
+});
+
+test('CORS configurável via ALLOWED_ORIGINS', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('ALLOWED_ORIGINS'), 'origens CORS devem ser configuráveis por env');
+});
+
+test('alert() bloqueante substituído por notify() no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  // Apenas o fallback interno do helper notify() pode conter alert(
+  const alertCount = (src.match(/alert\(/g) || []).length;
+  assert.ok(src.includes('function notify('), 'helper notify() deve existir');
+  assert.ok(alertCount <= 1, 'alert() só deve aparecer como fallback dentro de notify()');
+});

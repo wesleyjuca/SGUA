@@ -73,6 +73,13 @@ code{font-family:monospace}
   };
 })();
 
+// ── notify(): toast global com fallback bloqueante (substitui janelas modais nativas) ──
+// O App registra window.__sguaToast quando montado; funções fora do App usam isto.
+function notify(msg,color){
+  try{ if(typeof window!=='undefined'&&window.__sguaToast){window.__sguaToast(String(msg),color);return;} }catch(e){}
+  alert(msg);
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SEGURANÇA — SHA-256 puro JS (sync) · sem dependências externas
 // ══════════════════════════════════════════════════════════════════════════════
@@ -520,7 +527,7 @@ function exportCSV(rows, cols, filename){
 
 // --- Exportação XLSX (SheetJS obrigatório) ---
 function exportXLSX(rows, cols, filename){
-  if(typeof XLSX==='undefined'){alert('SheetJS não carregado. Use a exportação CSV.');return;}
+  if(typeof XLSX==='undefined'){notify('SheetJS não carregado. Use a exportação CSV.','#A32D2D');return;}
   var data=[cols.map(function(c){return c.label;})];
   rows.forEach(function(row){
     data.push(cols.map(function(c){
@@ -543,7 +550,7 @@ function exportXLSX(rows, cols, filename){
 
 function exportPDF(rows,cols,basename,pers,filtros){
   var jsPDFCls=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
-  if(!jsPDFCls){alert('jsPDF não carregado. Tente novamente em instantes.');return;}
+  if(!jsPDFCls){notify('jsPDF não carregado. Tente novamente em instantes.','#A32D2D');return;}
   var doc=new jsPDFCls({orientation:'landscape',unit:'mm',format:'a4'});
   var pw=doc.internal.pageSize.getWidth();
   var ph=doc.internal.pageSize.getHeight();
@@ -725,7 +732,7 @@ function AdminRelatorios(p){
         var rows=[];
         var isXlsx=file.name.toLowerCase().endsWith('.xlsx');
         if(isXlsx){
-          if(typeof XLSX==='undefined'){alert('SheetJS não carregado. Use CSV.');setLoading(false);return;}
+          if(typeof XLSX==='undefined'){notify('SheetJS não carregado. Use CSV.','#A32D2D');setLoading(false);return;}
           var wb=XLSX.read(ev.target.result,{type:'binary'});
           var ws=wb.Sheets[wb.SheetNames[0]];
           var data=XLSX.utils.sheet_to_json(ws,{defval:''});
@@ -1463,7 +1470,7 @@ function PageUnidade(p){
         )
       ),
       aba==="historia"&&h(Card,{style:{padding:"24px 28px",maxWidth:740}},h("h2",{style:{fontSize:18,fontWeight:700,margin:"0 0 16px",color:cor}},"História da unidade"),u.historia?h("p",{style:{fontSize:14,color:C.cd,lineHeight:1.9,margin:0}},u.historia):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Histórico não cadastrado.")),
-      aba==="galeria"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Galeria de fotos"),u.galeria&&u.galeria.length>0?h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}},u.galeria.map(function(f,i){return h("div",{key:i,onClick:function(){setLbFoto(f);},style:{aspectRatio:"4/3",borderRadius:10,overflow:"hidden",background:C.cl,cursor:"zoom-in"}},h("img",{src:f.url,alt:f.leg||"",style:{width:"100%",height:"100%",objectFit:"cover"}}));})):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Nenhuma foto cadastrada.")),
+      aba==="galeria"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Galeria de fotos"),u.galeria&&u.galeria.length>0?h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}},u.galeria.map(function(f,i){return h("div",{key:i,onClick:function(){setLbFoto(f);},style:{aspectRatio:"4/3",borderRadius:10,overflow:"hidden",background:C.cl,cursor:"zoom-in"}},h("img",{src:f.url,alt:f.leg||"Foto da galeria",loading:"lazy",style:{width:"100%",height:"100%",objectFit:"cover"}}));})):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Nenhuma foto cadastrada.")),
       aba==="mapa"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Localização georeferenciada"),h(MapView,{units:[u],height:"380px",compact:false,singleUnit:true}),h("div",{style:{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.cx,borderRadius:8,fontSize:11,color:C.cm}},h("span",{style:{fontFamily:"monospace"}},"Lat "+u.coords.lat.toFixed(6)+", Lon "+u.coords.lng.toFixed(6)),h("a",{href:"https://www.google.com/maps?q="+u.coords.lat+","+u.coords.lng,target:"_blank",rel:"noreferrer",style:{color:C.b1,fontWeight:500}},"Abrir no Maps ↗"))),
       
       aba==="ocupacao"&&h(PainelOcupacao,{u:u,uns:p.uns||[u],setUns:p.setUns||function(){},curUser:p.curUser,toast2:p.toast2||function(){}}),
@@ -1756,9 +1763,9 @@ function FmUn(p){
       .then(function(d){
         if(d.ok){if(campo==='foto')upd('foto',d.url);
           else setF(function(x){return Object.assign({},x,{galeria:x.galeria.concat([{url:d.url,leg:''}]),uploadingGal:false});});}
-        else{alert('Erro no upload: '+d.error);upd(campo==='foto'?'uploadingFoto':'uploadingGal',false);}
+        else{notify('Erro no upload: '+d.error,'#A32D2D');upd(campo==='foto'?'uploadingFoto':'uploadingGal',false);}
       })
-      .catch(function(){alert('Falha no upload.');upd(campo==='foto'?'uploadingFoto':'uploadingGal',false);})
+      .catch(function(){notify('Falha no upload.','#A32D2D');upd(campo==='foto'?'uploadingFoto':'uploadingGal',false);})
       .finally(function(){if(campo==='foto')upd('uploadingFoto',false);});
   }
   function save(){
@@ -3807,6 +3814,8 @@ function App(){
   var isDesktop=vpWidth>1024;
 
   function toast2(m,c){setToast({m:m,c:c||C.g2});}
+  // Expõe o toast para funções utilitárias fora do App (notify())
+  useEffect(function(){window.__sguaToast=function(m,c){toast2(m,c);};return function(){if(window.__sguaToast)delete window.__sguaToast;};},[]);
   function go(pg){setPage(pg);setUVista(null);setNVista(null);}
   function canDo(k){return curUser&&(curUser.perfil==="admin"||!!(curUser.permissoes&&curUser.permissoes[k]));}
   function canDoUnit(unitId){
@@ -4297,7 +4306,7 @@ function App(){
             onMouseEnter:function(e){e.currentTarget.style.borderColor=cor;},
             onMouseLeave:function(e){e.currentTarget.style.borderColor=C.cl;},
             onClick:function(){setUVista(u);}},
-            u.foto&&h("div",{style:{height:120,overflow:"hidden",background:cor+"22"}},h("img",{src:u.foto,alt:"",style:{width:"100%",height:"100%",objectFit:"cover",opacity:.85}})),
+            u.foto&&h("div",{style:{height:120,overflow:"hidden",background:cor+"22"}},h("img",{src:u.foto,alt:u.nome||"Unidade",loading:"lazy",style:{width:"100%",height:"100%",objectFit:"cover",opacity:.85}})),
             h("div",{style:{padding:"14px 16px"}},
               h("div",{style:{fontSize:15,fontWeight:700,color:C.cd,marginBottom:2}},u.nome),
               h("div",{style:{fontSize:11,color:C.cm,marginBottom:8}},u.municipio),

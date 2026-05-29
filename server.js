@@ -453,7 +453,7 @@ Mantenha todos os fatos, datas e nomes originais. Corrija possíveis erros grama
 Categoria: ${categoria}.${promptExtra ? ' ' + promptExtra : ''}
 Responda APENAS com JSON válido no formato: {"titulo":"...","resumo":"...","conteudo":"..."}`;
     const msg = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
       max_tokens: 1200,
       system: sysPrompt,
       messages: [{ role: 'user', content: `Artigo original:\nTítulo: ${titulo}\n\n${(conteudo || titulo).slice(0, 3000)}` }]
@@ -477,7 +477,7 @@ async function inserirArtigo(item, feed) {
   if (!fdRow) return 0;
   const hoje = today();
   if (fdRow.ultima_reset && String(fdRow.ultima_reset).slice(0,10) < hoje) {
-    await pool.query('UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=$1 WHERE id=$2', [hoje, feed.id]).catch(()=>{});
+    await pool.query('UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=$1 WHERE id=$2', [hoje, feed.id]).catch(e=>console.error('[inserirArtigo] reset cota falhou:', e.message));
     fdRow.noticias_hoje = 0;
   }
   const qtdMax = fdRow.quantidade_diaria || 10;
@@ -502,7 +502,7 @@ async function inserirArtigo(item, feed) {
     [title, content, item.source || feed.nome, item.link || null, item.category || 'Geral', resumo]
   );
   if (rowCount > 0) {
-    await pool.query('UPDATE sgua_feeds SET noticias_hoje=noticias_hoje+1 WHERE id=$1', [feed.id]).catch(()=>{});
+    await pool.query('UPDATE sgua_feeds SET noticias_hoje=noticias_hoje+1 WHERE id=$1', [feed.id]).catch(e=>console.error('[inserirArtigo] incremento cota falhou:', e.message));
   }
   return rowCount;
 }
@@ -510,8 +510,13 @@ async function inserirArtigo(item, feed) {
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
 // CORS para GitHub Pages (frontend estático em wesleyjuca.github.io)
+// Origens permitidas configuráveis via ALLOWED_ORIGINS (lista separada por vírgula); fallback para o padrão.
+const DEFAULT_ORIGINS = ['https://wesleyjuca.github.io', 'http://localhost:3000'];
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()).filter(Boolean)
+  : DEFAULT_ORIGINS);
 app.use((req, res, next) => {
-  const allowed = ['https://wesleyjuca.github.io', 'http://localhost:3000'];
+  const allowed = ALLOWED_ORIGINS;
   const origin = req.headers.origin;
   if (origin && allowed.includes(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
@@ -1145,7 +1150,7 @@ app.post('/api/feeds/sync', asyncRoute(async (req, res) => {
     return f;
   });
 
-  return res.json({ ok: true, feeds: mergedFeeds, added, warnings, items: toInsert });
+  return res.json({ ok: true, feeds: mergedFeeds, added, warnings });
 }));
 
 // ─── Feed CRUD ────────────────────────────────────────────────────────────────
@@ -1676,9 +1681,12 @@ app.use((err, _req, res, _next) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`SGUA executando em http://localhost:${PORT}`);
   console.log(`Banco: PostgreSQL (Supabase)`);
+  // Avisos de configuração opcional (não fatais)
+  if (!process.env.ANTHROPIC_API_KEY) console.warn('[Config] ANTHROPIC_API_KEY ausente — síntese de artigos por IA desabilitada.');
+  if (!process.env.SMTP_HOST) console.warn('[Config] SMTP_HOST ausente — notificações por e-mail desabilitadas.');
   if (process.env.RENDER) {
     console.warn('[Aviso] Render.com free tier: uploads de fotos em disco são temporários e serão perdidos a cada redeploy. Configure um Persistent Disk ou migre para Supabase Storage para fotos permanentes.');
   }
@@ -1727,6 +1735,13 @@ app.listen(PORT, async () => {
     await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS fonte TEXT DEFAULT ''`).catch(()=>{});
     await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS data_pub DATE`).catch(()=>{});
     try { await pool.query(`ALTER TABLE sgua_feeds ADD CONSTRAINT sgua_feeds_url_unique UNIQUE (url)`); } catch(_){}
+    // Índices para colunas frequentemente filtradas / chaves estrangeiras (idempotente)
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_feed_logs_feed_id ON sgua_feed_logs(feed_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON sgua_notifications(user_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_occupancy_unit_id ON occupancy_records(unit_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_occupancy_user_id ON occupancy_records(user_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_news_is_rss ON news(is_rss)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_news_created_at ON news(created_at DESC)`).catch(()=>{});
     // Migrar feeds do app_state se sgua_feeds estiver vazia
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
     if (exFeeds.length === 0) {
@@ -1748,6 +1763,30 @@ app.listen(PORT, async () => {
     }
   } catch(e) { console.error('[DB] startup init failed:', e.message); }
 });
+
+// ─── Robustez de processo: erros não tratados + desligamento gracioso ──────────
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+});
+let _shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  console.log(`[Shutdown] Sinal ${signal} recebido — encerrando com segurança...`);
+  server.close(() => {
+    pool.end().then(() => {
+      console.log('[Shutdown] Conexões encerradas. Até logo.');
+      process.exit(0);
+    }).catch(() => process.exit(0));
+  });
+  // Failsafe: força saída se o close demorar demais
+  setTimeout(() => { console.warn('[Shutdown] Timeout — forçando saída.'); process.exit(1); }, 10000).unref();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // ─── Backup semanal automático (toda domingo às 02:00 horário de Brasília / 07:00 UTC) ────
 

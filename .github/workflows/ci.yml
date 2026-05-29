@@ -29,6 +29,9 @@ jobs:
       - name: Validate server syntax
         run: node --check server.js
 
+      - name: Run test suite
+        run: npm test
+
       - name: Check required files
         run: |
           test -f server.js         && echo "✓ server.js"
