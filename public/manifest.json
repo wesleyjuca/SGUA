@@ -1,0 +1,26 @@
+{
+  "name": "SEMA/AC — CIMA & UGAI",
+  "short_name": "SEMA/AC",
+  "description": "Sistema de Gestão das unidades CIMA e UGAI da Secretaria do Meio Ambiente do Acre",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F5C3A",
+  "theme_color": "#0F5C3A",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "https://placehold.co/192x192/0F5C3A/fff?text=SEMA",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://placehold.co/512x512/0F5C3A/fff?text=SEMA",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["government", "productivity"],
+  "orientation": "any"
+}
