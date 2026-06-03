@@ -793,9 +793,84 @@ function AdminRelatorios(p){
 
   var btnBase={padding:'8px 18px',borderRadius:8,border:'none',fontSize:12,cursor:'pointer',fontWeight:600};
 
+  var C=p.C||{g2:'#0F5C3A',cd:'#1E2218',cm:'#6B7260',cl:'#DEE2D8',cx:'#F7F8F5',rm:'#A32D2D',b1:'#1565A8'};
+
+  function downloadPdf(endpoint,filename){
+    apiFetch(endpoint).then(function(resp){
+      if(resp instanceof Response){return resp.blob();}
+      // apiFetch retorna objeto parsed; para PDF precisamos usar fetch diretamente
+      return null;
+    }).catch(function(){return null;}).then(function(){
+      // Usar fetch nativo para blob
+      var token=localStorage.getItem('sgua_token');
+      fetch(endpoint,{headers:token?{Authorization:'Bearer '+token}:{}}).then(function(r){
+        if(!r.ok){toast2('Erro ao gerar PDF','error');return;}
+        return r.blob();
+      }).then(function(blob){
+        if(!blob)return;
+        var url=URL.createObjectURL(blob);
+        var a=document.createElement('a');
+        a.href=url;a.download=filename;a.click();
+        setTimeout(function(){URL.revokeObjectURL(url);},2000);
+        toast2('PDF gerado!','success');
+      }).catch(function(){toast2('Erro ao baixar PDF','error');});
+    });
+  }
+
+  var mesAtual=new Date().getMonth()+1;
+  var anoAtual=new Date().getFullYear();
+
   return h('div',null,
     h('h2',{style:{fontSize:20,fontWeight:700,margin:'0 0 4px',color:C.cd}},'Relatórios'),
-    h('p',{style:{fontSize:13,color:C.cm,margin:'0 0 20px'}},'Exportação CSV/XLSX e importação de unidades com validação e deduplicação.'),
+    h('p',{style:{fontSize:13,color:C.cm,margin:'0 0 16px'}},'Exportação CSV/XLSX, importação de dados e geração de relatórios PDF.'),
+
+    // ─── RELATÓRIOS PDF (novo) ───────────────────────────────────
+    h('div',{style:{background:'#fff',border:'1px solid '+C.cl,borderRadius:12,padding:20,marginBottom:20}},
+      h('div',{style:{fontWeight:700,fontSize:14,color:C.cd,marginBottom:12}},'📄 Relatórios PDF — Servidor'),
+      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))',gap:12}},
+        h('div',{style:{border:'1px solid '+C.cl,borderRadius:10,padding:16}},
+          h('div',{style:{fontWeight:600,fontSize:13,color:C.cd,marginBottom:6}},'Ocupação Mensal'),
+          h('div',{style:{fontSize:12,color:C.cm,marginBottom:10}},'Tabela de ocupação por unidade no mês/ano selecionado'),
+          h('div',{style:{display:'flex',gap:8,marginBottom:10}},
+            h('select',{id:'pdf-mes',defaultValue:mesAtual,style:{flex:1,padding:'5px 8px',borderRadius:6,border:'1px solid '+C.cl,fontSize:12}},
+              [1,2,3,4,5,6,7,8,9,10,11,12].map(function(m){return h('option',{key:m,value:m},String(m).padStart(2,'0'));})
+            ),
+            h('input',{type:'number',id:'pdf-ano',defaultValue:anoAtual,min:2020,max:2099,style:{flex:1,padding:'5px 8px',borderRadius:6,border:'1px solid '+C.cl,fontSize:12}})
+          ),
+          h('button',{onClick:function(){
+            var mes=document.getElementById('pdf-mes').value;
+            var ano=document.getElementById('pdf-ano').value;
+            downloadPdf('/api/relatorios/ocupacao?mes='+mes+'&ano='+ano,'relatorio-ocupacao-'+ano+'-'+String(mes).padStart(2,'0')+'.pdf');
+          },style:{width:'100%',padding:'7px',borderRadius:7,border:'none',background:C.b1,color:'#fff',fontWeight:600,fontSize:12,cursor:'pointer'}},'⬇ Baixar PDF')
+        ),
+        h('div',{style:{border:'1px solid '+C.cl,borderRadius:10,padding:16}},
+          h('div',{style:{fontWeight:600,fontSize:13,color:C.cd,marginBottom:6}},'Ocorrências'),
+          h('div',{style:{fontSize:12,color:C.cm,marginBottom:10}},'Lista de ocorrências ambientais no período'),
+          h('div',{style:{display:'flex',gap:8,marginBottom:10}},
+            h('input',{type:'date',id:'pdf-ocr-ini',defaultValue:anoAtual+'-01-01',style:{flex:1,padding:'5px 8px',borderRadius:6,border:'1px solid '+C.cl,fontSize:12}}),
+            h('input',{type:'date',id:'pdf-ocr-fim',defaultValue:new Date().toISOString().slice(0,10),style:{flex:1,padding:'5px 8px',borderRadius:6,border:'1px solid '+C.cl,fontSize:12}})
+          ),
+          h('button',{onClick:function(){
+            var ini=document.getElementById('pdf-ocr-ini').value||anoAtual+'-01-01';
+            var fim=document.getElementById('pdf-ocr-fim').value||new Date().toISOString().slice(0,10);
+            downloadPdf('/api/relatorios/ocorrencias?inicio='+ini+'&fim='+fim,'relatorio-ocorrencias-'+ini+'-'+fim+'.pdf');
+          },style:{width:'100%',padding:'7px',borderRadius:7,border:'none',background:'#ef4444',color:'#fff',fontWeight:600,fontSize:12,cursor:'pointer'}},'⬇ Baixar PDF')
+        ),
+        h('div',{style:{border:'1px solid '+C.cl,borderRadius:10,padding:16}},
+          h('div',{style:{fontWeight:600,fontSize:13,color:C.cd,marginBottom:6}},'Ordens de Manutenção'),
+          h('div',{style:{fontSize:12,color:C.cm,marginBottom:10}},'Ordens de serviço com custos estimados e reais'),
+          h('div',{style:{display:'flex',gap:8,marginBottom:10}},
+            h('input',{type:'date',id:'pdf-ord-ini',defaultValue:anoAtual+'-01-01',style:{flex:1,padding:'5px 8px',borderRadius:6,border:'1px solid '+C.cl,fontSize:12}}),
+            h('input',{type:'date',id:'pdf-ord-fim',defaultValue:new Date().toISOString().slice(0,10),style:{flex:1,padding:'5px 8px',borderRadius:6,border:'1px solid '+C.cl,fontSize:12}})
+          ),
+          h('button',{onClick:function(){
+            var ini=document.getElementById('pdf-ord-ini').value||anoAtual+'-01-01';
+            var fim=document.getElementById('pdf-ord-fim').value||new Date().toISOString().slice(0,10);
+            downloadPdf('/api/relatorios/ordens?inicio='+ini+'&fim='+fim,'relatorio-ordens-'+ini+'-'+fim+'.pdf');
+          },style:{width:'100%',padding:'7px',borderRadius:7,border:'none',background:'#f97316',color:'#fff',fontWeight:600,fontSize:12,cursor:'pointer'}},'⬇ Baixar PDF')
+        )
+      )
+    ),
 
     // Tabs Export / Import
     h('div',{style:{display:'flex',gap:2,marginBottom:20,borderBottom:'1px solid '+C.cl}},
@@ -3105,6 +3180,174 @@ function AdminRegReqs(p){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ADMIN AGENDA DE EVENTOS
+// ══════════════════════════════════════════════════════════════════════════════
+function AdminAgenda(p){
+  var C=p.C,toast2=p.toast2,uns=p.uns||[];
+  var sEv=useState([]);var evs=sEv[0],setEvs=sEv[1];
+  var sLoad=useState(false);var load=sLoad[0],setLoad=sLoad[1];
+  var sFil=useState({status:'',tipo:'',unit_id:''});var fil=sFil[0],setFil=sFil[1];
+  var sFm=useState(null);var fm=sFm[0],setFm=sFm[1];
+  var sDel=useState(null);var delId=sDel[0],setDelId=sDel[1];
+
+  var TIPOS=['reuniao','vistoria','fiscalizacao','capacitacao','audiencia','outro'];
+  var STATS=['agendado','em_andamento','realizado','cancelado'];
+  var TIPO_LABEL={reuniao:'🤝 Reunião',vistoria:'🔍 Vistoria',fiscalizacao:'⚖️ Fiscalização',capacitacao:'📚 Capacitação',audiencia:'🏛️ Audiência',outro:'📋 Outro'};
+  var STAT_LABEL={agendado:'Agendado',em_andamento:'Em Andamento',realizado:'Realizado',cancelado:'Cancelado'};
+  var STAT_COLOR={agendado:'#3b82f6',em_andamento:'#f59e0b',realizado:'#22c55e',cancelado:'#9ca3af'};
+
+  function load2(f){
+    var f2=f||fil;setLoad(true);
+    var qs=[];
+    if(f2.status)qs.push('status='+encodeURIComponent(f2.status));
+    if(f2.tipo)qs.push('tipo='+encodeURIComponent(f2.tipo));
+    if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
+    apiFetch('/api/agenda'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setEvs(d.rows||[]);}).finally(function(){setLoad(false);});
+  }
+  useEffect(function(){load2();},[]);
+
+  function save(data){
+    var method=data.id?'PUT':'POST';
+    var url=data.id?'/api/agenda/'+data.id:'/api/agenda';
+    apiFetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+      if(d.ok){toast2('Evento salvo!','success');setFm(null);load2();}
+      else toast2(d.error||'Erro ao salvar','error');
+    });
+  }
+  function del2(){
+    apiFetch('/api/agenda/'+delId,{method:'DELETE'}).then(function(d){
+      if(d.ok){toast2('Removido!','success');setDelId(null);load2();}
+      else toast2(d.error||'Erro','error');
+    });
+  }
+  function fmDT(v){return v?v.slice(0,16):'';}
+
+  var today=new Date().toISOString().slice(0,10);
+  var upcoming=evs.filter(function(e){return e.status==='agendado'&&e.data_inicio>=today;});
+  var past=evs.filter(function(e){return e.status==='realizado'||e.data_inicio<today;});
+  var showing=fil.status||fil.tipo||fil.unit_id?evs:evs;
+
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:18}},
+      h('div',null,
+        h('h2',{style:{margin:0,fontSize:20,fontWeight:700,color:C.cd}},'📅 Agenda de Eventos'),
+        upcoming.length>0&&h('div',{style:{fontSize:12,color:C.g2,marginTop:3}},upcoming.length+' evento(s) próximo(s)')
+      ),
+      h('button',{onClick:function(){setFm({unit_id:'',tipo:'reuniao',status:'agendado',titulo:'',descricao:'',local:'',responsavel:'',data_inicio:new Date().toISOString().slice(0,16),data_fim:'',participantes:'',resultado:''});},style:{padding:'8px 16px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontWeight:600,cursor:'pointer',fontSize:13}},'+ Novo Evento')
+    ),
+    h('div',{style:{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}},
+      h('select',{value:fil.status,onChange:function(e){var f={...fil,status:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todos Status'),
+        STATS.map(function(s){return h('option',{key:s,value:s},STAT_LABEL[s]);})
+      ),
+      h('select',{value:fil.tipo,onChange:function(e){var f={...fil,tipo:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todos Tipos'),
+        TIPOS.map(function(t){return h('option',{key:t,value:t},TIPO_LABEL[t]);})
+      ),
+      h('select',{value:fil.unit_id,onChange:function(e){var f={...fil,unit_id:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todas Unidades'),
+        uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome||u.name);})
+      )
+    ),
+    load&&h('div',{style:{color:C.cm,fontSize:13,padding:16}},'Carregando...'),
+    !load&&showing.length===0&&h('div',{style:{color:C.cm,fontSize:13,padding:16,textAlign:'center'}},'Nenhum evento encontrado.'),
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',gap:14}},
+      showing.map(function(ev){
+        var sc=STAT_COLOR[ev.status]||C.cm;
+        var dt=new Date(ev.data_inicio).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+        return h('div',{key:ev.id,style:{background:'#fff',borderRadius:12,padding:16,border:'1px solid '+C.cl,borderLeft:'4px solid '+sc,boxShadow:'0 1px 6px rgba(0,0,0,.06)'}},
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:8}},
+            h('span',{style:{fontSize:11,fontWeight:700,color:'#fff',background:sc,padding:'2px 9px',borderRadius:20}},STAT_LABEL[ev.status]||ev.status),
+            h('span',{style:{fontSize:11,color:C.cm,marginLeft:'auto'}},TIPO_LABEL[ev.tipo]||ev.tipo)
+          ),
+          h('div',{style:{fontWeight:600,fontSize:14,color:C.cd,marginBottom:4}},ev.titulo),
+          h('div',{style:{fontSize:12,color:C.cm,marginBottom:4}},ev.unit_name||''),
+          h('div',{style:{fontSize:11,color:C.cm,marginBottom:4}},'📅 '+dt),
+          ev.local&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:4}},'📍 '+ev.local),
+          ev.responsavel&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:8}},'👤 '+ev.responsavel),
+          h('div',{style:{display:'flex',gap:8}},
+            h('button',{onClick:function(){setFm({...ev,data_inicio:fmDT(ev.data_inicio),data_fim:fmDT(ev.data_fim)});},style:{fontSize:12,padding:'5px 12px',borderRadius:7,border:'1px solid '+C.g2,background:'none',color:C.g2,cursor:'pointer'}},'Editar'),
+            h('button',{onClick:function(){setDelId(ev.id);},style:{fontSize:12,padding:'5px 12px',borderRadius:7,border:'1px solid '+C.rm,background:'none',color:C.rm,cursor:'pointer'}},'Excluir')
+          )
+        );
+      })
+    ),
+    fm&&h('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:900,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h('div',{style:{background:'#fff',borderRadius:16,padding:28,width:'100%',maxWidth:520,maxHeight:'90vh',overflowY:'auto'}},
+        h('h3',{style:{margin:'0 0 18px',fontSize:17}},fm.id?'Editar Evento':'Novo Evento'),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Título *'),
+            h('input',{value:fm.titulo,onChange:function(e){setFm({...fm,titulo:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Tipo'),
+            h('select',{value:fm.tipo,onChange:function(e){setFm({...fm,tipo:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              TIPOS.map(function(t){return h('option',{key:t,value:t},TIPO_LABEL[t]);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Status'),
+            h('select',{value:fm.status,onChange:function(e){setFm({...fm,status:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              STATS.map(function(s){return h('option',{key:s,value:s},STAT_LABEL[s]);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Data/Hora Início *'),
+            h('input',{type:'datetime-local',value:fm.data_inicio,onChange:function(e){setFm({...fm,data_inicio:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Data/Hora Fim'),
+            h('input',{type:'datetime-local',value:fm.data_fim,onChange:function(e){setFm({...fm,data_fim:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Unidade'),
+            h('select',{value:fm.unit_id,onChange:function(e){setFm({...fm,unit_id:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              h('option',{value:''},'— Nenhuma —'),
+              uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome||u.name);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Responsável'),
+            h('input',{value:fm.responsavel,onChange:function(e){setFm({...fm,responsavel:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Local'),
+            h('input',{value:fm.local,onChange:function(e){setFm({...fm,local:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Participantes'),
+            h('input',{value:fm.participantes,onChange:function(e){setFm({...fm,participantes:e.target.value});},placeholder:'Nomes separados por vírgula',style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Descrição'),
+            h('textarea',{value:fm.descricao,onChange:function(e){setFm({...fm,descricao:e.target.value});},rows:3,style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,resize:'vertical',boxSizing:'border-box'}})
+          ),
+          fm.status==='realizado'&&h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Resultado / Ata'),
+            h('textarea',{value:fm.resultado,onChange:function(e){setFm({...fm,resultado:e.target.value});},rows:3,style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,resize:'vertical',boxSizing:'border-box'}})
+          )
+        ),
+        h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end',marginTop:18}},
+          h('button',{onClick:function(){setFm(null);},style:{padding:'8px 20px',borderRadius:8,border:'1px solid '+C.cl,background:'none',color:C.cm,cursor:'pointer',fontSize:13}},'Cancelar'),
+          h('button',{onClick:function(){save(fm);},style:{padding:'8px 20px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontWeight:600,cursor:'pointer',fontSize:13}},fm.id?'Salvar':'Criar')
+        )
+      )
+    ),
+    delId&&h('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:900,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h('div',{style:{background:'#fff',borderRadius:14,padding:28,maxWidth:380}},
+        h('div',{style:{fontWeight:600,fontSize:16,marginBottom:10}},'Excluir evento?'),
+        h('div',{style:{color:C.cm,fontSize:13,marginBottom:18}},'Esta ação não pode ser desfeita.'),
+        h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},
+          h('button',{onClick:function(){setDelId(null);},style:{padding:'8px 18px',borderRadius:8,border:'1px solid '+C.cl,background:'none',cursor:'pointer'}},'Cancelar'),
+          h('button',{onClick:del2,style:{padding:'8px 18px',borderRadius:8,border:'none',background:C.rm,color:'#fff',fontWeight:600,cursor:'pointer'}},'Excluir')
+        )
+      )
+    )
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // ADMIN OCORRÊNCIAS
 // ══════════════════════════════════════════════════════════════════════════════
 function AdminOcorrencias(p){
@@ -4904,7 +5147,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
+        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
           var parts=it[1].match(/^(\S+)\s(.+)$/)||["",it[1].charAt(0),it[1].slice(2)];
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},parts[1]),parts[2]
@@ -4996,7 +5239,12 @@ function App(){
               })()
             ),
             // ─── Cards Operacionais (Fase 35) ───────────────────────────────
-            dashStats&&h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(4,1fr)",gap:12,marginBottom:20}},
+            dashStats&&h("div",{style:{display:"grid",gridTemplateColumns:isMobile?"1fr 1fr":"repeat(5,1fr)",gap:12,marginBottom:20}},
+              h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+C.b1,cursor:"pointer"},onClick:function(){setAtab("agenda");}},
+                h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"PRÓXIMOS EVENTOS"),
+                h("div",{style:{fontSize:32,fontWeight:800,color:C.cd,marginBottom:4}},Number((dashStats.agenda||{}).proximos)||0),
+                h("div",{style:{fontSize:11,color:C.cm}},"agendados nos próximos 7 dias")
+              ),
               h(Card,{style:{padding:"18px 20px",borderTop:"3px solid "+(Number((dashStats.ocorrencias||{}).total)>0?"#ef4444":C.g2),cursor:"pointer"},onClick:function(){setAtab("ocorrencias");}},
                 h("div",{style:{fontSize:11,color:C.cm,fontWeight:700,letterSpacing:.5,marginBottom:8}},"OCORRÊNCIAS ABERTAS"),
                 h("div",{style:{fontSize:32,fontWeight:800,color:Number((dashStats.ocorrencias||{}).total)>0?"#ef4444":C.cd,marginBottom:4}},Number((dashStats.ocorrencias||{}).total)||0),
@@ -5275,6 +5523,7 @@ function App(){
         atab==="notif"&&canDo("notif")&&h(TabEB,{key:"notif"},h(AdminNotificacoes,{pers:pers,setPers:setPers,C:C,toast2:toast2,curUser:curUser})),
         atab==="alertas"&&canDo("cfg")&&h(AdminAlertas,{pers:pers,setPers:setPers,sysReport:sysReport,C:C,toast2:toast2,alertasDash:alertasDash}),
         atab==="regreqs"&&canDo("users")&&h(AdminRegReqs,{toast2:toast2,C:C,curUser:curUser,setUsers:setUsers,users:users}),
+        atab==="agenda"&&canDo("units")&&h(AdminAgenda,{C:C,toast2:toast2,uns:uns}),
         atab==="ocorrencias"&&canDo("units")&&h(AdminOcorrencias,{C:C,toast2:toast2,uns:uns}),
         atab==="ordens"&&canDo("units")&&h(AdminOrdens,{C:C,toast2:toast2,uns:uns}),
         atab==="auditoria"&&curUser&&curUser.perfil==='admin'&&h(AdminAuditLog,{C:C}),
