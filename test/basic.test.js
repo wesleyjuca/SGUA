@@ -187,3 +187,39 @@ test('AdminOcorrencias componente definido no frontend', () => {
   const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   assert.ok(src.includes('function AdminOcorrencias('), 'componente AdminOcorrencias deve existir');
 });
+
+test('sgua_agenda tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_agenda'), 'tabela sgua_agenda deve ser criada no startup');
+});
+
+test('GET /api/agenda endpoint definido', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("'/api/agenda'"), 'endpoint /api/agenda deve existir');
+});
+
+test('GET /api/relatorios/ocupacao endpoint definido', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("'/api/relatorios/ocupacao'"), 'endpoint de relatório PDF de ocupação deve existir');
+});
+
+test('AdminAgenda componente definido no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function AdminAgenda('), 'componente AdminAgenda deve existir');
+});
+
+test('sendAlertEmail helper definido no server', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('async function sendAlertEmail('), 'helper sendAlertEmail deve estar definido');
+});
+
+test('ALERT_EMAIL documentado no .env.example', () => {
+  const ex = fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8');
+  assert.ok(ex.includes('ALERT_EMAIL'), 'ALERT_EMAIL deve estar documentado');
+});
+
+test('pdfkit em dependencies (não apenas devDependencies)', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  assert.ok(pkg.dependencies && pkg.dependencies.pdfkit, 'pdfkit deve estar em dependencies');
+  assert.ok(!pkg.devDependencies || !pkg.devDependencies.pdfkit, 'pdfkit não deve estar em devDependencies');
+});

@@ -1,8 +1,5 @@
 'use strict';
 
-// Bypass SSL certificate validation for outbound feed requests (gov BR sites often have expired/self-signed certs)
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -15,6 +12,10 @@ let Anthropic; try { Anthropic = require('@anthropic-ai/sdk'); } catch(e) { Anth
 let bcrypt; try { bcrypt = require('bcryptjs'); } catch(e) { bcrypt = null; }
 let jwt; try { jwt = require('jsonwebtoken'); } catch(e) { jwt = null; }
 let createSupabaseClient; try { createSupabaseClient = require('@supabase/supabase-js').createClient; } catch(e) { createSupabaseClient = null; }
+let PDFDocument; try { PDFDocument = require('pdfkit'); } catch(e) { PDFDocument = null; }
+// Agent com rejectUnauthorized:false apenas para fetch de feeds externos (gov BR com certs auto-assinados)
+const { Agent: UndiciAgent } = require('undici');
+const feedAgent = new UndiciAgent({ connect: { rejectUnauthorized: false } });
 const pino = require('pino');
 const pinoHttp = require('pino-http');
 const { Pool } = require('pg');
@@ -163,6 +164,21 @@ async function auditLog(req, acao, entidade, entidadeId, detalhes = {}) {
   ).catch(e => logger.warn({ err: e }, '[Audit] log falhou'));
 }
 
+// ─── E-mail de alerta automático ─────────────────────────────────────────────
+
+async function sendAlertEmail(assunto, corpo) {
+  const t = createTransporter ? createTransporter() : null;
+  if (!t) return;
+  const to = process.env.ALERT_EMAIL || process.env.ADMIN_EMAIL;
+  if (!to) return;
+  t.sendMail({
+    from: process.env.SMTP_FROM || 'noreply@sema.ac.gov.br',
+    to,
+    subject: '[SGUA] ' + assunto,
+    text: corpo
+  }).catch(e => logger.warn({ err: e }, '[Alert Email] falhou'));
+}
+
 // ─── RSS helpers ─────────────────────────────────────────────────────────────
 
 function decodeXmlEntities(input) {
@@ -215,7 +231,8 @@ async function fetchFeedItems(feed) {
   try {
     const response = await fetch(feed.url, {
       headers: { 'User-Agent': 'SGUA-RSS-Sync/1.0 (+https://sema.ac.gov.br)' },
-      signal: ctrl.signal
+      signal: ctrl.signal,
+      dispatcher: feedAgent
     });
     if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
     const xml = await response.text();
@@ -285,7 +302,7 @@ async function discoverRssUrl(url) {
   try {
     const ctrl = new AbortController();
     const tmr = setTimeout(() => ctrl.abort(), 3000);
-    const resp = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'SGUA-RSS-Discover/1.0' } });
+    const resp = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'SGUA-RSS-Discover/1.0' }, dispatcher: feedAgent });
     clearTimeout(tmr);
     const html = await resp.text();
     const linkRx = /<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/gi;
@@ -307,7 +324,8 @@ async function fetchPageArticles(feed) {
         'User-Agent': 'Mozilla/5.0 (compatible; SGUA-News-Scraper/2.0; +https://sema.ac.gov.br)',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
       },
-      signal: ctrl.signal
+      signal: ctrl.signal,
+      dispatcher: feedAgent
     });
     if (!response.ok) return { ok: false, error: `HTTP ${response.status}` };
 
@@ -704,18 +722,18 @@ app.get('/api/auth/users', requireAuth, asyncRoute(async (req, res) => {
 }));
 
 // ─── Debug (protected) ───────────────────────────────────────────────────────
-app.get('/api/debug/db', requireAuth, (_req, res) => {
+app.get('/api/debug/db', requireAuth, (req, res) => {
+  auditLog(req, 'debug_db', 'system', null, {});
   try {
     const url = new URL(process.env.DATABASE_URL || '');
     res.json({
       host: url.hostname,
       port: url.port,
       user: url.username,
-      database: url.pathname.replace('/', ''),
-      ssl: 'rejectUnauthorized=false'
+      database: url.pathname.replace('/', '')
     });
   } catch {
-    res.status(500).json({ error: 'DATABASE_URL inválida ou ausente', raw_prefix: (process.env.DATABASE_URL || '').slice(0, 30) });
+    res.status(500).json({ error: 'DATABASE_URL inválida ou ausente' });
   }
 });
 
@@ -987,12 +1005,13 @@ app.put('/api/occupancy/:id/checkout', requireAuth, asyncRoute(async (req, res) 
 
 // ─── News CRUD ────────────────────────────────────────────────────────────────
 
-app.get('/api/news', asyncRoute(async (_req, res) => {
-  const rows = await query(
-    `SELECT n.*, u.name AS author_name FROM news n
-     LEFT JOIN users u ON u.id = n.author_id
-     ORDER BY n.created_at DESC LIMIT 200`
-  );
+app.get('/api/news', asyncRoute(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 100, 200);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+  const [rows, countRow] = await Promise.all([
+    query(`SELECT n.*, u.name AS author_name FROM news n LEFT JOIN users u ON u.id = n.author_id ORDER BY n.created_at DESC LIMIT $1 OFFSET $2`, [limit, offset]),
+    queryOne(`SELECT COUNT(*) AS total FROM news`)
+  ]);
   const data = rows.map(function(n) {
     return {
       id: n.id,
@@ -1010,7 +1029,7 @@ app.get('/api/news', asyncRoute(async (_req, res) => {
       is_rss: !!n.is_rss,
     };
   });
-  res.json({ ok: true, data });
+  res.json({ ok: true, data, total: Number(countRow?.total || 0), limit, offset });
 }));
 
 app.post('/api/news', requireAuth, asyncRoute(async (req, res) => {
@@ -1078,14 +1097,14 @@ app.delete('/api/news/:id', requireAuth, asyncRoute(async (req, res) => {
 
 // ─── Requests CRUD ────────────────────────────────────────────────────────────
 
-app.get('/api/requests', asyncRoute(async (_req, res) => {
-  const data = await query(
-    `SELECT r.*, un.name AS unit_name
-     FROM requests r
-     LEFT JOIN units un ON un.id = r.unit_id
-     ORDER BY r.id DESC`
-  );
-  res.json({ ok: true, data });
+app.get('/api/requests', asyncRoute(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+  const [data, countRow] = await Promise.all([
+    query(`SELECT r.*, un.name AS unit_name FROM requests r LEFT JOIN units un ON un.id = r.unit_id ORDER BY r.id DESC LIMIT $1 OFFSET $2`, [limit, offset]),
+    queryOne(`SELECT COUNT(*) AS total FROM requests`)
+  ]);
+  res.json({ ok: true, data, total: Number(countRow?.total || 0), limit, offset });
 }));
 
 app.post('/api/requests', asyncRoute(async (req, res) => {
@@ -1467,7 +1486,7 @@ app.post('/api/feeds/autodiscover', requireAuth, asyncRoute(async (req, res) => 
   try {
     const ctrl = new AbortController();
     const tmr = setTimeout(()=>ctrl.abort(),3000);
-    const resp = await fetch(url,{signal:ctrl.signal,headers:{'User-Agent':'SGUA-RSS-Discover/1.0'}});
+    const resp = await fetch(url,{signal:ctrl.signal,headers:{'User-Agent':'SGUA-RSS-Discover/1.0'},dispatcher:feedAgent});
     clearTimeout(tmr);
     const html = await resp.text();
     const linkRx = /<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/gi;
@@ -1622,6 +1641,13 @@ app.post('/api/ocorrencias', requireAuth, asyncRoute(async (req, res) => {
      b.data_ocorrencia || new Date().toISOString().slice(0,10)]
   );
   auditLog(req, 'criar_ocorrencia', 'ocorrencias', row.id, { titulo: row.titulo, unit_id });
+  if (row.severidade === 'critica') {
+    const un = await queryOne('SELECT name FROM units WHERE id=$1', [unit_id]).catch(()=>null);
+    sendAlertEmail(
+      'Ocorrência Crítica: ' + row.titulo,
+      'Uma ocorrência crítica foi registrada no SGUA.\n\nTítulo: ' + row.titulo + '\nUnidade: ' + (un?.name || unit_id) + '\nTipo: ' + row.tipo + '\nDescrição: ' + (row.descricao || '—') + '\n\nAcesse o sistema para mais detalhes.'
+    );
+  }
   res.status(201).json({ ok: true, data: row });
 }));
 
@@ -1710,6 +1736,13 @@ app.post('/api/ordens', requireAuth, asyncRoute(async (req, res) => {
      b.data_prevista || null]
   );
   auditLog(req, 'criar_ordem', 'ordens', row.id, { titulo: row.titulo, unit_id });
+  if (row.prioridade === 'urgente') {
+    const un = await queryOne('SELECT name FROM units WHERE id=$1', [unit_id]).catch(()=>null);
+    sendAlertEmail(
+      'Ordem Urgente: ' + row.titulo,
+      'Uma ordem de manutenção urgente foi criada no SGUA.\n\nTítulo: ' + row.titulo + '\nUnidade: ' + (un?.name || unit_id) + '\nTipo: ' + row.tipo + '\nDescrição: ' + (row.descricao || '—') + '\n\nAcesse o sistema para mais detalhes.'
+    );
+  }
   res.status(201).json({ ok: true, data: row });
 }));
 
@@ -1779,7 +1812,7 @@ app.get('/api/audit', requireAuth, asyncRoute(async (req, res) => {
 
 app.get('/api/stats', asyncRoute(async (_req, res) => {
   const [unitsRow, newsRow, feedsRow, ocorrRow, ordensRow, ocupRow,
-         newsCats, feedsStatus] = await Promise.all([
+         newsCats, feedsStatus, agendaRow] = await Promise.all([
     queryOne(`SELECT COUNT(*) AS total,
               COUNT(*) FILTER (WHERE status='active') AS ativas FROM units`),
     queryOne(`SELECT COUNT(*) AS total FROM news WHERE created_at > now()-interval '30 days'`),
@@ -1790,13 +1823,14 @@ app.get('/api/stats', asyncRoute(async (_req, res) => {
     query(`SELECT category, COUNT(*) AS total FROM news
            WHERE created_at > now()-interval '30 days'
            GROUP BY category ORDER BY total DESC LIMIT 8`),
-    query(`SELECT status, COUNT(*) AS total FROM sgua_feeds GROUP BY status`)
+    query(`SELECT status, COUNT(*) AS total FROM sgua_feeds GROUP BY status`),
+    queryOne(`SELECT COUNT(*) AS proximos FROM sgua_agenda WHERE status='agendado' AND data_inicio BETWEEN now() AND now()+interval '7 days'`).catch(()=>({proximos:0}))
   ]);
   res.json({
     ok: true,
     units: unitsRow, news: newsRow, feeds: feedsRow,
     ocorrencias: ocorrRow, ordens: ordensRow, ocupacao: ocupRow,
-    newsPorCategoria: newsCats, feedsStatus
+    newsPorCategoria: newsCats, feedsStatus, agenda: agendaRow
   });
 }));
 
@@ -1809,6 +1843,221 @@ app.get('/api/stats/ocupacao-historico', asyncRoute(async (_req, res) => {
     GROUP BY dia ORDER BY dia
   `).catch(() => []);
   res.json({ ok: true, data });
+}));
+
+// ─── Agenda de Eventos ───────────────────────────────────────────────────────
+
+const TIPOS_AG = ['reuniao','vistoria','fiscalizacao','capacitacao','audiencia','outro'];
+const STATS_AG = ['agendado','em_andamento','realizado','cancelado'];
+
+app.get('/api/agenda', asyncRoute(async (req, res) => {
+  let sql = `SELECT a.*, u.name AS unit_name FROM sgua_agenda a LEFT JOIN units u ON u.id = a.unit_id WHERE 1=1`;
+  const params = [];
+  if (req.query.status && STATS_AG.includes(req.query.status)) {
+    params.push(req.query.status); sql += ` AND a.status=$${params.length}`;
+  }
+  if (req.query.tipo && TIPOS_AG.includes(req.query.tipo)) {
+    params.push(req.query.tipo); sql += ` AND a.tipo=$${params.length}`;
+  }
+  if (req.query.unit_id) {
+    const uid = parsePositiveId(req.query.unit_id);
+    if (uid) { params.push(uid); sql += ` AND a.unit_id=$${params.length}`; }
+  }
+  if (req.query.mes && req.query.ano) {
+    const mes = parseInt(req.query.mes), ano = parseInt(req.query.ano);
+    if (mes >= 1 && mes <= 12 && ano > 2000) {
+      params.push(ano, mes);
+      sql += ` AND EXTRACT(YEAR FROM a.data_inicio)=$${params.length-1} AND EXTRACT(MONTH FROM a.data_inicio)=$${params.length}`;
+    }
+  }
+  sql += ` ORDER BY a.data_inicio ASC`;
+  const rows = await query(sql, params);
+  res.json({ ok: true, rows });
+}));
+
+app.get('/api/agenda/:id', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const row = await queryOne('SELECT a.*, u.name AS unit_name FROM sgua_agenda a LEFT JOIN units u ON u.id = a.unit_id WHERE a.id=$1', [id]);
+  if (!row) return res.status(404).json({ ok: false, error: 'Não encontrado.' });
+  res.json({ ok: true, data: row });
+}));
+
+app.post('/api/agenda', requireAuth, asyncRoute(async (req, res) => {
+  const b = req.body;
+  const titulo = sanitizeText(b.titulo || '', 200);
+  if (!titulo) return res.status(400).json({ ok: false, error: 'Título obrigatório.' });
+  if (!b.data_inicio) return res.status(400).json({ ok: false, error: 'data_inicio obrigatório.' });
+  const tipo = TIPOS_AG.includes(b.tipo) ? b.tipo : 'reuniao';
+  const status = STATS_AG.includes(b.status) ? b.status : 'agendado';
+  const unit_id = parsePositiveId(b.unit_id) || null;
+  const row = await queryOne(
+    `INSERT INTO sgua_agenda (unit_id, tipo, status, titulo, descricao, local, responsavel, data_inicio, data_fim, participantes, resultado, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+    [unit_id, tipo, status, titulo,
+     sanitizeText(b.descricao || '', 2000),
+     sanitizeText(b.local || '', 200),
+     sanitizeText(b.responsavel || '', 120),
+     b.data_inicio, b.data_fim || null,
+     sanitizeText(b.participantes || '', 500),
+     sanitizeText(b.resultado || '', 2000),
+     req.admin?.email || '']
+  );
+  auditLog(req, 'criar_agenda', 'agenda', row.id, { titulo });
+  res.status(201).json({ ok: true, data: row });
+}));
+
+app.put('/api/agenda/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const existing = await queryOne('SELECT * FROM sgua_agenda WHERE id=$1', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Não encontrado.' });
+  const b = req.body;
+  const titulo = sanitizeText(b.titulo || existing.titulo, 200);
+  const tipo = TIPOS_AG.includes(b.tipo) ? b.tipo : existing.tipo;
+  const status = STATS_AG.includes(b.status) ? b.status : existing.status;
+  const unit_id = b.unit_id !== undefined ? (parsePositiveId(b.unit_id) || null) : existing.unit_id;
+  const row = await queryOne(
+    `UPDATE sgua_agenda SET unit_id=$1, tipo=$2, status=$3, titulo=$4, descricao=$5, local=$6,
+     responsavel=$7, data_inicio=$8, data_fim=$9, participantes=$10, resultado=$11, updated_at=now()
+     WHERE id=$12 RETURNING *`,
+    [unit_id, tipo, status, titulo,
+     sanitizeText(b.descricao !== undefined ? b.descricao : existing.descricao, 2000),
+     sanitizeText(b.local !== undefined ? b.local : existing.local, 200),
+     sanitizeText(b.responsavel !== undefined ? b.responsavel : existing.responsavel, 120),
+     b.data_inicio || existing.data_inicio,
+     b.data_fim !== undefined ? (b.data_fim || null) : existing.data_fim,
+     sanitizeText(b.participantes !== undefined ? b.participantes : existing.participantes, 500),
+     sanitizeText(b.resultado !== undefined ? b.resultado : existing.resultado, 2000),
+     id]
+  );
+  auditLog(req, 'atualizar_agenda', 'agenda', id, { status });
+  res.json({ ok: true, data: row });
+}));
+
+app.delete('/api/agenda/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const existing = await queryOne('SELECT id FROM sgua_agenda WHERE id=$1', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Não encontrado.' });
+  await query('DELETE FROM sgua_agenda WHERE id=$1', [id]);
+  auditLog(req, 'deletar_agenda', 'agenda', id, {});
+  res.json({ ok: true });
+}));
+
+// ─── Relatórios PDF ───────────────────────────────────────────────────────────
+
+function pdfHeader(doc, titulo) {
+  doc.fontSize(18).font('Helvetica-Bold').text('SEMA/AC — SGUA', { align: 'center' });
+  doc.fontSize(12).font('Helvetica').text('Sistema de Gestão CIMA & UGAI', { align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(14).font('Helvetica-Bold').text(titulo, { align: 'center' });
+  doc.fontSize(9).font('Helvetica').text('Gerado em: ' + new Date().toLocaleString('pt-BR'), { align: 'center' });
+  doc.moveDown(1);
+  doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  doc.moveDown(0.5);
+}
+
+app.get('/api/relatorios/ocupacao', requireAuth, asyncRoute(async (req, res) => {
+  if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
+  const mes = parseInt(req.query.mes) || new Date().getMonth() + 1;
+  const ano = parseInt(req.query.ano) || new Date().getFullYear();
+  const units = await query(`SELECT u.*, COALESCE(SUM(o.vagas),0) AS total_vagas, COALESCE(SUM(o.current_occupancy),0) AS total_ocup FROM units u LEFT JOIN occupancy_records o ON o.unit_id=u.id AND EXTRACT(MONTH FROM o.start_date)=$1 AND EXTRACT(YEAR FROM o.start_date)=$2 GROUP BY u.id ORDER BY u.name`, [mes, ano]);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="relatorio-ocupacao-${ano}-${String(mes).padStart(2,'0')}.pdf"`);
+  const doc = new PDFDocument({ margin: 50 });
+  doc.pipe(res);
+  pdfHeader(doc, `Relatório de Ocupação — ${String(mes).padStart(2,'0')}/${ano}`);
+  doc.fontSize(10).font('Helvetica-Bold');
+  doc.text('Unidade', 50, doc.y, { width: 200, continued: true });
+  doc.text('Tipo', 250, doc.y, { width: 80, continued: true });
+  doc.text('Vagas', 330, doc.y, { width: 70, continued: true });
+  doc.text('Ocupação', 400, doc.y, { width: 80, continued: true });
+  doc.text('% Uso', 480, doc.y);
+  doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  doc.moveDown(0.3);
+  doc.font('Helvetica').fontSize(9);
+  units.forEach(u => {
+    const pct = u.total_vagas > 0 ? Math.round((u.total_ocup / u.total_vagas) * 100) : 0;
+    doc.text(u.name || '—', 50, doc.y, { width: 200, continued: true });
+    doc.text(u.tipo || '—', 250, doc.y, { width: 80, continued: true });
+    doc.text(String(u.total_vagas || 0), 330, doc.y, { width: 70, continued: true });
+    doc.text(String(u.total_ocup || 0), 400, doc.y, { width: 80, continued: true });
+    doc.text(pct + '%', 480, doc.y);
+  });
+  doc.end();
+  auditLog(req, 'relatorio_ocupacao', 'relatorios', null, { mes, ano });
+}));
+
+app.get('/api/relatorios/ocorrencias', requireAuth, asyncRoute(async (req, res) => {
+  if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
+  const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
+  const fim = req.query.fim || new Date().toISOString().slice(0,10);
+  const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ocorrencias o LEFT JOIN units u ON u.id=o.unit_id WHERE o.data_ocorrencia BETWEEN $1 AND $2 ORDER BY o.data_ocorrencia DESC`, [inicio, fim]);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="relatorio-ocorrencias-${inicio}-${fim}.pdf"`);
+  const doc = new PDFDocument({ margin: 50 });
+  doc.pipe(res);
+  pdfHeader(doc, `Relatório de Ocorrências — ${inicio} a ${fim}`);
+  doc.fontSize(9).font('Helvetica-Bold');
+  ['Data','Unidade','Tipo','Severidade','Status','Título'].forEach((h2, i) => {
+    const xs = [50,110,210,280,340,400];
+    doc.text(h2, xs[i] || 50, doc.y, { width: 60, continued: i < 5 });
+    if (i === 5) doc.text(h2, xs[i], doc.y);
+  });
+  doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  doc.moveDown(0.3);
+  doc.font('Helvetica').fontSize(8);
+  rows.forEach(r => {
+    const y = doc.y;
+    if (y > 700) { doc.addPage(); }
+    doc.text(String(r.data_ocorrencia||'').slice(0,10), 50, doc.y, {width:55,continued:true});
+    doc.text((r.unit_name||'').slice(0,15), 110, doc.y, {width:95,continued:true});
+    doc.text((r.tipo||'').slice(0,12), 210, doc.y, {width:65,continued:true});
+    doc.text((r.severidade||'').slice(0,10), 280, doc.y, {width:55,continued:true});
+    doc.text((r.status||'').slice(0,12), 340, doc.y, {width:55,continued:true});
+    doc.text((r.titulo||'').slice(0,30), 400, doc.y, {width:145});
+  });
+  doc.moveDown(1);
+  doc.font('Helvetica-Bold').fontSize(10).text('Total: ' + rows.length + ' ocorrência(s)');
+  doc.end();
+  auditLog(req, 'relatorio_ocorrencias', 'relatorios', null, { inicio, fim });
+}));
+
+app.get('/api/relatorios/ordens', requireAuth, asyncRoute(async (req, res) => {
+  if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
+  const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
+  const fim = req.query.fim || new Date().toISOString().slice(0,10);
+  const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ordens o LEFT JOIN units u ON u.id=o.unit_id WHERE o.created_at::date BETWEEN $1 AND $2 ORDER BY o.created_at DESC`, [inicio, fim]);
+  const totalEst = rows.reduce((s,r)=>s+Number(r.custo_estimado||0),0);
+  const totalReal = rows.reduce((s,r)=>s+Number(r.custo_real||0),0);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="relatorio-ordens-${inicio}-${fim}.pdf"`);
+  const doc = new PDFDocument({ margin: 50 });
+  doc.pipe(res);
+  pdfHeader(doc, `Relatório de Ordens de Manutenção — ${inicio} a ${fim}`);
+  doc.fontSize(9).font('Helvetica-Bold');
+  ['Unidade','Tipo','Prioridade','Status','Custo Est.','Custo Real'].forEach((h2, i) => {
+    const xs = [50,160,240,310,390,470];
+    doc.text(h2, xs[i], doc.y, { width: 90, continued: i < 5 });
+    if (i === 5) doc.text(h2, xs[i], doc.y);
+  });
+  doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  doc.moveDown(0.3);
+  doc.font('Helvetica').fontSize(8);
+  rows.forEach(r => {
+    if (doc.y > 700) { doc.addPage(); }
+    doc.text((r.unit_name||'').slice(0,15), 50, doc.y, {width:105,continued:true});
+    doc.text((r.tipo||'').slice(0,10), 160, doc.y, {width:75,continued:true});
+    doc.text((r.prioridade||'').slice(0,10), 240, doc.y, {width:65,continued:true});
+    doc.text((r.status||'').slice(0,12), 310, doc.y, {width:75,continued:true});
+    doc.text(r.custo_estimado ? 'R$ '+Number(r.custo_estimado).toFixed(2) : '—', 390, doc.y, {width:75,continued:true});
+    doc.text(r.custo_real ? 'R$ '+Number(r.custo_real).toFixed(2) : '—', 470, doc.y, {width:75});
+  });
+  doc.moveDown(1);
+  doc.font('Helvetica-Bold').fontSize(10).text(`Total: ${rows.length} ordem(ns) | Custo Est.: R$ ${totalEst.toFixed(2)} | Real: R$ ${totalReal.toFixed(2)}`);
+  doc.end();
+  auditLog(req, 'relatorio_ordens', 'relatorios', null, { inicio, fim });
 }));
 
 // ─── Backup ──────────────────────────────────────────────────────────────────
@@ -2223,6 +2472,24 @@ const server = app.listen(PORT, async () => {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_ocorrencias_unit_id ON sgua_ocorrencias(unit_id)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_ordens_unit_id ON sgua_ordens(unit_id)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON sgua_audit_log(created_at DESC)`).catch(()=>{});
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_agenda (
+      id SERIAL PRIMARY KEY,
+      unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+      tipo VARCHAR(40) NOT NULL DEFAULT 'reuniao',
+      status VARCHAR(20) NOT NULL DEFAULT 'agendado',
+      titulo VARCHAR(200) NOT NULL,
+      descricao TEXT DEFAULT '',
+      local VARCHAR(200) DEFAULT '',
+      responsavel VARCHAR(120) DEFAULT '',
+      data_inicio TIMESTAMPTZ NOT NULL DEFAULT now(),
+      data_fim TIMESTAMPTZ,
+      participantes TEXT DEFAULT '',
+      resultado TEXT DEFAULT '',
+      created_by VARCHAR(200) DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_agenda_data_inicio ON sgua_agenda(data_inicio)`).catch(()=>{});
     // Migrar feeds do app_state se sgua_feeds estiver vazia
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
     if (exFeeds.length === 0) {
