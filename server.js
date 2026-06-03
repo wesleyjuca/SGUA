@@ -486,17 +486,25 @@ async function fetchPageArticles(feed) {
 async function fetchSmartItems(feed) {
   // 1. Try RSS/Atom
   const rss = await fetchFeedItems(feed);
-  if (rss.ok && rss.items.length > 0) return Object.assign({}, rss, { metodo: 'rss' });
+  if (rss.ok && rss.items.length > 0) {
+    const result = Object.assign({}, rss, { metodo: 'rss' });
+    logger.info({ url: feed.url, metodo: 'rss', itens: rss.items.length }, '[fetchSmartItems]');
+    return result;
+  }
 
   // 2. Try to discover RSS URL from the page HTML
   const rssUrl = await discoverRssUrl(feed.url);
   if (rssUrl && rssUrl !== feed.url) {
     const r2 = await fetchFeedItems(Object.assign({}, feed, { url: rssUrl }));
-    if (r2.ok && r2.items.length > 0) return Object.assign({}, r2, { metodo: 'rss_discovered', rss_url: rssUrl });
+    if (r2.ok && r2.items.length > 0) {
+      logger.info({ url: feed.url, rss_url: rssUrl, metodo: 'rss_discovered', itens: r2.items.length }, '[fetchSmartItems]');
+      return Object.assign({}, r2, { metodo: 'rss_discovered', rss_url: rssUrl });
+    }
   }
 
   // 3. Fallback: HTML scraping
   const scraped = await fetchPageArticles(feed);
+  logger.info({ url: feed.url, metodo: 'html', itens: scraped.items?.length ?? 0, ok: scraped.ok }, '[fetchSmartItems]');
   return Object.assign({}, scraped, { metodo: 'html' });
 }
 
@@ -518,10 +526,9 @@ Responda APENAS com JSON válido no formato: {"titulo":"...","resumo":"...","con
       messages: [{ role: 'user', content: `Artigo original:\nTítulo: ${titulo}\n\n${(conteudo || titulo).slice(0, 3000)}` }]
     });
     const text = msg.content[0].text.trim();
-    const jsonStart = text.indexOf('{');
-    const jsonEnd = text.lastIndexOf('}');
-    if (jsonStart === -1 || jsonEnd === -1) return null;
-    return JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    const jsonStr = text.match(/\{[\s\S]*\}/)?.[0];
+    if (!jsonStr) return null;
+    return JSON.parse(jsonStr);
   } catch(e) {
     logger.error('[IA] synthesizeArticle falhou:', e.message);
     return null;
@@ -539,13 +546,11 @@ async function inserirArtigo(item, feed) {
     );
     const fdRow = rows[0];
     if (!fdRow) return 0;
-    const hoje = today();
-    if (fdRow.ultima_reset && String(fdRow.ultima_reset).slice(0,10) < hoje) {
-      await client.query('UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=$1 WHERE id=$2', [hoje, feed.id]);
-      fdRow.noticias_hoje = 0;
-    }
+    // Reset de cota diária é responsabilidade exclusiva do cron (0 0 * * *)
+    // Se ultima_reset for nulo (linha nova), trata como cota zerada para não bloquear
+    const cotaAtual = fdRow.ultima_reset ? (fdRow.noticias_hoje || 0) : 0;
     const qtdMax = fdRow.quantidade_diaria || 10;
-    if ((fdRow.noticias_hoje || 0) >= qtdMax) return 0;
+    if (cotaAtual >= qtdMax) return 0;
 
     let title = item.title.slice(0, 180);
     let content = (item.description || item.title).slice(0, 4000);
@@ -1349,12 +1354,19 @@ app.post('/api/feeds/sync', requireAuth, asyncRoute(async (req, res) => {
 // ─── Feed CRUD ────────────────────────────────────────────────────────────────
 
 app.get('/api/feeds', asyncRoute(async (req, res) => {
-  const feeds = await query('SELECT * FROM sgua_feeds ORDER BY prioridade DESC, id ASC');
-  const feedsComLogs = await Promise.all(feeds.map(async (f) => {
-    const logs = await query('SELECT id,tipo,ok,mensagem,itens_adicionados,created_at FROM sgua_feed_logs WHERE feed_id=$1 ORDER BY created_at DESC LIMIT 5',[f.id]);
-    return Object.assign({},f,{logs});
-  }));
-  res.json({ ok: true, feeds: feedsComLogs });
+  const feeds = await query('SELECT * FROM sgua_feeds ORDER BY prioridade DESC, nome ASC');
+  if (!feeds.length) return res.json({ ok: true, feeds: [] });
+  const feedIds = feeds.map(function(f){ return f.id; });
+  const logs = await query(
+    `SELECT id,feed_id,tipo,ok,mensagem,itens_adicionados,created_at FROM (
+      SELECT *, row_number() OVER (PARTITION BY feed_id ORDER BY created_at DESC) AS rn
+      FROM sgua_feed_logs WHERE feed_id = ANY($1)
+    ) t WHERE rn <= 5`,
+    [feedIds]
+  );
+  const logsByFeed = {};
+  for (const l of logs) { (logsByFeed[l.feed_id] = logsByFeed[l.feed_id] || []).push(l); }
+  res.json({ ok: true, feeds: feeds.map(function(f){ return Object.assign({}, f, { logs: logsByFeed[f.id] || [] }); }) });
 }));
 
 app.post('/api/feeds', requireAuth, asyncRoute(async (req, res) => {
@@ -1454,7 +1466,7 @@ app.post('/api/feeds/:id/sync', requireAuth, asyncRoute(async (req, res) => {
     await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',[id,'sync',false,String(result.error||'').slice(0,500)]);
     const fdCheck = await queryOne('SELECT falhas_consecutivas FROM sgua_feeds WHERE id=$1',[id]);
     if (fdCheck && fdCheck.falhas_consecutivas >= 5) {
-      await query('UPDATE sgua_feeds SET ativo=false, updated_at=now() WHERE id=$1',[id]);
+      await query('UPDATE sgua_feeds SET ativo=false,status=\'pausado\',updated_at=now() WHERE id=$1',[id]);
       await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
         [id,'auto_pause',false,'Feed pausado automaticamente após 5 falhas consecutivas']);
     }
@@ -2749,25 +2761,40 @@ const server = app.listen(PORT, async () => {
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_equipamentos_unit_id ON sgua_equipamentos(unit_id)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_documentos_publico ON sgua_documentos(publico, created_at DESC)`).catch(()=>{});
-    // Migrar feeds do app_state se sgua_feeds estiver vazia
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sgua_feeds_ativo ON sgua_feeds(ativo)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_sgua_feed_logs_feed_id ON sgua_feed_logs(feed_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_news_data_pub ON news(data_pub DESC NULLS LAST)`).catch(()=>{});
+    // Migrar feeds do app_state se sgua_feeds estiver vazia (primeira instalação)
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
     if (exFeeds.length === 0) {
       const row = await queryOne("SELECT value FROM app_state WHERE key='sgua'");
-      const FDS_DEFAULTS = [
-        {nome:'Agência Brasil — Meio Ambiente',url:'https://agenciabrasil.ebc.com.br/rss/meio-ambiente/feed.rss',categoria:'Monitoramento',ativo:true},
-        {nome:'Agência Brasil — Amazônia',url:'https://agenciabrasil.ebc.com.br/rss/amazonia/feed.rss',categoria:'Geral',ativo:true},
-        {nome:'Agência Brasil — Geral',url:'https://agenciabrasil.ebc.com.br/rss/geral/feed.rss',categoria:'Geral',ativo:false}
-      ];
-      const toMigrate = (row?.value?.feeds?.length ? row.value.feeds : FDS_DEFAULTS);
-      for (const f of toMigrate) {
-        if (!f.url || !f.nome) continue;
-        await pool.query(
-          'INSERT INTO sgua_feeds (nome, url, categoria, ativo, status) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (url) DO NOTHING',
-          [String(f.nome).slice(0,200), String(f.url).trim(), String(f.categoria||'Geral').slice(0,100), f.ativo !== false, 'aguardando']
-        ).catch(()=>{});
+      if (row?.value?.feeds?.length) {
+        for (const f of row.value.feeds) {
+          if (!f.url || !f.nome) continue;
+          await pool.query(
+            'INSERT INTO sgua_feeds (nome,url,categoria,ativo,status) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (url) DO NOTHING',
+            [String(f.nome).slice(0,200), String(f.url).trim(), String(f.categoria||'Geral').slice(0,100), f.ativo !== false, 'aguardando']
+          ).catch(()=>{});
+        }
+        logger.info('[DB] Feeds migrados do app_state para sgua_feeds');
       }
-      logger.info('[DB] Feeds migrados para sgua_feeds');
     }
+    // Garantir que feeds padrão ambientais existam (ON CONFLICT DO NOTHING preserva configurações do usuário)
+    const FDS_DEFAULTS = [
+      {nome:'Agência Brasil — Meio Ambiente',url:'https://agenciabrasil.ebc.com.br/rss/meio-ambiente/feed.rss',categoria:'Monitoramento',ativo:true},
+      {nome:'Agência Brasil — Amazônia',url:'https://agenciabrasil.ebc.com.br/rss/amazonia/feed.rss',categoria:'Geral',ativo:true},
+      {nome:'Ministério do Meio Ambiente',url:'https://www.gov.br/mma/pt-br/assuntos/noticias/RSS',categoria:'Legislação',ativo:true},
+      {nome:'INPE — Notícias',url:'https://www.inpe.br/rss/noticias.php',categoria:'Monitoramento',ativo:true},
+      {nome:'Portal SEMA/AC',url:'https://sema.ac.gov.br/feed',categoria:'Gestão',ativo:true},
+      {nome:'Agência Brasil — Geral (exemplo — pode editar)',url:'https://agenciabrasil.ebc.com.br/rss/geral/feed.rss',categoria:'Geral',ativo:false}
+    ];
+    for (const fd of FDS_DEFAULTS) {
+      await pool.query(
+        'INSERT INTO sgua_feeds (nome,url,categoria,ativo,status) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (url) DO NOTHING',
+        [fd.nome, fd.url, fd.categoria, fd.ativo, 'aguardando']
+      ).catch(()=>{});
+    }
+    logger.info('[DB] Feeds padrão verificados/inseridos');
   } catch(e) { logger.error('[DB] startup init failed:', e.message); }
 });
 
@@ -2816,7 +2843,9 @@ cron.schedule('0 7 * * 0', async () => {
 // Cron: daily 06:00 UTC — sincronizar RSS feeds
 cron.schedule('0 6 * * *', async () => {
   try {
-    const feeds = await query('SELECT * FROM sgua_feeds WHERE ativo=true AND (frequencia=\'diaria\' OR frequencia=\'semanal\')');
+    const isSaturday = new Date().getDay() === 6;
+    const freqClause = isSaturday ? "(frequencia='diaria' OR frequencia='semanal')" : "frequencia='diaria'";
+    const feeds = await query(`SELECT * FROM sgua_feeds WHERE ativo=true AND ${freqClause}`);
     if (!feeds.length) { logger.info('[CRON-RSS] Sem feeds ativos'); return; }
     let totalAdded = 0;
     const warnings = [];
@@ -2831,7 +2860,7 @@ cron.schedule('0 6 * * *', async () => {
           warnings.push(f.nome+': '+result.error);
           const fdCheck2 = await queryOne('SELECT falhas_consecutivas FROM sgua_feeds WHERE id=$1',[f.id]);
           if (fdCheck2 && fdCheck2.falhas_consecutivas >= 5) {
-            await pool.query('UPDATE sgua_feeds SET ativo=false, updated_at=now() WHERE id=$1',[f.id]);
+            await pool.query('UPDATE sgua_feeds SET ativo=false,status=\'pausado\',updated_at=now() WHERE id=$1',[f.id]);
             await pool.query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
               [f.id,'auto_pause',false,'Feed pausado automaticamente após 5 falhas consecutivas']);
           }
