@@ -151,6 +151,18 @@ function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 }
 
+// ─── Audit log helper ─────────────────────────────────────────────────────────
+
+async function auditLog(req, acao, entidade, entidadeId, detalhes = {}) {
+  const admin = req.admin || {};
+  pool.query(
+    `INSERT INTO sgua_audit_log (usuario_id, usuario_email, acao, entidade, entidade_id, detalhes, ip)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [admin.id || null, admin.email || null, acao, entidade, entidadeId || null,
+     JSON.stringify(detalhes), req.ip || null]
+  ).catch(e => logger.warn({ err: e }, '[Audit] log falhou'));
+}
+
 // ─── RSS helpers ─────────────────────────────────────────────────────────────
 
 function decodeXmlEntities(input) {
@@ -626,6 +638,7 @@ app.post('/api/auth/login', authLimiter, asyncRoute(async (req, res) => {
     perfil: user.perfil, permissoes: user.permissoes || {}
   };
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+  auditLog(req, 'login', 'auth', user.id, { email });
   res.json({ ok: true, token, user: Object.assign({}, payload, { ativo: true }) });
 }));
 
@@ -822,6 +835,7 @@ app.post('/api/units', requireAuth, asyncRoute(async (req, res) => {
      VALUES ($1, $2, $3, $4, $5, $6, 0) RETURNING *`,
     [name, address, latitude, longitude, status, Math.floor(capacity)]
   );
+  auditLog(req, 'criar_unidade', 'units', data.id, { nome: data.name });
   res.status(201).json({ ok: true, data });
 }));
 
@@ -880,6 +894,7 @@ app.delete('/api/units/:id', requireAuth, asyncRoute(async (req, res) => {
     try { fs.unlinkSync(path.join(UPLOADS_DIR, p.filename)); } catch {}
   });
   await query('DELETE FROM units WHERE id = $1', [id]);
+  auditLog(req, 'deletar_unidade', 'units', id, {});
   res.json({ ok: true });
 }));
 
@@ -1015,6 +1030,7 @@ app.post('/api/news', requireAuth, asyncRoute(async (req, res) => {
      sanitizeText(b.autor||b.autor_nome||'',200), sanitizeText(b.fonte||b.source||'',200),
      b.data||null]
   );
+  auditLog(req, 'criar_noticia', 'news', row.id, { titulo: row.title });
   res.status(201).json({ ok: true, data: row });
 }));
 
@@ -1056,6 +1072,7 @@ app.delete('/api/news/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   await query('DELETE FROM news WHERE id = $1', [id]);
+  auditLog(req, 'deletar_noticia', 'news', id, {});
   res.json({ ok: true });
 }));
 
@@ -1119,6 +1136,7 @@ app.put('/api/requests/:id', requireAuth, asyncRoute(async (req, res) => {
     'UPDATE requests SET status = $1, notes = $2, unit_id = $3 WHERE id = $4 RETURNING *',
     [status, notes, unit_id, id]
   );
+  auditLog(req, 'atualizar_solicitacao', 'requests', id, { status });
   res.json({ ok: true, data });
 }));
 
@@ -1288,6 +1306,7 @@ app.post('/api/feeds/sync', requireAuth, asyncRoute(async (req, res) => {
     return f;
   });
 
+  auditLog(req, 'sync_feeds', 'feeds', null, { added });
   return res.json({ ok: true, feeds: mergedFeeds, added, warnings });
 }));
 
@@ -1554,6 +1573,244 @@ app.put('/api/photos/:id/banner', requireAuth, asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ─── Ocorrências Ambientais ───────────────────────────────────────────────────
+
+const TIPOS_OC = ['incendio','enchente','invasao','fauna','infraestrutura','outro'];
+const SEVS_OC  = ['baixa','media','alta','critica'];
+const STATS_OC = ['aberta','em_andamento','resolvida'];
+
+app.get('/api/ocorrencias', asyncRoute(async (req, res) => {
+  const { status, tipo, unit_id } = req.query;
+  let sql = `SELECT o.*, u.name AS unit_name FROM sgua_ocorrencias o
+             LEFT JOIN units u ON u.id = o.unit_id WHERE 1=1`;
+  const params = [];
+  if (status) { params.push(status); sql += ` AND o.status=$${params.length}`; }
+  if (tipo)   { params.push(tipo);   sql += ` AND o.tipo=$${params.length}`; }
+  if (unit_id) { const uid = parsePositiveId(unit_id); if (uid) { params.push(uid); sql += ` AND o.unit_id=$${params.length}`; } }
+  sql += ' ORDER BY o.data_ocorrencia DESC, o.created_at DESC';
+  const data = await query(sql, params);
+  res.json({ ok: true, data });
+}));
+
+app.get('/api/units/:id/ocorrencias', asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const data = await query(
+    'SELECT * FROM sgua_ocorrencias WHERE unit_id=$1 ORDER BY data_ocorrencia DESC, created_at DESC', [unitId]
+  );
+  res.json({ ok: true, data });
+}));
+
+app.post('/api/ocorrencias', requireAuth, asyncRoute(async (req, res) => {
+  const b = req.body || {};
+  const unit_id = parsePositiveId(b.unit_id);
+  const titulo = sanitizeText(b.titulo || '', 200);
+  const tipo = TIPOS_OC.includes(b.tipo) ? b.tipo : 'outro';
+  const severidade = SEVS_OC.includes(b.severidade) ? b.severidade : 'media';
+  if (!unit_id) return res.status(400).json({ ok: false, error: 'unit_id obrigatório.' });
+  if (!titulo)  return res.status(400).json({ ok: false, error: 'Título obrigatório.' });
+  const unit = await queryOne('SELECT id FROM units WHERE id=$1', [unit_id]);
+  if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
+  const row = await queryOne(
+    `INSERT INTO sgua_ocorrencias
+       (unit_id, tipo, severidade, status, titulo, descricao, acao_tomada, responsavel, data_ocorrencia)
+     VALUES ($1,$2,$3,'aberta',$4,$5,$6,$7,$8) RETURNING *`,
+    [unit_id, tipo, severidade, titulo,
+     sanitizeText(b.descricao || '', 2000),
+     sanitizeText(b.acao_tomada || '', 1000),
+     sanitizeText(b.responsavel || '', 120),
+     b.data_ocorrencia || new Date().toISOString().slice(0,10)]
+  );
+  auditLog(req, 'criar_ocorrencia', 'ocorrencias', row.id, { titulo: row.titulo, unit_id });
+  res.status(201).json({ ok: true, data: row });
+}));
+
+app.put('/api/ocorrencias/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const existing = await queryOne('SELECT * FROM sgua_ocorrencias WHERE id=$1', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Ocorrência não encontrada.' });
+  const b = req.body || {};
+  const status     = STATS_OC.includes(b.status) ? b.status : existing.status;
+  const severidade = SEVS_OC.includes(b.severidade) ? b.severidade : existing.severidade;
+  const tipo       = TIPOS_OC.includes(b.tipo) ? b.tipo : existing.tipo;
+  const titulo        = sanitizeText(b.titulo || existing.titulo, 200);
+  const descricao     = sanitizeText(b.descricao ?? existing.descricao, 2000);
+  const acao_tomada   = sanitizeText(b.acao_tomada ?? existing.acao_tomada, 1000);
+  const responsavel   = sanitizeText(b.responsavel ?? existing.responsavel, 120);
+  const data_resolucao = status === 'resolvida' && !existing.data_resolucao
+    ? (b.data_resolucao || new Date().toISOString().slice(0,10))
+    : (b.data_resolucao ?? existing.data_resolucao);
+  const row = await queryOne(
+    `UPDATE sgua_ocorrencias SET tipo=$1, severidade=$2, status=$3, titulo=$4, descricao=$5,
+       acao_tomada=$6, responsavel=$7, data_resolucao=$8, updated_at=now() WHERE id=$9 RETURNING *`,
+    [tipo, severidade, status, titulo, descricao, acao_tomada, responsavel, data_resolucao || null, id]
+  );
+  auditLog(req, 'atualizar_ocorrencia', 'ocorrencias', id, { status });
+  res.json({ ok: true, data: row });
+}));
+
+app.delete('/api/ocorrencias/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  await query('DELETE FROM sgua_ocorrencias WHERE id=$1', [id]);
+  auditLog(req, 'deletar_ocorrencia', 'ocorrencias', id, {});
+  res.json({ ok: true });
+}));
+
+// ─── Ordens de Manutenção ─────────────────────────────────────────────────────
+
+const TIPOS_OR   = ['preventiva','corretiva','emergencial','melhoria'];
+const PRIORS_OR  = ['baixa','normal','alta','urgente'];
+const STATS_OR   = ['pendente','em_andamento','aguardando_material','concluida','cancelada'];
+
+app.get('/api/ordens', asyncRoute(async (req, res) => {
+  const { status, prioridade, unit_id } = req.query;
+  let sql = `SELECT o.*, u.name AS unit_name FROM sgua_ordens o
+             LEFT JOIN units u ON u.id = o.unit_id WHERE 1=1`;
+  const params = [];
+  if (status)    { params.push(status);    sql += ` AND o.status=$${params.length}`; }
+  if (prioridade){ params.push(prioridade);sql += ` AND o.prioridade=$${params.length}`; }
+  if (unit_id)   { const uid=parsePositiveId(unit_id); if(uid){ params.push(uid); sql += ` AND o.unit_id=$${params.length}`;} }
+  sql += ' ORDER BY CASE o.prioridade WHEN \'urgente\' THEN 0 WHEN \'alta\' THEN 1 WHEN \'normal\' THEN 2 ELSE 3 END, o.created_at DESC';
+  const data = await query(sql, params);
+  res.json({ ok: true, data });
+}));
+
+app.get('/api/units/:id/ordens', asyncRoute(async (req, res) => {
+  const unitId = parsePositiveId(req.params.id);
+  if (!unitId) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const data = await query(
+    'SELECT * FROM sgua_ordens WHERE unit_id=$1 ORDER BY created_at DESC', [unitId]
+  );
+  res.json({ ok: true, data });
+}));
+
+app.post('/api/ordens', requireAuth, asyncRoute(async (req, res) => {
+  const b = req.body || {};
+  const unit_id = parsePositiveId(b.unit_id);
+  const titulo = sanitizeText(b.titulo || '', 200);
+  if (!unit_id) return res.status(400).json({ ok: false, error: 'unit_id obrigatório.' });
+  if (!titulo)  return res.status(400).json({ ok: false, error: 'Título obrigatório.' });
+  const unit = await queryOne('SELECT id FROM units WHERE id=$1', [unit_id]);
+  if (!unit) return res.status(404).json({ ok: false, error: 'Unidade não encontrada.' });
+  const tipo      = TIPOS_OR.includes(b.tipo) ? b.tipo : 'corretiva';
+  const prioridade= PRIORS_OR.includes(b.prioridade) ? b.prioridade : 'normal';
+  const custo_est = b.custo_estimado ? Number(b.custo_estimado) || null : null;
+  const row = await queryOne(
+    `INSERT INTO sgua_ordens
+       (unit_id, tipo, prioridade, status, titulo, descricao, responsavel, fornecedor,
+        custo_estimado, data_prevista)
+     VALUES ($1,$2,$3,'pendente',$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [unit_id, tipo, prioridade, titulo,
+     sanitizeText(b.descricao || '', 2000),
+     sanitizeText(b.responsavel || '', 120),
+     sanitizeText(b.fornecedor || '', 120),
+     custo_est,
+     b.data_prevista || null]
+  );
+  auditLog(req, 'criar_ordem', 'ordens', row.id, { titulo: row.titulo, unit_id });
+  res.status(201).json({ ok: true, data: row });
+}));
+
+app.put('/api/ordens/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const existing = await queryOne('SELECT * FROM sgua_ordens WHERE id=$1', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Ordem não encontrada.' });
+  const b = req.body || {};
+  const status     = STATS_OR.includes(b.status) ? b.status : existing.status;
+  const prioridade = PRIORS_OR.includes(b.prioridade) ? b.prioridade : existing.prioridade;
+  const tipo       = TIPOS_OR.includes(b.tipo) ? b.tipo : existing.tipo;
+  const titulo        = sanitizeText(b.titulo || existing.titulo, 200);
+  const descricao     = sanitizeText(b.descricao ?? existing.descricao, 2000);
+  const responsavel   = sanitizeText(b.responsavel ?? existing.responsavel, 120);
+  const fornecedor    = sanitizeText(b.fornecedor ?? existing.fornecedor, 120);
+  const observacoes   = sanitizeText(b.observacoes ?? existing.observacoes, 2000);
+  const custo_est     = b.custo_estimado !== undefined ? (Number(b.custo_estimado) || null) : existing.custo_estimado;
+  const custo_real    = b.custo_real !== undefined ? (Number(b.custo_real) || null) : existing.custo_real;
+  const data_prevista = b.data_prevista !== undefined ? (b.data_prevista || null) : existing.data_prevista;
+  const data_conclusao = status === 'concluida' && !existing.data_conclusao
+    ? (b.data_conclusao || new Date().toISOString().slice(0,10))
+    : (b.data_conclusao !== undefined ? (b.data_conclusao || null) : existing.data_conclusao);
+  const row = await queryOne(
+    `UPDATE sgua_ordens SET tipo=$1, prioridade=$2, status=$3, titulo=$4, descricao=$5,
+       responsavel=$6, fornecedor=$7, custo_estimado=$8, custo_real=$9,
+       data_prevista=$10, data_conclusao=$11, observacoes=$12, updated_at=now()
+     WHERE id=$13 RETURNING *`,
+    [tipo, prioridade, status, titulo, descricao, responsavel, fornecedor,
+     custo_est, custo_real, data_prevista, data_conclusao || null, observacoes, id]
+  );
+  auditLog(req, 'atualizar_ordem', 'ordens', id, { status });
+  res.json({ ok: true, data: row });
+}));
+
+app.delete('/api/ordens/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  await query('DELETE FROM sgua_ordens WHERE id=$1', [id]);
+  auditLog(req, 'deletar_ordem', 'ordens', id, {});
+  res.json({ ok: true });
+}));
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+
+app.get('/api/audit', requireAuth, asyncRoute(async (req, res) => {
+  if (req.admin.perfil !== 'admin') return res.status(403).json({ ok: false, error: 'Acesso negado.' });
+  const limit  = Math.min(Number(req.query.limit)  || 50, 200);
+  const offset = Number(req.query.offset) || 0;
+  const entidade = req.query.entidade || null;
+  let sql = 'SELECT * FROM sgua_audit_log WHERE 1=1';
+  const params = [];
+  if (entidade) { params.push(entidade); sql += ` AND entidade=$${params.length}`; }
+  params.push(limit); sql  += ` ORDER BY created_at DESC LIMIT $${params.length}`;
+  params.push(offset); sql += ` OFFSET $${params.length}`;
+  const data = await query(sql, params);
+  const { rows: [{ total }] } = await pool.query(
+    entidade
+      ? 'SELECT COUNT(*) as total FROM sgua_audit_log WHERE entidade=$1'
+      : 'SELECT COUNT(*) as total FROM sgua_audit_log',
+    entidade ? [entidade] : []
+  );
+  res.json({ ok: true, data, total: Number(total) });
+}));
+
+// ─── Stats consolidados ───────────────────────────────────────────────────────
+
+app.get('/api/stats', asyncRoute(async (_req, res) => {
+  const [unitsRow, newsRow, feedsRow, ocorrRow, ordensRow, ocupRow,
+         newsCats, feedsStatus] = await Promise.all([
+    queryOne(`SELECT COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE status='active') AS ativas FROM units`),
+    queryOne(`SELECT COUNT(*) AS total FROM news WHERE created_at > now()-interval '30 days'`),
+    queryOne(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE ativo) AS ativos FROM sgua_feeds`),
+    queryOne(`SELECT COUNT(*) AS total FROM sgua_ocorrencias WHERE status != 'resolvida'`).catch(()=>({total:0})),
+    queryOne(`SELECT COUNT(*) AS total FROM sgua_ordens WHERE status NOT IN ('concluida','cancelada')`).catch(()=>({total:0})),
+    queryOne(`SELECT COALESCE(SUM(current_occupancy),0) AS total FROM units`),
+    query(`SELECT category, COUNT(*) AS total FROM news
+           WHERE created_at > now()-interval '30 days'
+           GROUP BY category ORDER BY total DESC LIMIT 8`),
+    query(`SELECT status, COUNT(*) AS total FROM sgua_feeds GROUP BY status`)
+  ]);
+  res.json({
+    ok: true,
+    units: unitsRow, news: newsRow, feeds: feedsRow,
+    ocorrencias: ocorrRow, ordens: ordensRow, ocupacao: ocupRow,
+    newsPorCategoria: newsCats, feedsStatus
+  });
+}));
+
+app.get('/api/stats/ocupacao-historico', asyncRoute(async (_req, res) => {
+  const data = await query(`
+    SELECT date_trunc('day', o.start_date)::DATE AS dia,
+           COUNT(*) AS entradas
+    FROM occupancy_records o
+    WHERE o.start_date >= now() - interval '30 days'
+    GROUP BY dia ORDER BY dia
+  `).catch(() => []);
+  res.json({ ok: true, data });
+}));
+
 // ─── Backup ──────────────────────────────────────────────────────────────────
 
 app.get('/api/backup', asyncRoute(async (_req, res) => {
@@ -1572,6 +1829,7 @@ app.post('/api/backup', requireAuth, asyncRoute(async (req, res) => {
     'INSERT INTO sgua_backups (label, snapshot, size_kb) VALUES ($1, $2, $3) RETURNING id, created_at, label, size_kb',
     [label, row.value, sizeKb]
   );
+  auditLog(req, 'criar_backup', 'backup', result.id, { label });
   res.status(201).json({ ok: true, data: result });
 }));
 
@@ -1592,6 +1850,7 @@ app.post('/api/backup/:id/restore', requireAuth, asyncRoute(async (req, res) => 
     "INSERT INTO app_state (key, value, updated_at) VALUES ('sgua', $1, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
     [JSON.stringify(backup.snapshot)]
   );
+  auditLog(req, 'restaurar_backup', 'backup', id, {});
   res.json({ ok: true });
 }));
 
@@ -1917,6 +2176,53 @@ const server = app.listen(PORT, async () => {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_occupancy_user_id ON occupancy_records(user_id)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_news_is_rss ON news(is_rss)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_news_created_at ON news(created_at DESC)`).catch(()=>{});
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_ocorrencias (
+      id SERIAL PRIMARY KEY,
+      unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+      tipo VARCHAR(40) NOT NULL DEFAULT 'outro',
+      severidade VARCHAR(20) NOT NULL DEFAULT 'media',
+      status VARCHAR(20) NOT NULL DEFAULT 'aberta',
+      titulo VARCHAR(200) NOT NULL,
+      descricao TEXT DEFAULT '',
+      acao_tomada TEXT DEFAULT '',
+      responsavel VARCHAR(120) DEFAULT '',
+      data_ocorrencia DATE NOT NULL DEFAULT CURRENT_DATE,
+      data_resolucao DATE,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_ordens (
+      id SERIAL PRIMARY KEY,
+      unit_id INTEGER NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+      tipo VARCHAR(40) NOT NULL DEFAULT 'corretiva',
+      prioridade VARCHAR(20) NOT NULL DEFAULT 'normal',
+      status VARCHAR(20) NOT NULL DEFAULT 'pendente',
+      titulo VARCHAR(200) NOT NULL,
+      descricao TEXT DEFAULT '',
+      responsavel VARCHAR(120) DEFAULT '',
+      fornecedor VARCHAR(120) DEFAULT '',
+      custo_estimado NUMERIC(10,2),
+      custo_real NUMERIC(10,2),
+      data_prevista DATE,
+      data_conclusao DATE,
+      observacoes TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_audit_log (
+      id SERIAL PRIMARY KEY,
+      usuario_id INTEGER,
+      usuario_email VARCHAR(200),
+      acao VARCHAR(60) NOT NULL,
+      entidade VARCHAR(60),
+      entidade_id INTEGER,
+      detalhes JSONB DEFAULT '{}',
+      ip VARCHAR(60),
+      created_at TIMESTAMPTZ DEFAULT now()
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ocorrencias_unit_id ON sgua_ocorrencias(unit_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_ordens_unit_id ON sgua_ordens(unit_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON sgua_audit_log(created_at DESC)`).catch(()=>{});
     // Migrar feeds do app_state se sgua_feeds estiver vazia
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
     if (exFeeds.length === 0) {

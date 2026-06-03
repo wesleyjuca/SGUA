@@ -157,3 +157,33 @@ test('JWT_SECRET documentado no .env.example', () => {
   const ex = fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8');
   assert.ok(ex.includes('JWT_SECRET'), 'JWT_SECRET deve estar documentado');
 });
+
+test('sgua_ocorrencias tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_ocorrencias'), 'tabela sgua_ocorrencias deve ser criada no startup');
+});
+
+test('sgua_ordens tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_ordens'), 'tabela sgua_ordens deve ser criada no startup');
+});
+
+test('sgua_audit_log tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_audit_log'), 'tabela sgua_audit_log deve ser criada no startup');
+});
+
+test('auditLog helper definido no server', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('async function auditLog('), 'helper auditLog deve estar definido');
+});
+
+test('GET /api/stats endpoint definido', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("'/api/stats'"), 'endpoint /api/stats deve existir');
+});
+
+test('AdminOcorrencias componente definido no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function AdminOcorrencias('), 'componente AdminOcorrencias deve existir');
+});
