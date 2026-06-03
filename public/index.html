@@ -2739,9 +2739,129 @@ function AdminMonitor(p){
 // PORTAL DE TRANSPARÊNCIA — redireciona para indicadores
 // ══════════════════════════════════════════════════════════════════════════════
 function PgTransp(p){
-  var go=p.go;
-  useEffect(function(){if(go)go("indicadores");},[]);
-  return null;
+  var uns=p.uns||[];var C=p.C||{};
+  var sDoc=useState([]);var docs=sDoc[0],setDocs=sDoc[1];
+  var sStat=useState(null);var stats=sStat[0],setStats=sStat[1];
+  var sLoad=useState(true);var load=sLoad[0],setLoad=sLoad[1];
+  var sCat=useState('');var fCat=sCat[0],setFCat=sCat[1];
+  var sBusca=useState('');var busca=sBusca[0],setBusca=sBusca[1];
+  useEffect(function(){
+    Promise.all([
+      fetch('/api/documentos?publico=true').then(function(r){return r.json();}).catch(function(){return [];}),
+      fetch('/api/stats').then(function(r){return r.json();}).catch(function(){return null;})
+    ]).then(function(res){setDocs(res[0]);setStats(res[1]);setLoad(false);});
+  },[]);
+  var CATS=['relatorio','portaria','contrato','licitacao','legislacao','plano','mapa','outro'];
+  var CAT_ICON={'relatorio':'📊','portaria':'📜','contrato':'📋','licitacao':'🏛️','legislacao':'⚖️','plano':'🗺️','mapa':'🗺️','outro':'📄'};
+  var filtDocs=docs.filter(function(d){
+    var ok=true;
+    if(fCat) ok=ok&&d.categoria===fCat;
+    if(busca) ok=ok&&(d.titulo.toLowerCase().includes(busca.toLowerCase())||( d.descricao&&d.descricao.toLowerCase().includes(busca.toLowerCase())));
+    return ok;
+  });
+  var cardStyle={background:C.c2||'#fff',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:8,padding:'14px 16px',marginBottom:10};
+  var headStyle={fontSize:18,fontWeight:700,color:C.b1||'#166534',marginBottom:12,borderBottom:'2px solid '+(C.b1||'#166534'),paddingBottom:6};
+  var badgeStyle={display:'inline-block',background:C.b2||'#dcfce7',color:C.b1||'#166534',borderRadius:4,padding:'2px 8px',fontSize:12,marginRight:6};
+  return h('div',{style:{maxWidth:900,margin:'0 auto',padding:'0 8px'}},
+    h('div',{style:{background:'linear-gradient(135deg,#166534,#15803d)',color:'#fff',borderRadius:12,padding:'28px 28px 20px',marginBottom:24}},
+      h('div',{style:{fontSize:22,fontWeight:800,marginBottom:4}},'🌿 Transparência — SEMA/AC'),
+      h('div',{style:{fontSize:14,opacity:.9}},'Secretaria de Estado do Meio Ambiente do Acre — Lei de Acesso à Informação nº 12.527/2011')
+    ),
+    // Identificação Institucional
+    h('div',{style:cardStyle},
+      h('div',{style:headStyle},'🏛️ Identificação Institucional'),
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px 24px',fontSize:14,color:C.ct||'#374151'}},
+        h('div',null,h('b',null,'Órgão: '),'Secretaria de Estado do Meio Ambiente do Acre'),
+        h('div',null,h('b',null,'Sigla: '),'SEMA/AC'),
+        h('div',null,h('b',null,'Endereço: '),'Rio Branco — Acre, Brasil'),
+        h('div',null,h('b',null,'Horário: '),'Segunda a Sexta, 8h às 14h'),
+        h('div',null,h('b',null,'E-SIC: '),'esic@sema.ac.gov.br'),
+        h('div',null,h('b',null,'Ouvidoria: '),'ouvidoria@sema.ac.gov.br')
+      )
+    ),
+    // Estrutura Organizacional
+    h('div',{style:cardStyle},
+      h('div',{style:headStyle},'🏗️ Estrutura Organizacional'),
+      load?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280'}},'Carregando...'):
+      uns.length===0?h('div',{style:{color:C.cm||'#6b7280',fontSize:14}},'Nenhuma unidade cadastrada.'):
+      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}},
+        uns.map(function(u){
+          var stColor=u.status==='ativo'?'#16a34a':u.status==='manutencao'?'#d97706':'#6b7280';
+          return h('div',{key:u.id,style:{background:C.c1||'#f9fafb',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:8,padding:'10px 14px'}},
+            h('div',{style:{fontWeight:700,fontSize:14,color:C.ct||'#111'}},(u.tipo==='cima'?'🌿':'🌊')+' '+u.nome),
+            h('div',{style:{fontSize:12,color:stColor,marginTop:2}},'● '+(u.status||'ativo')),
+            u.municipio&&h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:2}},'📍 '+u.municipio),
+            u.responsavel&&h('div',{style:{fontSize:12,color:C.cm||'#6b7280'}},'👤 '+u.responsavel)
+          );
+        })
+      )
+    ),
+    // Indicadores de Atendimento
+    stats&&h('div',{style:cardStyle},
+      h('div',{style:headStyle},'📈 Indicadores de Atendimento (últimos 30 dias)'),
+      h('div',{style:{display:'flex',gap:16,flexWrap:'wrap'}},
+        h('div',{style:{flex:1,minWidth:140,background:C.c1||'#f9fafb',borderRadius:8,padding:'14px',textAlign:'center'}},
+          h('div',{style:{fontSize:28,fontWeight:800,color:C.b1||'#166534'}},(stats.totalSols||0)),
+          h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:4}},'Solicitações Recebidas')
+        ),
+        h('div',{style:{flex:1,minWidth:140,background:C.c1||'#f9fafb',borderRadius:8,padding:'14px',textAlign:'center'}},
+          h('div',{style:{fontSize:28,fontWeight:800,color:'#16a34a'}},(stats.aprovadas||0)),
+          h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:4}},'Aprovadas')
+        ),
+        h('div',{style:{flex:1,minWidth:140,background:C.c1||'#f9fafb',borderRadius:8,padding:'14px',textAlign:'center'}},
+          h('div',{style:{fontSize:28,fontWeight:800,color:'#d97706'}},(stats.pendentes||0)),
+          h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:4}},'Aguardando')
+        ),
+        h('div',{style:{flex:1,minWidth:140,background:C.c1||'#f9fafb',borderRadius:8,padding:'14px',textAlign:'center'}},
+          h('div',{style:{fontSize:28,fontWeight:800,color:C.b1||'#166534'}},(uns.filter(function(u){return u.status==='ativo';}).length)),
+          h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:4}},'Unidades Ativas')
+        )
+      )
+    ),
+    // Documentos Públicos
+    h('div',{style:cardStyle},
+      h('div',{style:headStyle},'📂 Documentos Públicos'),
+      h('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
+        h('input',{placeholder:'Buscar documento...',value:busca,onChange:function(e){setBusca(e.target.value);},style:{flex:1,minWidth:160,border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'6px 10px',fontSize:13,background:C.c1||'#f9fafb',color:C.ct||'#111'}}),
+        h('select',{value:fCat,onChange:function(e){setFCat(e.target.value);},style:{border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'6px 10px',fontSize:13,background:C.c1||'#f9fafb',color:C.ct||'#111'}},
+          h('option',{value:''},'Todas as categorias'),
+          CATS.map(function(c){return h('option',{key:c,value:c},c.charAt(0).toUpperCase()+c.slice(1));})
+        )
+      ),
+      load?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280'}},'Carregando documentos...'):
+      filtDocs.length===0?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280',fontSize:14}},'Nenhum documento público encontrado.'):
+      h('div',null,
+        filtDocs.map(function(d){
+          return h('div',{key:d.id,style:{display:'flex',alignItems:'center',gap:12,padding:'10px 0',borderBottom:'1px solid '+(C.c3||'#e5e7eb')}},
+            h('div',{style:{fontSize:22,width:36,textAlign:'center'}},(CAT_ICON[d.categoria]||'📄')),
+            h('div',{style:{flex:1}},
+              h('div',{style:{fontWeight:600,fontSize:14,color:C.ct||'#111'}},d.titulo),
+              h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:2}},
+                h('span',{style:badgeStyle},d.categoria),
+                d.ano&&h('span',{style:{marginRight:8}},d.ano),
+                d.autor&&h('span',null,'Autor: '+d.autor)
+              ),
+              d.descricao&&h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:2}},d.descricao)
+            ),
+            d.arquivo_url&&h('a',{href:d.arquivo_url,target:'_blank',rel:'noopener noreferrer',style:{background:C.b1||'#166534',color:'#fff',borderRadius:6,padding:'5px 12px',fontSize:12,textDecoration:'none',whiteSpace:'nowrap'}},'⬇ Baixar')
+          );
+        })
+      )
+    ),
+    // Informações de Contato LAI
+    h('div',{style:cardStyle},
+      h('div',{style:headStyle},'📞 Acesso à Informação (LAI)'),
+      h('div',{style:{fontSize:14,color:C.ct||'#374151',lineHeight:1.6}},
+        h('p',null,'O acesso à informação é garantido pela Lei Federal nº 12.527/2011. Para solicitar informações:'),
+        h('ul',{style:{paddingLeft:20,margin:'8px 0'}},
+          h('li',null,'E-SIC (Sistema Eletrônico): esic@sema.ac.gov.br'),
+          h('li',null,'Prazo de resposta: até 20 dias, prorrogáveis por mais 10 dias'),
+          h('li',null,'Recurso: Ouvidoria — ouvidoria@sema.ac.gov.br'),
+          h('li',null,'Portal do Governo do Acre: ac.gov.br')
+        )
+      )
+    )
+  );
 }
 // ─── CARROSSEL DE NOTÍCIAS ────────────────────────────────────────────────────
 function CarrosselNoticias(p){
@@ -3175,6 +3295,369 @@ function AdminRegReqs(p){
           rq.obs&&h('div',{style:{fontSize:11,color:C.cm,marginTop:6,fontStyle:'italic'}},'Obs: '+rq.obs)
         );
       })
+    )
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ADMIN EQUIPAMENTOS
+// ══════════════════════════════════════════════════════════════════════════════
+function AdminEquipamentos(p){
+  var C=p.C,toast2=p.toast2,uns=p.uns||[];
+  var sEq=useState([]);var eqs=sEq[0],setEqs=sEq[1];
+  var sLoad=useState(false);var load=sLoad[0],setLoad=sLoad[1];
+  var sFil=useState({status:'',tipo:'',unit_id:''});var fil=sFil[0],setFil=sFil[1];
+  var sFm=useState(null);var fm=sFm[0],setFm=sFm[1];
+  var sDel=useState(null);var delId=sDel[0],setDelId=sDel[1];
+
+  var TIPOS=['gerador','painel_solar','veiculo','embarcacao','ti','medicao','comunicacao','outro'];
+  var STATS=['operacional','manutencao','inativo','descarte'];
+  var TIPO_LABEL={gerador:'⚡ Gerador',painel_solar:'☀️ Painel Solar',veiculo:'🚗 Veículo',embarcacao:'🚤 Embarcação',ti:'💻 TI',medicao:'📡 Medição',comunicacao:'📻 Comunicação',outro:'🔧 Outro'};
+  var STAT_COLOR={operacional:'#22c55e',manutencao:'#f59e0b',inativo:'#9ca3af',descarte:'#ef4444'};
+  var STAT_LABEL={operacional:'Operacional',manutencao:'Em Manutenção',inativo:'Inativo',descarte:'Descarte'};
+
+  function load2(f){
+    var f2=f||fil;setLoad(true);
+    var qs=[];
+    if(f2.status)qs.push('status='+encodeURIComponent(f2.status));
+    if(f2.tipo)qs.push('tipo='+encodeURIComponent(f2.tipo));
+    if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
+    apiFetch('/api/equipamentos'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setEqs(d.rows||[]);}).finally(function(){setLoad(false);});
+  }
+  useEffect(function(){load2();},[]);
+
+  function save(data){
+    var method=data.id?'PUT':'POST';
+    var url=data.id?'/api/equipamentos/'+data.id:'/api/equipamentos';
+    apiFetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+      if(d.ok){toast2('Equipamento salvo!','success');setFm(null);load2();}
+      else toast2(d.error||'Erro','error');
+    });
+  }
+  function del2(){
+    apiFetch('/api/equipamentos/'+delId,{method:'DELETE'}).then(function(d){
+      if(d.ok){toast2('Removido!','success');setDelId(null);load2();}
+      else toast2(d.error||'Erro','error');
+    });
+  }
+  function criarOrdem(eq){
+    apiFetch('/api/equipamentos/'+eq.id+'/criar-ordem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo:'Manutenção: '+eq.nome})}).then(function(d){
+      if(d.ok)toast2('Ordem criada! Acesse a aba Manutenção.','success');
+      else toast2(d.error||'Erro','error');
+    });
+  }
+
+  var hoje=new Date().toISOString().slice(0,10);
+  var d30=new Date(Date.now()+30*24*60*60*1000).toISOString().slice(0,10);
+  var alertas=eqs.filter(function(e){return e.proxima_manutencao&&e.proxima_manutencao.slice(0,10)<=d30&&e.status==='operacional';});
+
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}},
+      h('div',null,
+        h('h2',{style:{margin:0,fontSize:20,fontWeight:700,color:C.cd}},'⚙️ Inventário de Equipamentos'),
+        alertas.length>0&&h('div',{style:{fontSize:12,color:'#f97316',marginTop:3}},alertas.length+' equipamento(s) com manutenção nos próximos 30 dias')
+      ),
+      h('button',{onClick:function(){setFm({unit_id:'',nome:'',tipo:'outro',marca:'',modelo:'',numero_serie:'',patrimonio:'',status:'operacional',data_aquisicao:'',valor_aquisicao:'',responsavel:'',localizacao:'',obs:'',ultima_manutencao:'',proxima_manutencao:''});},style:{padding:'8px 16px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontWeight:600,cursor:'pointer',fontSize:13}},'+ Novo Equipamento')
+    ),
+    h('div',{style:{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}},
+      h('select',{value:fil.status,onChange:function(e){var f={...fil,status:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todos Status'),
+        STATS.map(function(s){return h('option',{key:s,value:s},STAT_LABEL[s]);})
+      ),
+      h('select',{value:fil.tipo,onChange:function(e){var f={...fil,tipo:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todos Tipos'),
+        TIPOS.map(function(t){return h('option',{key:t,value:t},TIPO_LABEL[t]);})
+      ),
+      h('select',{value:fil.unit_id,onChange:function(e){var f={...fil,unit_id:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todas Unidades'),
+        uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome||u.name);})
+      )
+    ),
+    load&&h('div',{style:{color:C.cm,fontSize:13,padding:16}},'Carregando...'),
+    !load&&eqs.length===0&&h('div',{style:{color:C.cm,fontSize:13,padding:16,textAlign:'center'}},'Nenhum equipamento cadastrado.'),
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:12}},
+      eqs.map(function(eq){
+        var sc=STAT_COLOR[eq.status]||C.cm;
+        var alertaManut=eq.proxima_manutencao&&eq.proxima_manutencao.slice(0,10)<=d30&&eq.status==='operacional';
+        return h('div',{key:eq.id,style:{background:'#fff',borderRadius:12,padding:14,border:'1px solid '+(alertaManut?'#f97316':C.cl),borderLeft:'4px solid '+sc,boxShadow:'0 1px 6px rgba(0,0,0,.06)'}},
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:8}},
+            h('span',{style:{fontSize:11,fontWeight:700,color:'#fff',background:sc,padding:'2px 9px',borderRadius:20}},STAT_LABEL[eq.status]),
+            h('span',{style:{fontSize:11,color:C.cm,marginLeft:'auto'}},TIPO_LABEL[eq.tipo]||eq.tipo)
+          ),
+          h('div',{style:{fontWeight:600,fontSize:14,color:C.cd,marginBottom:2}},eq.nome),
+          h('div',{style:{fontSize:12,color:C.cm,marginBottom:2}},eq.unit_name||''),
+          (eq.marca||eq.modelo)&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:2}},[(eq.marca||''),(eq.modelo||'')].filter(Boolean).join(' — ')),
+          eq.patrimonio&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:2}},'Patrimônio: '+eq.patrimonio),
+          eq.proxima_manutencao&&h('div',{style:{fontSize:11,color:alertaManut?'#f97316':C.cm,fontWeight:alertaManut?700:400,marginBottom:6}},'🔧 Próx. manutenção: '+new Date(eq.proxima_manutencao).toLocaleDateString('pt-BR')),
+          eq.responsavel&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:8}},'👤 '+eq.responsavel),
+          h('div',{style:{display:'flex',gap:6,flexWrap:'wrap'}},
+            h('button',{onClick:function(){setFm({...eq,data_aquisicao:eq.data_aquisicao?eq.data_aquisicao.slice(0,10):'',ultima_manutencao:eq.ultima_manutencao?eq.ultima_manutencao.slice(0,10):'',proxima_manutencao:eq.proxima_manutencao?eq.proxima_manutencao.slice(0,10):'',valor_aquisicao:eq.valor_aquisicao||''});},style:{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid '+C.g2,background:'none',color:C.g2,cursor:'pointer'}},'Editar'),
+            h('button',{onClick:function(){criarOrdem(eq);},style:{fontSize:11,padding:'4px 10px',borderRadius:6,border:'none',background:'#f97316',color:'#fff',cursor:'pointer'}},'⚙️ Criar Ordem'),
+            h('button',{onClick:function(){setDelId(eq.id);},style:{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid '+C.rm,background:'none',color:C.rm,cursor:'pointer'}},'Excluir')
+          )
+        );
+      })
+    ),
+    fm&&h('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:900,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h('div',{style:{background:'#fff',borderRadius:16,padding:28,width:'100%',maxWidth:540,maxHeight:'90vh',overflowY:'auto'}},
+        h('h3',{style:{margin:'0 0 18px',fontSize:17}},fm.id?'Editar Equipamento':'Novo Equipamento'),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Nome *'),
+            h('input',{value:fm.nome,onChange:function(e){setFm({...fm,nome:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Unidade *'),
+            h('select',{value:fm.unit_id,onChange:function(e){setFm({...fm,unit_id:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              h('option',{value:''},'Selecione...'),
+              uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome||u.name);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Tipo'),
+            h('select',{value:fm.tipo,onChange:function(e){setFm({...fm,tipo:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              TIPOS.map(function(t){return h('option',{key:t,value:t},TIPO_LABEL[t]);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Status'),
+            h('select',{value:fm.status,onChange:function(e){setFm({...fm,status:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              STATS.map(function(s){return h('option',{key:s,value:s},STAT_LABEL[s]);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Marca'),
+            h('input',{value:fm.marca,onChange:function(e){setFm({...fm,marca:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Modelo'),
+            h('input',{value:fm.modelo,onChange:function(e){setFm({...fm,modelo:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Nº Série'),
+            h('input',{value:fm.numero_serie,onChange:function(e){setFm({...fm,numero_serie:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Patrimônio'),
+            h('input',{value:fm.patrimonio,onChange:function(e){setFm({...fm,patrimonio:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Data Aquisição'),
+            h('input',{type:'date',value:fm.data_aquisicao,onChange:function(e){setFm({...fm,data_aquisicao:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Valor (R$)'),
+            h('input',{type:'number',step:'0.01',value:fm.valor_aquisicao,onChange:function(e){setFm({...fm,valor_aquisicao:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Última Manutenção'),
+            h('input',{type:'date',value:fm.ultima_manutencao,onChange:function(e){setFm({...fm,ultima_manutencao:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Próxima Manutenção'),
+            h('input',{type:'date',value:fm.proxima_manutencao,onChange:function(e){setFm({...fm,proxima_manutencao:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}})
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Responsável'),
+            h('input',{value:fm.responsavel,onChange:function(e){setFm({...fm,responsavel:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Localização/Setor'),
+            h('input',{value:fm.localizacao,onChange:function(e){setFm({...fm,localizacao:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Observações'),
+            h('textarea',{value:fm.obs,onChange:function(e){setFm({...fm,obs:e.target.value});},rows:2,style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,resize:'vertical',boxSizing:'border-box'}})
+          )
+        ),
+        h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end',marginTop:18}},
+          h('button',{onClick:function(){setFm(null);},style:{padding:'8px 20px',borderRadius:8,border:'1px solid '+C.cl,background:'none',color:C.cm,cursor:'pointer',fontSize:13}},'Cancelar'),
+          h('button',{onClick:function(){save(fm);},style:{padding:'8px 20px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontWeight:600,cursor:'pointer',fontSize:13}},fm.id?'Salvar':'Criar')
+        )
+      )
+    ),
+    delId&&h('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:900,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h('div',{style:{background:'#fff',borderRadius:14,padding:28,maxWidth:380}},
+        h('div',{style:{fontWeight:600,fontSize:16,marginBottom:10}},'Excluir equipamento?'),
+        h('div',{style:{color:C.cm,fontSize:13,marginBottom:18}},'Esta ação não pode ser desfeita.'),
+        h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},
+          h('button',{onClick:function(){setDelId(null);},style:{padding:'8px 18px',borderRadius:8,border:'1px solid '+C.cl,background:'none',cursor:'pointer'}},'Cancelar'),
+          h('button',{onClick:del2,style:{padding:'8px 18px',borderRadius:8,border:'none',background:C.rm,color:'#fff',fontWeight:600,cursor:'pointer'}},'Excluir')
+        )
+      )
+    )
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ADMIN DOCUMENTOS
+// ══════════════════════════════════════════════════════════════════════════════
+function AdminDocumentos(p){
+  var C=p.C,toast2=p.toast2,uns=p.uns||[];
+  var sDocs=useState([]);var docs=sDocs[0],setDocs=sDocs[1];
+  var sLoad=useState(false);var load=sLoad[0],setLoad=sLoad[1];
+  var sFil=useState({categoria:'',unit_id:'',publico:''});var fil=sFil[0],setFil=sFil[1];
+  var sFm=useState(null);var fm=sFm[0],setFm=sFm[1];
+  var sDel=useState(null);var delId=sDel[0],setDelId=sDel[1];
+  var sUpload=useState(false);var uploading=sUpload[0],setUploading=sUpload[1];
+
+  var CATS=['relatorio','portaria','contrato','licitacao','legislacao','plano','mapa','outro'];
+  var CAT_LABEL={relatorio:'📊 Relatório',portaria:'📋 Portaria',contrato:'📝 Contrato',licitacao:'🏛️ Licitação',legislacao:'⚖️ Legislação',plano:'📐 Plano',mapa:'🗺️ Mapa',outro:'📄 Outro'};
+  var CAT_COLOR={relatorio:'#3b82f6',portaria:'#8b5cf6',contrato:'#f59e0b',licitacao:'#ef4444',legislacao:'#0891b2',plano:'#10b981',mapa:'#84cc16',outro:'#9ca3af'};
+
+  function load2(f){
+    var f2=f||fil;setLoad(true);
+    var qs=[];
+    if(f2.categoria)qs.push('categoria='+encodeURIComponent(f2.categoria));
+    if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
+    if(f2.publico)qs.push('publico='+f2.publico);
+    apiFetch('/api/documentos'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setDocs(d.rows||[]);}).finally(function(){setLoad(false);});
+  }
+  useEffect(function(){load2();},[]);
+
+  function uploadDoc(data, file){
+    var fd=new FormData();
+    if(file)fd.append('arquivo',file);
+    Object.keys(data).forEach(function(k){if(data[k]!==undefined&&data[k]!=='')fd.append(k,data[k]);});
+    setUploading(true);
+    var token=localStorage.getItem('sgua_token');
+    fetch('/api/documentos/upload',{method:'POST',headers:token?{Authorization:'Bearer '+token}:{},body:fd})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d.ok){toast2('Documento salvo!','success');setFm(null);load2();}
+        else toast2(d.error||'Erro','error');
+      }).catch(function(){toast2('Erro ao enviar','error');}).finally(function(){setUploading(false);});
+  }
+  function updateMeta(id, data){
+    apiFetch('/api/documentos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+      if(d.ok){toast2('Atualizado!','success');setFm(null);load2();}
+      else toast2(d.error||'Erro','error');
+    });
+  }
+  function togglePublic(doc){
+    apiFetch('/api/documentos/'+doc.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({publico:!doc.publico})}).then(function(d){
+      if(d.ok)load2();
+      else toast2(d.error||'Erro','error');
+    });
+  }
+  function del2(){
+    apiFetch('/api/documentos/'+delId,{method:'DELETE'}).then(function(d){
+      if(d.ok){toast2('Removido!','success');setDelId(null);load2();}
+      else toast2(d.error||'Erro','error');
+    });
+  }
+  function fmSave(){
+    if(!fm.titulo){toast2('Título obrigatório','error');return;}
+    if(fm.id){updateMeta(fm.id,fm);}
+    else{uploadDoc(fm,fm._file);}
+  }
+
+  var sFile=useState(null);var selFile=sFile[0],setSelFile=sFile[1];
+
+  function fmBytes(b){if(!b)return '';if(b<1024)return b+'B';if(b<1048576)return (b/1024).toFixed(1)+'KB';return (b/1048576).toFixed(1)+'MB';}
+
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:16}},
+      h('h2',{style:{margin:0,fontSize:20,fontWeight:700,color:C.cd}},'📎 Documentos Oficiais'),
+      h('button',{onClick:function(){setFm({titulo:'',categoria:'outro',unit_id:'',descricao:'',publico:false,tags:'',ano:new Date().getFullYear(),autor:'',_file:null});setSelFile(null);},style:{padding:'8px 16px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontWeight:600,cursor:'pointer',fontSize:13}},'+ Novo Documento')
+    ),
+    h('div',{style:{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}},
+      h('select',{value:fil.categoria,onChange:function(e){var f={...fil,categoria:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todas Categorias'),
+        CATS.map(function(c){return h('option',{key:c,value:c},CAT_LABEL[c]);})
+      ),
+      h('select',{value:fil.publico,onChange:function(e){var f={...fil,publico:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todos'),
+        h('option',{value:'true'},'Públicos'),
+        h('option',{value:'false'},'Privados')
+      ),
+      h('select',{value:fil.unit_id,onChange:function(e){var f={...fil,unit_id:e.target.value};setFil(f);load2(f);},style:{padding:'6px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:12}},
+        h('option',{value:''},'Todas Unidades'),
+        uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome||u.name);})
+      )
+    ),
+    load&&h('div',{style:{color:C.cm,fontSize:13,padding:16}},'Carregando...'),
+    !load&&docs.length===0&&h('div',{style:{color:C.cm,fontSize:13,padding:16,textAlign:'center'}},'Nenhum documento cadastrado.'),
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:12}},
+      docs.map(function(doc){
+        var cc=CAT_COLOR[doc.categoria]||'#9ca3af';
+        return h('div',{key:doc.id,style:{background:'#fff',borderRadius:12,padding:14,border:'1px solid '+C.cl,borderLeft:'4px solid '+cc,boxShadow:'0 1px 6px rgba(0,0,0,.06)'}},
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:8}},
+            h('span',{style:{fontSize:11,fontWeight:700,color:'#fff',background:cc,padding:'2px 9px',borderRadius:20}},CAT_LABEL[doc.categoria]||doc.categoria),
+            h('span',{style:{fontSize:11,padding:'2px 8px',borderRadius:12,border:'1px solid '+(doc.publico?'#22c55e':'#9ca3af'),color:doc.publico?'#22c55e':'#9ca3af',marginLeft:'auto',cursor:'pointer'},onClick:function(){togglePublic(doc);}},doc.publico?'🌐 Público':'🔒 Privado')
+          ),
+          h('div',{style:{fontWeight:600,fontSize:13,color:C.cd,marginBottom:3}},doc.titulo),
+          doc.unit_name&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:3}},doc.unit_name),
+          doc.ano&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:3}},'📅 '+doc.ano),
+          doc.autor&&h('div',{style:{fontSize:11,color:C.cm,marginBottom:6}},'👤 '+doc.autor),
+          h('div',{style:{display:'flex',gap:6,flexWrap:'wrap',marginTop:4}},
+            doc.arquivo_url&&h('a',{href:doc.arquivo_url,target:'_blank',rel:'noopener noreferrer',style:{fontSize:11,padding:'4px 10px',borderRadius:6,border:'none',background:C.b1,color:'#fff',cursor:'pointer',textDecoration:'none'}},'⬇ Baixar'),
+            h('button',{onClick:function(){setFm({id:doc.id,titulo:doc.titulo,categoria:doc.categoria,unit_id:doc.unit_id||'',descricao:doc.descricao||'',publico:doc.publico,tags:doc.tags||'',ano:doc.ano||new Date().getFullYear(),autor:doc.autor||''});},style:{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid '+C.g2,background:'none',color:C.g2,cursor:'pointer'}},'Editar'),
+            h('button',{onClick:function(){setDelId(doc.id);},style:{fontSize:11,padding:'4px 10px',borderRadius:6,border:'1px solid '+C.rm,background:'none',color:C.rm,cursor:'pointer'}},'Excluir')
+          )
+        );
+      })
+    ),
+    fm&&h('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:900,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h('div',{style:{background:'#fff',borderRadius:16,padding:28,width:'100%',maxWidth:500,maxHeight:'90vh',overflowY:'auto'}},
+        h('h3',{style:{margin:'0 0 18px',fontSize:17}},fm.id?'Editar Documento':'Novo Documento'),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Título *'),
+            h('input',{value:fm.titulo,onChange:function(e){setFm({...fm,titulo:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          !fm.id&&h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Arquivo (PDF, DOCX, XLSX — máx 10MB)'),
+            h('input',{type:'file',accept:'.pdf,.doc,.docx,.xls,.xlsx,.odt,.ods,.txt,.csv',onChange:function(e){var f=e.target.files[0];setSelFile(f||null);setFm({...fm,_file:f||null,titulo:fm.titulo||(f?f.name.replace(/\.[^.]+$/,''):'')});},style:{width:'100%',fontSize:12}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Categoria'),
+            h('select',{value:fm.categoria,onChange:function(e){setFm({...fm,categoria:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              CATS.map(function(c){return h('option',{key:c,value:c},CAT_LABEL[c]);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Unidade'),
+            h('select',{value:fm.unit_id,onChange:function(e){setFm({...fm,unit_id:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              h('option',{value:''},'— Todas —'),
+              uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome||u.name);})
+            )
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Ano'),
+            h('input',{type:'number',value:fm.ano,onChange:function(e){setFm({...fm,ano:parseInt(e.target.value)||new Date().getFullYear()});},min:2000,max:2099,style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',null,
+            h('label',{style:{fontSize:12,color:C.cm}},'Visibilidade'),
+            h('select',{value:String(fm.publico),onChange:function(e){setFm({...fm,publico:e.target.value==='true'});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13}},
+              h('option',{value:'false'},'🔒 Privado'),
+              h('option',{value:'true'},'🌐 Público')
+            )
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Autor'),
+            h('input',{value:fm.autor,onChange:function(e){setFm({...fm,autor:e.target.value});},style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,boxSizing:'border-box'}})
+          ),
+          h('div',{style:{gridColumn:'1/-1'}},
+            h('label',{style:{fontSize:12,color:C.cm}},'Descrição'),
+            h('textarea',{value:fm.descricao,onChange:function(e){setFm({...fm,descricao:e.target.value});},rows:2,style:{width:'100%',padding:'7px 10px',borderRadius:7,border:'1px solid '+C.cl,fontSize:13,resize:'vertical',boxSizing:'border-box'}})
+          )
+        ),
+        h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end',marginTop:18}},
+          h('button',{onClick:function(){setFm(null);setSelFile(null);},style:{padding:'8px 20px',borderRadius:8,border:'1px solid '+C.cl,background:'none',color:C.cm,cursor:'pointer',fontSize:13}},'Cancelar'),
+          h('button',{onClick:fmSave,disabled:uploading,style:{padding:'8px 20px',borderRadius:8,border:'none',background:C.g2,color:'#fff',fontWeight:600,cursor:uploading?'default':'pointer',fontSize:13,opacity:uploading?.7:1}},uploading?'Enviando...':fm.id?'Salvar':'Enviar')
+        )
+      )
+    ),
+    delId&&h('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,.5)',zIndex:900,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h('div',{style:{background:'#fff',borderRadius:14,padding:28,maxWidth:380}},
+        h('div',{style:{fontWeight:600,fontSize:16,marginBottom:10}},'Excluir documento?'),
+        h('div',{style:{color:C.cm,fontSize:13,marginBottom:18}},'O arquivo também será removido do servidor.'),
+        h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},
+          h('button',{onClick:function(){setDelId(null);},style:{padding:'8px 18px',borderRadius:8,border:'1px solid '+C.cl,background:'none',cursor:'pointer'}},'Cancelar'),
+          h('button',{onClick:del2,style:{padding:'8px 18px',borderRadius:8,border:'none',background:C.rm,color:'#fff',fontWeight:600,cursor:'pointer'}},'Excluir')
+        )
+      )
     )
   );
 }
@@ -4775,7 +5258,7 @@ function App(){
     {nome:"Unidades visíveis",valor:Math.round((unidadesVisiveis/Math.max(1,totalUnidades))*100),meta:80,cor:C.am}
   ];
 
-  var NAV=[{id:"home",l:t("nav_home")},{id:"cima",l:t("nav_cima")},{id:"ugai",l:t("nav_ugai")},{id:"mapa",l:t("nav_mapa")},{id:"noticias",l:t("nav_noticias")},{id:"sol",l:t("nav_sol")}].concat(pers.indicadoresPublicos!==false?[{id:"indicadores",l:t("nav_indicadores")}]:[]).concat(!curUser?[{id:"solicitar-acesso",l:t("nav_acesso")}]:[]);
+  var NAV=[{id:"home",l:t("nav_home")},{id:"cima",l:t("nav_cima")},{id:"ugai",l:t("nav_ugai")},{id:"mapa",l:t("nav_mapa")},{id:"noticias",l:t("nav_noticias")},{id:"sol",l:t("nav_sol")}].concat(pers.indicadoresPublicos!==false?[{id:"indicadores",l:t("nav_indicadores")}]:[]).concat([{id:"transp",l:"🔍 Transparência"}]).concat(!curUser?[{id:"solicitar-acesso",l:t("nav_acesso")}]:[]);
 
   // Vistas especiais
   if(uVista) return h(PageUnidade,{u:uVista,uns:uns,setUns:setUns,curUser:curUser,toast2:toast2,onBack:function(){setUVista(null);},onSolicitar:function(){setSf(function(f){return Object.assign({},f,{un:uVista.nome});});setUVista(null);setPage("sol");}});
@@ -5147,7 +5630,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
+        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["equipamentos","⚙️ Equipamentos",canDo("units")],["documentos","📎 Documentos",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
           var parts=it[1].match(/^(\S+)\s(.+)$/)||["",it[1].charAt(0),it[1].slice(2)];
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},parts[1]),parts[2]
@@ -5526,6 +6009,8 @@ function App(){
         atab==="agenda"&&canDo("units")&&h(AdminAgenda,{C:C,toast2:toast2,uns:uns}),
         atab==="ocorrencias"&&canDo("units")&&h(AdminOcorrencias,{C:C,toast2:toast2,uns:uns}),
         atab==="ordens"&&canDo("units")&&h(AdminOrdens,{C:C,toast2:toast2,uns:uns}),
+        atab==="equipamentos"&&canDo("units")&&h(AdminEquipamentos,{C:C,toast2:toast2,uns:uns}),
+        atab==="documentos"&&canDo("units")&&h(AdminDocumentos,{C:C,toast2:toast2,uns:uns}),
         atab==="auditoria"&&curUser&&curUser.perfil==='admin'&&h(AdminAuditLog,{C:C}),
 
         ) // end inner padding div

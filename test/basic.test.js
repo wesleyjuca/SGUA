@@ -223,3 +223,63 @@ test('pdfkit em dependencies (não apenas devDependencies)', () => {
   assert.ok(pkg.dependencies && pkg.dependencies.pdfkit, 'pdfkit deve estar em dependencies');
   assert.ok(!pkg.devDependencies || !pkg.devDependencies.pdfkit, 'pdfkit não deve estar em devDependencies');
 });
+
+test('sgua_equipamentos tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_equipamentos'), 'tabela sgua_equipamentos deve ser criada no startup');
+});
+
+test('GET /api/equipamentos endpoint definido', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("'/api/equipamentos'"), 'endpoint GET /api/equipamentos deve existir');
+});
+
+test('sgua_documentos tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_documentos'), 'tabela sgua_documentos deve ser criada no startup');
+});
+
+test('POST /api/documentos/upload endpoint definido', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("'/api/documentos/upload'"), 'endpoint POST /api/documentos/upload deve existir');
+});
+
+test('AdminEquipamentos componente definido no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function AdminEquipamentos('), 'componente AdminEquipamentos deve existir');
+});
+
+test('AdminDocumentos componente definido no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function AdminDocumentos('), 'componente AdminDocumentos deve existir');
+});
+
+test('cron RSS respeita frequencia semanal', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('isSaturday') && src.includes('getDay()'),
+    'cron RSS deve verificar dia da semana para feeds semanais');
+});
+
+test('FDS_DEFAULTS inclui INPE e MMA', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('inpe.br') && src.includes('gov.br/mma'),
+    'feeds padrão devem incluir INPE e Ministério do Meio Ambiente');
+});
+
+test('GET /api/feeds usa window function para logs (sem N+1)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('row_number() OVER (PARTITION BY feed_id'),
+    'GET /api/feeds deve usar window function em vez de N+1 queries');
+});
+
+test('idx_sgua_feed_logs_feed_id index criado no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('idx_sgua_feed_logs_feed_id'),
+    'índice de feed_logs deve ser criado no startup');
+});
+
+test('synthesizeArticle usa regex para extrair JSON', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('match(/\\{[\\s\\S]*\\}/)'),
+    'synthesizeArticle deve usar regex para extrair JSON da resposta IA');
+});
