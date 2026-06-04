@@ -3750,95 +3750,6 @@ function AdminDocumentos(p){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ADMIN LICENÇAS AMBIENTAIS
-// ══════════════════════════════════════════════════════════════════════════════
-function AdminLicencas(p){
-  var C=p.C||{};var uns=p.uns||[];var toast2=p.toast2||function(){};
-  var sLics=useState([]);var lics=sLics[0],setLics=sLics[1];
-  var sLoad=useState(true);var load=sLoad[0],setLoad=sLoad[1];
-  var sMod=useState(null);var mod=sMod[0],setMod=sMod[1];
-  var sFTipo=useState('');var fTipo=sFTipo[0],setFTipo=sFTipo[1];
-  var sFStatus=useState('');var fStatus=sFStatus[0],setFStatus=sFStatus[1];
-  var sFUnit=useState('');var fUnit=sFUnit[0],setFUnit=sFUnit[1];
-  var sForm=useState({tipo:'LO',numero:'',emissao:'',validade:'',status:'ativa',requerente:'',atividade:'',condicionantes:'',arquivo_url:'',obs:'',unit_id:''});
-  var form=sForm[0],setForm=sForm[1];
-  var TIPOS=['LP','LI','LO','LAC','ASV','outro'];
-  var STATUS=['ativa','vencida','suspensa','cancelada','em_renovacao'];
-  var ST_COLOR={ativa:'#16a34a',vencida:'#dc2626',suspensa:'#d97706',cancelada:'#6b7280',em_renovacao:'#2563eb'};
-  function load2(){setLoad(true);apiFetch('/api/licencas?'+new URLSearchParams(Object.fromEntries([['tipo',fTipo],['status',fStatus],['unit_id',fUnit]].filter(function(x){return x[1];})))).then(function(r){if(r.ok)setLics(r.licencas||[]);}).finally(function(){setLoad(false);});}
-  useEffect(load2,[fTipo,fStatus,fUnit]);
-  var hoje=new Date(); var alerta30=new Date(); alerta30.setDate(alerta30.getDate()+30);
-  function openNew(){setForm({tipo:'LO',numero:'',emissao:'',validade:'',status:'ativa',requerente:'',atividade:'',condicionantes:'',arquivo_url:'',obs:'',unit_id:''});setMod('new');}
-  function openEdit(l){setForm({tipo:l.tipo,numero:l.numero,emissao:l.emissao?l.emissao.slice(0,10):'',validade:l.validade?l.validade.slice(0,10):'',status:l.status,requerente:l.requerente||'',atividade:l.atividade||'',condicionantes:l.condicionantes||'',arquivo_url:l.arquivo_url||'',obs:l.obs||'',unit_id:l.unit_id||''});setMod(l);}
-  function salvar(){
-    var url=mod==='new'?'/api/licencas':('/api/licencas/'+mod.id);
-    var met=mod==='new'?'POST':'PUT';
-    apiFetch(url,{method:met,body:JSON.stringify(form)}).then(function(r){if(r.ok){toast2('Licença salva!','ok');setMod(null);load2();}else toast2(r.error||'Erro','err');});
-  }
-  function del(l){if(!confirm('Excluir licença '+l.numero+'?'))return;apiFetch('/api/licencas/'+l.id,{method:'DELETE'}).then(function(r){if(r.ok){toast2('Excluída','ok');load2();}else toast2(r.error||'Erro','err');});}
-  var cs={background:C.c2||'#fff',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:8,padding:'12px 16px',marginBottom:10};
-  var inp={border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'6px 10px',fontSize:13,background:C.c1||'#f9fafb',color:C.ct||'#111',width:'100%',boxSizing:'border-box'};
-  return h('div',null,
-    h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:16,flexWrap:'wrap'}},
-      h('h2',{style:{margin:0,fontSize:18,fontWeight:700,color:C.ct||'#111',flex:1}},'📋 Licenças Ambientais'),
-      h('a',{href:'/api/relatorios/licencas'+(fUnit?'?unit_id='+fUnit:''),target:'_blank',style:{background:'#6b7280',color:'#fff',borderRadius:6,padding:'6px 12px',fontSize:12,textDecoration:'none'}},'📄 PDF'),
-      h('button',{onClick:openNew,style:{background:C.b1||'#166534',color:'#fff',border:'none',borderRadius:6,padding:'7px 14px',cursor:'pointer',fontSize:13}},'+ Nova Licença')
-    ),
-    h('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
-      h('select',{value:fTipo,onChange:function(e){setFTipo(e.target.value);},style:{...inp,width:'auto'}},h('option',{value:''},'Todos os tipos'),TIPOS.map(function(t){return h('option',{key:t,value:t},t);})),
-      h('select',{value:fStatus,onChange:function(e){setFStatus(e.target.value);},style:{...inp,width:'auto'}},h('option',{value:''},'Todos os status'),STATUS.map(function(s){return h('option',{key:s,value:s},s.replace('_',' '));})),
-      h('select',{value:fUnit,onChange:function(e){setFUnit(e.target.value);},style:{...inp,width:'auto'}},h('option',{value:''},'Todas as unidades'),uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome);}))
-    ),
-    load?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280'}},'Carregando...'):
-    lics.length===0?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280',fontSize:14}},'Nenhuma licença encontrada.'):
-    lics.map(function(l){
-      var venc=new Date(l.validade); var proxVenc=venc<=alerta30&&l.status==='ativa';
-      return h('div',{key:l.id,style:{...cs,borderLeft:'4px solid '+(ST_COLOR[l.status]||'#6b7280')}},
-        h('div',{style:{display:'flex',alignItems:'flex-start',gap:8,flexWrap:'wrap'}},
-          h('div',{style:{flex:1}},
-            h('div',{style:{fontWeight:700,fontSize:14,color:C.ct||'#111'}},'['+l.tipo+'] '+l.numero+(proxVenc?' ⚠️ VENCIMENTO PRÓXIMO':'')),
-            l.requerente&&h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:2}},'Requerente: '+l.requerente),
-            l.atividade&&h('div',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Atividade: '+l.atividade),
-            h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:4}},
-              h('span',{style:{background:ST_COLOR[l.status]||'#6b7280',color:'#fff',borderRadius:4,padding:'1px 7px',fontSize:11,marginRight:8}},l.status.replace('_',' ')),
-              'Emissão: '+new Date(l.emissao).toLocaleDateString('pt-BR')+'  |  Validade: '+venc.toLocaleDateString('pt-BR'),
-              l.unit_nome&&h('span',null,'  |  '+l.unit_nome)
-            )
-          ),
-          h('div',{style:{display:'flex',gap:6}},
-            l.arquivo_url&&h('a',{href:l.arquivo_url,target:'_blank',style:{background:'#2563eb',color:'#fff',borderRadius:6,padding:'5px 10px',fontSize:11,textDecoration:'none'}},'📎'),
-            h('button',{onClick:function(){openEdit(l);},style:{background:'#2563eb',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',fontSize:12,cursor:'pointer'}},'Editar'),
-            h('button',{onClick:function(){del(l);},style:{background:'#dc2626',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',fontSize:12,cursor:'pointer'}},'Excluir')
-          )
-        )
-      );
-    }),
-    mod&&h('div',{style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'},onClick:function(e){if(e.target===e.currentTarget)setMod(null);}},
-      h('div',{style:{background:C.c2||'#fff',borderRadius:12,padding:24,width:'min(600px,95vw)',maxHeight:'90vh',overflowY:'auto'}},
-        h('h3',{style:{margin:'0 0 16px',color:C.ct||'#111'}},(mod==='new'?'Nova':'Editar')+' Licença Ambiental'),
-        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 14px'}},
-          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Tipo *'),h('select',{value:form.tipo,onChange:function(e){setForm({...form,tipo:e.target.value});},style:inp},TIPOS.map(function(t){return h('option',{key:t,value:t},t);}))),
-          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Número *'),h('input',{value:form.numero,onChange:function(e){setForm({...form,numero:e.target.value});},style:inp,placeholder:'Ex: LO-001/2026'})),
-          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Emissão *'),h('input',{type:'date',value:form.emissao,onChange:function(e){setForm({...form,emissao:e.target.value});},style:inp})),
-          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Validade *'),h('input',{type:'date',value:form.validade,onChange:function(e){setForm({...form,validade:e.target.value});},style:inp})),
-          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Status'),h('select',{value:form.status,onChange:function(e){setForm({...form,status:e.target.value});},style:inp},STATUS.map(function(s){return h('option',{key:s,value:s},s.replace('_',' '));}))),
-          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Unidade'),h('select',{value:form.unit_id,onChange:function(e){setForm({...form,unit_id:e.target.value});},style:inp},h('option',{value:''},'Nenhuma'),uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome);}))),
-          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Requerente'),h('input',{value:form.requerente,onChange:function(e){setForm({...form,requerente:e.target.value});},style:inp})),
-          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Atividade'),h('input',{value:form.atividade,onChange:function(e){setForm({...form,atividade:e.target.value});},style:inp})),
-          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Condicionantes'),h('textarea',{value:form.condicionantes,onChange:function(e){setForm({...form,condicionantes:e.target.value});},style:{...inp,minHeight:60,resize:'vertical'}})),
-          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'URL do arquivo'),h('input',{value:form.arquivo_url,onChange:function(e){setForm({...form,arquivo_url:e.target.value});},style:inp,placeholder:'https://...'})),
-          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Observações'),h('textarea',{value:form.obs,onChange:function(e){setForm({...form,obs:e.target.value});},style:{...inp,minHeight:50,resize:'vertical'}}))
-        ),
-        h('div',{style:{display:'flex',gap:8,marginTop:16,justifyContent:'flex-end'}},
-          h('button',{onClick:function(){setMod(null);},style:{background:C.c3||'#e5e7eb',color:C.ct||'#111',border:'none',borderRadius:6,padding:'8px 18px',cursor:'pointer'}},'Cancelar'),
-          h('button',{onClick:salvar,style:{background:C.b1||'#166534',color:'#fff',border:'none',borderRadius:6,padding:'8px 18px',cursor:'pointer'}},'Salvar')
-        )
-      )
-    )
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
 // ADMIN DENÚNCIAS AMBIENTAIS
 // ══════════════════════════════════════════════════════════════════════════════
 function AdminDenuncias(p){
@@ -5885,7 +5796,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["equipamentos","⚙️ Equipamentos",canDo("units")],["documentos","📎 Documentos",canDo("units")],["licencas","📋 Licenças",canDo("units")],["denuncias","📢 Denúncias",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
+        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["equipamentos","⚙️ Equipamentos",canDo("units")],["documentos","📎 Documentos",canDo("units")],["denuncias","📢 Denúncias",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
           var parts=it[1].match(/^(\S+)\s(.+)$/)||["",it[1].charAt(0),it[1].slice(2)];
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},parts[1]),parts[2]
@@ -6165,7 +6076,7 @@ function App(){
             );
           })(),
           !feedsLoaded&&h("div",{style:{display:"flex",flexDirection:"column",gap:10}},[0,1,2].map(function(i){return h(SkelFeedCard,{key:i});})),
-          feedsLoaded&&feeds.length===0&&h("div",{style:{textAlign:"center",padding:32,color:C.cm,background:C.cx,borderRadius:12}},"Nenhum feed cadastrado. Clique em '+ Novo feed' para adicionar."),
+          feedsLoaded&&feeds.length===0&&h("div",{style:{textAlign:"center",padding:32,color:C.cm,background:C.cx,borderRadius:12}},"Nenhum feed encontrado. Os feeds padrão serão criados no próximo reinício do servidor. Clique em '+ Novo feed' para adicionar manualmente."),
           feedsLoaded&&feeds.length>0&&h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
             feeds.map(function(f){
               var STATUS_FD={aguardando:{t:"— Aguardando",c:C.cm,b:C.cx},ativo:{t:"✓ Ativo",c:C.g2,b:C.gx},invalido:{t:"✗ Inválido",c:C.rm,b:C.rl},sem_resposta:{t:"⏱ Sem resposta",c:C.am,b:C.al},sincronizando:{t:"⟳ Sincronizando",c:C.b1,b:C.bl}};
@@ -6266,7 +6177,6 @@ function App(){
         atab==="ordens"&&canDo("units")&&h(AdminOrdens,{C:C,toast2:toast2,uns:uns}),
         atab==="equipamentos"&&canDo("units")&&h(AdminEquipamentos,{C:C,toast2:toast2,uns:uns}),
         atab==="documentos"&&canDo("units")&&h(AdminDocumentos,{C:C,toast2:toast2,uns:uns}),
-        atab==="licencas"&&canDo("units")&&h(AdminLicencas,{C:C,toast2:toast2,uns:uns}),
         atab==="denuncias"&&canDo("units")&&h(AdminDenuncias,{C:C,toast2:toast2,uns:uns}),
         atab==="auditoria"&&curUser&&curUser.perfil==='admin'&&h(AdminAuditLog,{C:C}),
 

@@ -284,21 +284,6 @@ test('synthesizeArticle usa regex para extrair JSON', () => {
     'synthesizeArticle deve usar regex para extrair JSON da resposta IA');
 });
 
-test('sgua_licencas tabela definida no startup', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes('sgua_licencas'), 'tabela sgua_licencas deve ser criada no startup');
-});
-
-test('GET /api/licencas endpoint definido', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes("'/api/licencas'"), 'endpoint GET /api/licencas deve existir');
-});
-
-test('GET /api/relatorios/licencas endpoint definido', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes("'/api/relatorios/licencas'"), 'endpoint de relatório PDF de licenças deve existir');
-});
-
 test('sgua_denuncias tabela definida no startup', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   assert.ok(src.includes('sgua_denuncias'), 'tabela sgua_denuncias deve ser criada no startup');
@@ -314,11 +299,6 @@ test('GET /api/denuncias/consultar/:protocolo endpoint definido', () => {
   assert.ok(src.includes("'/api/denuncias/consultar/:protocolo'"), 'endpoint de consulta por protocolo deve existir');
 });
 
-test('AdminLicencas componente definido no frontend', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
-  assert.ok(src.includes('function AdminLicencas('), 'componente AdminLicencas deve existir');
-});
-
 test('AdminDenuncias componente definido no frontend', () => {
   const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   assert.ok(src.includes('function AdminDenuncias('), 'componente AdminDenuncias deve existir');
@@ -327,4 +307,16 @@ test('AdminDenuncias componente definido no frontend', () => {
 test('GET /api/relatorios/equipamentos endpoint definido', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   assert.ok(src.includes("'/api/relatorios/equipamentos'"), 'endpoint de relatório PDF de equipamentos deve existir');
+});
+
+test('FDS_DEFAULTS contém ao menos um feed ativo', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('FDS_DEFAULTS'), 'FDS_DEFAULTS deve existir no server.js');
+  assert.ok(src.includes('agenciabrasil.ebc.com.br') && src.includes('ativo:true'),
+    'FDS_DEFAULTS deve conter ao menos um feed com ativo:true (Agência Brasil)');
+});
+
+test('PgDenuncias componente definido no frontend', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function PgDenuncias('), 'componente público PgDenuncias deve existir');
 });

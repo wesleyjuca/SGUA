@@ -2291,105 +2291,6 @@ app.delete('/api/documentos/:id', requireAuth, asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// ─── Licenças Ambientais ─────────────────────────────────────────────────────
-
-const TIPOS_LIC = ['LP','LI','LO','LAC','ASV','outro'];
-const STATUS_LIC = ['ativa','vencida','suspensa','cancelada','em_renovacao'];
-
-app.get('/api/licencas', asyncRoute(async (req, res) => {
-  const { unit_id, tipo, status, vencendo } = req.query;
-  let sql = 'SELECT l.*, u.nome as unit_nome FROM sgua_licencas l LEFT JOIN units u ON u.id=l.unit_id WHERE 1=1';
-  const params = [];
-  if (unit_id) { params.push(parseInt(unit_id)); sql += ` AND l.unit_id=$${params.length}`; }
-  if (tipo && TIPOS_LIC.includes(tipo)) { params.push(tipo); sql += ` AND l.tipo=$${params.length}`; }
-  if (status && STATUS_LIC.includes(status)) { params.push(status); sql += ` AND l.status=$${params.length}`; }
-  if (vencendo) { const dias = Math.min(365, Math.max(1, parseInt(vencendo)||30)); params.push(dias); sql += ` AND l.validade <= CURRENT_DATE + ($${params.length} || ' days')::INTERVAL AND l.status='ativa'`; }
-  sql += ' ORDER BY l.validade ASC';
-  const rows = await query(sql, params);
-  res.json({ ok: true, licencas: rows });
-}));
-
-app.post('/api/licencas', requireAuth, asyncRoute(async (req, res) => {
-  const b = req.body || {};
-  const tipo = TIPOS_LIC.includes(b.tipo) ? b.tipo : 'LO';
-  const numero = sanitizeText(b.numero||'', 80);
-  const emissao = b.emissao || null;
-  const validade = b.validade || null;
-  if (!numero || !emissao || !validade) return res.status(400).json({ ok: false, error: 'Número, emissão e validade são obrigatórios.' });
-  const unit_id = b.unit_id ? parsePositiveId(b.unit_id) : null;
-  const row = await queryOne(
-    'INSERT INTO sgua_licencas (unit_id,tipo,numero,emissao,validade,status,requerente,atividade,condicionantes,arquivo_url,obs,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *',
-    [unit_id, tipo, numero, emissao, validade, STATUS_LIC.includes(b.status)?b.status:'ativa',
-     sanitizeText(b.requerente||'',200), sanitizeText(b.atividade||'',300),
-     sanitizeText(b.condicionantes||'',2000), sanitizeText(b.arquivo_url||'',500),
-     sanitizeText(b.obs||'',1000), req.user?.email||'']
-  );
-  auditLog(req, 'criar_licenca', 'licencas', row.id, { numero, tipo });
-  res.json({ ok: true, licenca: row });
-}));
-
-app.put('/api/licencas/:id', requireAuth, asyncRoute(async (req, res) => {
-  const id = parsePositiveId(req.params.id);
-  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
-  const b = req.body || {};
-  const fields = []; const vals = [];
-  const add = (col, v) => { vals.push(v); fields.push(`${col}=$${vals.length}`); };
-  if (b.tipo !== undefined && TIPOS_LIC.includes(b.tipo)) add('tipo', b.tipo);
-  if (b.numero !== undefined) add('numero', sanitizeText(b.numero,80));
-  if (b.emissao !== undefined) add('emissao', b.emissao);
-  if (b.validade !== undefined) add('validade', b.validade);
-  if (b.status !== undefined && STATUS_LIC.includes(b.status)) add('status', b.status);
-  if (b.requerente !== undefined) add('requerente', sanitizeText(b.requerente,200));
-  if (b.atividade !== undefined) add('atividade', sanitizeText(b.atividade,300));
-  if (b.condicionantes !== undefined) add('condicionantes', sanitizeText(b.condicionantes,2000));
-  if (b.arquivo_url !== undefined) add('arquivo_url', sanitizeText(b.arquivo_url,500));
-  if (b.obs !== undefined) add('obs', sanitizeText(b.obs,1000));
-  if (b.unit_id !== undefined) add('unit_id', b.unit_id ? parsePositiveId(b.unit_id) : null);
-  if (!fields.length) return res.status(400).json({ ok: false, error: 'Nenhum campo para atualizar.' });
-  vals.push(id); add('updated_at', 'now()');
-  const row = await queryOne(`UPDATE sgua_licencas SET ${fields.join(',')} WHERE id=$${vals.length} RETURNING *`, vals);
-  if (!row) return res.status(404).json({ ok: false, error: 'Licença não encontrada.' });
-  auditLog(req, 'editar_licenca', 'licencas', id, {});
-  res.json({ ok: true, licenca: row });
-}));
-
-app.delete('/api/licencas/:id', requireAuth, asyncRoute(async (req, res) => {
-  const id = parsePositiveId(req.params.id);
-  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
-  const r = await query('DELETE FROM sgua_licencas WHERE id=$1 RETURNING id', [id]);
-  if (!r.length) return res.status(404).json({ ok: false, error: 'Licença não encontrada.' });
-  auditLog(req, 'deletar_licenca', 'licencas', id, {});
-  res.json({ ok: true });
-}));
-
-app.get('/api/relatorios/licencas', requireAuth, asyncRoute(async (req, res) => {
-  if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
-  const { unit_id, status } = req.query;
-  let sql = 'SELECT l.*, u.nome as unit_nome FROM sgua_licencas l LEFT JOIN units u ON u.id=l.unit_id WHERE 1=1';
-  const params = [];
-  if (unit_id) { params.push(parseInt(unit_id)); sql += ` AND l.unit_id=$${params.length}`; }
-  if (status && STATUS_LIC.includes(status)) { params.push(status); sql += ` AND l.status=$${params.length}`; }
-  sql += ' ORDER BY l.validade ASC';
-  const licencas = await query(sql, params);
-  const doc = new PDFDocument({ margin: 40, size: 'A4' });
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', 'attachment; filename="licencas.pdf"');
-  doc.pipe(res);
-  pdfHeader(doc, 'Relatório de Licenças Ambientais');
-  const hoje = new Date(); const alerta = new Date(); alerta.setDate(alerta.getDate()+30);
-  for (const l of licencas) {
-    const venc = new Date(l.validade); const proxVenc = venc <= alerta && l.status==='ativa';
-    doc.moveDown(0.3).font('Helvetica-Bold').fontSize(10).text(`[${l.tipo}] ${l.numero} — ${l.unit_nome||'Sem unidade'}`, { continued: false });
-    doc.font('Helvetica').fontSize(9)
-      .text(`Requerente: ${l.requerente||'—'} | Atividade: ${l.atividade||'—'}`)
-      .text(`Emissão: ${new Date(l.emissao).toLocaleDateString('pt-BR')}  |  Validade: ${venc.toLocaleDateString('pt-BR')}  |  Status: ${l.status.toUpperCase()}${proxVenc?' ⚠️ VENCIMENTO PRÓXIMO':''}`)
-      .moveDown(0.2);
-    doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#cccccc').stroke().moveDown(0.3);
-  }
-  if (!licencas.length) doc.moveDown().font('Helvetica').fontSize(11).text('Nenhuma licença encontrada para os filtros selecionados.');
-  doc.end();
-}));
-
 // ─── Relatório PDF de Equipamentos ──────────────────────────────────────────
 
 app.get('/api/relatorios/equipamentos', requireAuth, asyncRoute(async (req, res) => {
@@ -2976,24 +2877,6 @@ const server = app.listen(PORT, async () => {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_sgua_feeds_ativo ON sgua_feeds(ativo)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_sgua_feed_logs_feed_id ON sgua_feed_logs(feed_id)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_news_data_pub ON news(data_pub DESC NULLS LAST)`).catch(()=>{});
-    // Tabela licenças ambientais
-    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_licencas (
-      id SERIAL PRIMARY KEY,
-      unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
-      tipo VARCHAR(10) NOT NULL DEFAULT 'LO',
-      numero VARCHAR(80) NOT NULL,
-      emissao DATE NOT NULL,
-      validade DATE NOT NULL,
-      status VARCHAR(20) NOT NULL DEFAULT 'ativa',
-      requerente VARCHAR(200) DEFAULT '',
-      atividade VARCHAR(300) DEFAULT '',
-      condicionantes TEXT DEFAULT '',
-      arquivo_url TEXT DEFAULT '',
-      obs TEXT DEFAULT '',
-      created_by VARCHAR(200) DEFAULT '',
-      created_at TIMESTAMPTZ DEFAULT now(),
-      updated_at TIMESTAMPTZ DEFAULT now()
-    )`).catch(()=>{});
     // Tabela denúncias ambientais
     await pool.query(`CREATE TABLE IF NOT EXISTS sgua_denuncias (
       id SERIAL PRIMARY KEY,
@@ -3013,8 +2896,6 @@ const server = app.listen(PORT, async () => {
       created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ DEFAULT now()
     )`).catch(()=>{});
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_licencas_validade ON sgua_licencas(validade)`).catch(()=>{});
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_licencas_unit_id ON sgua_licencas(unit_id)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_denuncias_protocolo ON sgua_denuncias(protocolo)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_denuncias_status ON sgua_denuncias(status)`).catch(()=>{});
     // Migrar feeds do app_state se sgua_feeds estiver vazia (primeira instalação)
@@ -3145,19 +3026,6 @@ cron.schedule('0 6 * * *', async () => {
         logger.info(`[CRON-EQ] ${eqAlerta.length} alertas de manutenção enviados`);
       }
     } catch(e){ logger.warn('[CRON-EQ] Alerta equipamentos falhou:', e.message); }
-    // Alertas de licenças vencendo em 30 dias e atualização de status
-    try {
-      const licVenc = await query(
-        "SELECT l.numero, l.tipo, l.validade, u.nome as unit_nome FROM sgua_licencas l LEFT JOIN units u ON u.id=l.unit_id WHERE l.validade <= CURRENT_DATE + 30 AND l.status='ativa' ORDER BY l.validade ASC"
-      );
-      if (licVenc.length > 0) {
-        const linhas = licVenc.map(l => `• [${l.tipo}] ${l.numero} (${l.unit_nome||'?'}) — vence ${new Date(l.validade).toLocaleDateString('pt-BR')}`).join('\n');
-        await sendAlertEmail(`📋 ${licVenc.length} licença(s) vencendo nos próximos 30 dias`, linhas);
-        logger.info(`[CRON-LIC] ${licVenc.length} alertas de licença enviados`);
-      }
-      // Marcar como vencida licenças já expiradas
-      await pool.query("UPDATE sgua_licencas SET status='vencida',updated_at=now() WHERE validade < CURRENT_DATE AND status='ativa'");
-    } catch(e){ logger.warn('[CRON-LIC] Alerta licenças falhou:', e.message); }
   } catch(e){ logger.error('[CRON-RSS] Falha:',e.message); }
 }, { timezone: 'UTC' });
 
