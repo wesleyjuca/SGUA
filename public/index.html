@@ -3185,6 +3185,93 @@ function AdminBackups(p){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PÁGINA PÚBLICA DE DENÚNCIAS AMBIENTAIS
+// ══════════════════════════════════════════════════════════════════════════════
+function PgDenuncias(p){
+  var C=p.C||{};var toast2=p.toast2||function(){};var uns=p.uns||[];
+  var sTab=useState('enviar');var tab=sTab[0],setTab=sTab[1];
+  var sForm=useState({tipo:'desmatamento',descricao:'',localizacao:'',municipio:'',anonima:true,denunciante_nome:'',denunciante_contato:'',unit_id:''});
+  var form=sForm[0],setForm=sForm[1];
+  var sProt=useState('');var prot=sProt[0],setProt=sProt[1];
+  var sBusca=useState('');var busca=sBusca[0],setBusca=sBusca[1];
+  var sSend=useState(false);var sending=sSend[0],setSend=sSend[1];
+  var sResult=useState(null);var result=sResult[0],setResult=sResult[1];
+  var sConsulta=useState(null);var consulta=sConsulta[0],setConsulta=sConsulta[1];
+  var sCLoading=useState(false);var cLoading=sCLoading[0],setCLoading=sCLoading[1];
+  var TIPOS=['desmatamento','queimada','caca','pesca_ilegal','mineracao','poluicao','outro'];
+  var ST_COLOR={recebida:'#dc2626',em_analise:'#d97706',concluida:'#16a34a',arquivada:'#6b7280'};
+  function enviar(){
+    if(!form.descricao||form.descricao.length<20){toast2('Descrição muito curta (mínimo 20 caracteres)','err');return;}
+    setSend(true);
+    fetch('/api/denuncias',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)})
+      .then(function(r){return r.json();})
+      .then(function(r){
+        if(r.ok){setResult(r.protocolo);setForm({tipo:'desmatamento',descricao:'',localizacao:'',municipio:'',anonima:true,denunciante_nome:'',denunciante_contato:'',unit_id:''});}
+        else toast2(r.error||'Erro ao enviar','err');
+      }).catch(function(){toast2('Erro de conexão','err');}).finally(function(){setSend(false);});
+  }
+  function consultarProt(){
+    var p2=busca.trim().toUpperCase();
+    if(!p2.startsWith('DEN-')){toast2('Protocolo inválido. Deve começar com DEN-','err');return;}
+    setCLoading(true);setConsulta(null);
+    fetch('/api/denuncias/consultar/'+encodeURIComponent(p2)).then(function(r){return r.json();})
+      .then(function(r){if(r.ok)setConsulta(r.denuncia);else toast2(r.error||'Não encontrado','err');})
+      .catch(function(){toast2('Erro de conexão','err');}).finally(function(){setCLoading(false);});
+  }
+  var inp={border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'8px 10px',fontSize:14,background:C.c1||'#f9fafb',color:C.ct||'#111',width:'100%',boxSizing:'border-box'};
+  return h('div',{style:{maxWidth:680,margin:'0 auto',padding:'0 8px'}},
+    h('div',{style:{background:'linear-gradient(135deg,#b91c1c,#dc2626)',color:'#fff',borderRadius:12,padding:'24px 24px 18px',marginBottom:20}},
+      h('div',{style:{fontSize:20,fontWeight:800,marginBottom:4}},'📢 Canal de Denúncias Ambientais'),
+      h('div',{style:{fontSize:13,opacity:.9}},'SEMA/AC — Secretaria de Estado do Meio Ambiente do Acre. Denúncias anônimas são aceitas.')
+    ),
+    h('div',{style:{display:'flex',gap:0,marginBottom:20,borderRadius:8,overflow:'hidden',border:'1px solid '+(C.c3||'#e5e7eb')}},
+      ['enviar','consultar'].map(function(t){return h('button',{key:t,onClick:function(){setTab(t);setResult(null);setConsulta(null);},style:{flex:1,padding:'10px',border:'none',cursor:'pointer',fontWeight:tab===t?700:400,background:tab===t?(C.b1||'#166534'):(C.c1||'#f9fafb'),color:tab===t?'#fff':(C.ct||'#111'),fontSize:13}},t==='enviar'?'📢 Fazer Denúncia':'🔍 Consultar Protocolo');})
+    ),
+    tab==='enviar'&&!result&&h('div',null,
+      h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 14px'}},
+        h('div',null,h('label',{style:{fontSize:12,fontWeight:600,color:C.cm||'#6b7280',display:'block',marginBottom:4}},'Tipo de Irregularidade *'),h('select',{value:form.tipo,onChange:function(e){setForm({...form,tipo:e.target.value});},style:inp},TIPOS.map(function(t){return h('option',{key:t,value:t},t.replace('_',' ').charAt(0).toUpperCase()+t.replace('_',' ').slice(1));}))),
+        h('div',null,h('label',{style:{fontSize:12,fontWeight:600,color:C.cm||'#6b7280',display:'block',marginBottom:4}},'Município'),h('input',{value:form.municipio,onChange:function(e){setForm({...form,municipio:e.target.value});},style:inp,placeholder:'Ex: Rio Branco'})),
+        h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,fontWeight:600,color:C.cm||'#6b7280',display:'block',marginBottom:4}},'Descrição detalhada * (mínimo 20 caracteres)'),h('textarea',{value:form.descricao,onChange:function(e){setForm({...form,descricao:e.target.value});},style:{...inp,minHeight:100,resize:'vertical'},placeholder:'Descreva o que foi observado, quando e onde...'})),
+        h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,fontWeight:600,color:C.cm||'#6b7280',display:'block',marginBottom:4}},'Localização / Referência'),h('input',{value:form.localizacao,onChange:function(e){setForm({...form,localizacao:e.target.value});},style:inp,placeholder:'Ex: BR-364, km 120, próximo ao igarapé...'})),
+        h('div',{style:{gridColumn:'span 2'}},
+          h('label',{style:{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:13,color:C.ct||'#111'}},
+            h('input',{type:'checkbox',checked:form.anonima,onChange:function(e){setForm({...form,anonima:e.target.checked});},style:{width:16,height:16}}),
+            'Denúncia anônima (seus dados não serão divulgados)'
+          )
+        ),
+        !form.anonima&&h('div',null,h('label',{style:{fontSize:12,fontWeight:600,color:C.cm||'#6b7280',display:'block',marginBottom:4}},'Seu nome'),h('input',{value:form.denunciante_nome,onChange:function(e){setForm({...form,denunciante_nome:e.target.value});},style:inp})),
+        !form.anonima&&h('div',null,h('label',{style:{fontSize:12,fontWeight:600,color:C.cm||'#6b7280',display:'block',marginBottom:4}},'Contato (e-mail ou telefone)'),h('input',{value:form.denunciante_contato,onChange:function(e){setForm({...form,denunciante_contato:e.target.value});},style:inp}))
+      ),
+      h('button',{onClick:enviar,disabled:sending,style:{marginTop:16,width:'100%',background:sending?'#9ca3af':(C.b1||'#166534'),color:'#fff',border:'none',borderRadius:8,padding:'12px',fontSize:15,fontWeight:700,cursor:sending?'not-allowed':'pointer'}},sending?'Enviando...':'📢 Enviar Denúncia')
+    ),
+    tab==='enviar'&&result&&h('div',{style:{textAlign:'center',padding:'32px 16px',background:C.c1||'#f0fdf4',border:'2px solid #16a34a',borderRadius:12}},
+      h('div',{style:{fontSize:36,marginBottom:8}},'✅'),
+      h('div',{style:{fontSize:18,fontWeight:700,color:'#16a34a',marginBottom:8}},'Denúncia registrada com sucesso!'),
+      h('div',{style:{fontSize:13,color:C.cm||'#6b7280',marginBottom:16}},'Guarde este protocolo para acompanhar o andamento:'),
+      h('div',{style:{fontSize:24,fontWeight:800,color:C.ct||'#111',background:'#fff',border:'2px dashed #16a34a',borderRadius:8,padding:'12px 24px',display:'inline-block',letterSpacing:2}},result),
+      h('button',{onClick:function(){setResult(null);},style:{display:'block',margin:'16px auto 0',background:C.c3||'#e5e7eb',color:C.ct||'#111',border:'none',borderRadius:6,padding:'8px 20px',cursor:'pointer'}},'Fazer nova denúncia')
+    ),
+    tab==='consultar'&&h('div',null,
+      h('div',{style:{display:'flex',gap:8,marginBottom:16}},
+        h('input',{value:busca,onChange:function(e){setBusca(e.target.value);},onKeyDown:function(e){if(e.key==='Enter')consultarProt();},style:{...inp,flex:1},placeholder:'DEN-20260604-0001'}),
+        h('button',{onClick:consultarProt,disabled:cLoading,style:{background:C.b1||'#166534',color:'#fff',border:'none',borderRadius:6,padding:'8px 16px',cursor:'pointer',whiteSpace:'nowrap'}},cLoading?'…':'Consultar')
+      ),
+      consulta&&h('div',{style:{background:C.c1||'#f9fafb',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:8,padding:16}},
+        h('div',{style:{fontWeight:700,fontSize:15,marginBottom:8,color:C.ct||'#111'}},'Protocolo: '+consulta.protocolo),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,fontSize:13,color:C.ct||'#111'}},
+          h('div',null,h('b',null,'Tipo: '),consulta.tipo.replace('_',' ')),
+          h('div',null,h('b',null,'Município: '),consulta.municipio||'—'),
+          h('div',null,h('b',null,'Registrada: '),new Date(consulta.created_at).toLocaleDateString('pt-BR')),
+          h('div',null,h('b',null,'Atualizada: '),new Date(consulta.updated_at).toLocaleDateString('pt-BR')),
+          h('div',{style:{gridColumn:'span 2'}},h('span',{style:{background:ST_COLOR[consulta.status]||'#6b7280',color:'#fff',borderRadius:4,padding:'2px 10px',fontSize:12}},consulta.status.replace('_',' ')))
+        ),
+        consulta.resposta&&h('div',{style:{marginTop:12,background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:6,padding:'10px 12px',fontSize:13,color:C.ct||'#111'}},h('b',null,'Resposta do órgão: '),consulta.resposta)
+      )
+    )
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // SOLICITAÇÃO PÚBLICA DE ACESSO
 // ══════════════════════════════════════════════════════════════════════════════
 function PgSolicitarAcesso(p){
@@ -3656,6 +3743,170 @@ function AdminDocumentos(p){
         h('div',{style:{display:'flex',gap:10,justifyContent:'flex-end'}},
           h('button',{onClick:function(){setDelId(null);},style:{padding:'8px 18px',borderRadius:8,border:'1px solid '+C.cl,background:'none',cursor:'pointer'}},'Cancelar'),
           h('button',{onClick:del2,style:{padding:'8px 18px',borderRadius:8,border:'none',background:C.rm,color:'#fff',fontWeight:600,cursor:'pointer'}},'Excluir')
+        )
+      )
+    )
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ADMIN LICENÇAS AMBIENTAIS
+// ══════════════════════════════════════════════════════════════════════════════
+function AdminLicencas(p){
+  var C=p.C||{};var uns=p.uns||[];var toast2=p.toast2||function(){};
+  var sLics=useState([]);var lics=sLics[0],setLics=sLics[1];
+  var sLoad=useState(true);var load=sLoad[0],setLoad=sLoad[1];
+  var sMod=useState(null);var mod=sMod[0],setMod=sMod[1];
+  var sFTipo=useState('');var fTipo=sFTipo[0],setFTipo=sFTipo[1];
+  var sFStatus=useState('');var fStatus=sFStatus[0],setFStatus=sFStatus[1];
+  var sFUnit=useState('');var fUnit=sFUnit[0],setFUnit=sFUnit[1];
+  var sForm=useState({tipo:'LO',numero:'',emissao:'',validade:'',status:'ativa',requerente:'',atividade:'',condicionantes:'',arquivo_url:'',obs:'',unit_id:''});
+  var form=sForm[0],setForm=sForm[1];
+  var TIPOS=['LP','LI','LO','LAC','ASV','outro'];
+  var STATUS=['ativa','vencida','suspensa','cancelada','em_renovacao'];
+  var ST_COLOR={ativa:'#16a34a',vencida:'#dc2626',suspensa:'#d97706',cancelada:'#6b7280',em_renovacao:'#2563eb'};
+  function load2(){setLoad(true);apiFetch('/api/licencas?'+new URLSearchParams(Object.fromEntries([['tipo',fTipo],['status',fStatus],['unit_id',fUnit]].filter(function(x){return x[1];})))).then(function(r){if(r.ok)setLics(r.licencas||[]);}).finally(function(){setLoad(false);});}
+  useEffect(load2,[fTipo,fStatus,fUnit]);
+  var hoje=new Date(); var alerta30=new Date(); alerta30.setDate(alerta30.getDate()+30);
+  function openNew(){setForm({tipo:'LO',numero:'',emissao:'',validade:'',status:'ativa',requerente:'',atividade:'',condicionantes:'',arquivo_url:'',obs:'',unit_id:''});setMod('new');}
+  function openEdit(l){setForm({tipo:l.tipo,numero:l.numero,emissao:l.emissao?l.emissao.slice(0,10):'',validade:l.validade?l.validade.slice(0,10):'',status:l.status,requerente:l.requerente||'',atividade:l.atividade||'',condicionantes:l.condicionantes||'',arquivo_url:l.arquivo_url||'',obs:l.obs||'',unit_id:l.unit_id||''});setMod(l);}
+  function salvar(){
+    var url=mod==='new'?'/api/licencas':('/api/licencas/'+mod.id);
+    var met=mod==='new'?'POST':'PUT';
+    apiFetch(url,{method:met,body:JSON.stringify(form)}).then(function(r){if(r.ok){toast2('Licença salva!','ok');setMod(null);load2();}else toast2(r.error||'Erro','err');});
+  }
+  function del(l){if(!confirm('Excluir licença '+l.numero+'?'))return;apiFetch('/api/licencas/'+l.id,{method:'DELETE'}).then(function(r){if(r.ok){toast2('Excluída','ok');load2();}else toast2(r.error||'Erro','err');});}
+  var cs={background:C.c2||'#fff',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:8,padding:'12px 16px',marginBottom:10};
+  var inp={border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'6px 10px',fontSize:13,background:C.c1||'#f9fafb',color:C.ct||'#111',width:'100%',boxSizing:'border-box'};
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:16,flexWrap:'wrap'}},
+      h('h2',{style:{margin:0,fontSize:18,fontWeight:700,color:C.ct||'#111',flex:1}},'📋 Licenças Ambientais'),
+      h('a',{href:'/api/relatorios/licencas'+(fUnit?'?unit_id='+fUnit:''),target:'_blank',style:{background:'#6b7280',color:'#fff',borderRadius:6,padding:'6px 12px',fontSize:12,textDecoration:'none'}},'📄 PDF'),
+      h('button',{onClick:openNew,style:{background:C.b1||'#166534',color:'#fff',border:'none',borderRadius:6,padding:'7px 14px',cursor:'pointer',fontSize:13}},'+ Nova Licença')
+    ),
+    h('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
+      h('select',{value:fTipo,onChange:function(e){setFTipo(e.target.value);},style:{...inp,width:'auto'}},h('option',{value:''},'Todos os tipos'),TIPOS.map(function(t){return h('option',{key:t,value:t},t);})),
+      h('select',{value:fStatus,onChange:function(e){setFStatus(e.target.value);},style:{...inp,width:'auto'}},h('option',{value:''},'Todos os status'),STATUS.map(function(s){return h('option',{key:s,value:s},s.replace('_',' '));})),
+      h('select',{value:fUnit,onChange:function(e){setFUnit(e.target.value);},style:{...inp,width:'auto'}},h('option',{value:''},'Todas as unidades'),uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome);}))
+    ),
+    load?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280'}},'Carregando...'):
+    lics.length===0?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280',fontSize:14}},'Nenhuma licença encontrada.'):
+    lics.map(function(l){
+      var venc=new Date(l.validade); var proxVenc=venc<=alerta30&&l.status==='ativa';
+      return h('div',{key:l.id,style:{...cs,borderLeft:'4px solid '+(ST_COLOR[l.status]||'#6b7280')}},
+        h('div',{style:{display:'flex',alignItems:'flex-start',gap:8,flexWrap:'wrap'}},
+          h('div',{style:{flex:1}},
+            h('div',{style:{fontWeight:700,fontSize:14,color:C.ct||'#111'}},'['+l.tipo+'] '+l.numero+(proxVenc?' ⚠️ VENCIMENTO PRÓXIMO':'')),
+            l.requerente&&h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:2}},'Requerente: '+l.requerente),
+            l.atividade&&h('div',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Atividade: '+l.atividade),
+            h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:4}},
+              h('span',{style:{background:ST_COLOR[l.status]||'#6b7280',color:'#fff',borderRadius:4,padding:'1px 7px',fontSize:11,marginRight:8}},l.status.replace('_',' ')),
+              'Emissão: '+new Date(l.emissao).toLocaleDateString('pt-BR')+'  |  Validade: '+venc.toLocaleDateString('pt-BR'),
+              l.unit_nome&&h('span',null,'  |  '+l.unit_nome)
+            )
+          ),
+          h('div',{style:{display:'flex',gap:6}},
+            l.arquivo_url&&h('a',{href:l.arquivo_url,target:'_blank',style:{background:'#2563eb',color:'#fff',borderRadius:6,padding:'5px 10px',fontSize:11,textDecoration:'none'}},'📎'),
+            h('button',{onClick:function(){openEdit(l);},style:{background:'#2563eb',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',fontSize:12,cursor:'pointer'}},'Editar'),
+            h('button',{onClick:function(){del(l);},style:{background:'#dc2626',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',fontSize:12,cursor:'pointer'}},'Excluir')
+          )
+        )
+      );
+    }),
+    mod&&h('div',{style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'},onClick:function(e){if(e.target===e.currentTarget)setMod(null);}},
+      h('div',{style:{background:C.c2||'#fff',borderRadius:12,padding:24,width:'min(600px,95vw)',maxHeight:'90vh',overflowY:'auto'}},
+        h('h3',{style:{margin:'0 0 16px',color:C.ct||'#111'}},(mod==='new'?'Nova':'Editar')+' Licença Ambiental'),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 14px'}},
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Tipo *'),h('select',{value:form.tipo,onChange:function(e){setForm({...form,tipo:e.target.value});},style:inp},TIPOS.map(function(t){return h('option',{key:t,value:t},t);}))),
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Número *'),h('input',{value:form.numero,onChange:function(e){setForm({...form,numero:e.target.value});},style:inp,placeholder:'Ex: LO-001/2026'})),
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Emissão *'),h('input',{type:'date',value:form.emissao,onChange:function(e){setForm({...form,emissao:e.target.value});},style:inp})),
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Validade *'),h('input',{type:'date',value:form.validade,onChange:function(e){setForm({...form,validade:e.target.value});},style:inp})),
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Status'),h('select',{value:form.status,onChange:function(e){setForm({...form,status:e.target.value});},style:inp},STATUS.map(function(s){return h('option',{key:s,value:s},s.replace('_',' '));}))),
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Unidade'),h('select',{value:form.unit_id,onChange:function(e){setForm({...form,unit_id:e.target.value});},style:inp},h('option',{value:''},'Nenhuma'),uns.map(function(u){return h('option',{key:u.id,value:u.id},u.nome);}))),
+          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Requerente'),h('input',{value:form.requerente,onChange:function(e){setForm({...form,requerente:e.target.value});},style:inp})),
+          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Atividade'),h('input',{value:form.atividade,onChange:function(e){setForm({...form,atividade:e.target.value});},style:inp})),
+          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Condicionantes'),h('textarea',{value:form.condicionantes,onChange:function(e){setForm({...form,condicionantes:e.target.value});},style:{...inp,minHeight:60,resize:'vertical'}})),
+          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'URL do arquivo'),h('input',{value:form.arquivo_url,onChange:function(e){setForm({...form,arquivo_url:e.target.value});},style:inp,placeholder:'https://...'})),
+          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Observações'),h('textarea',{value:form.obs,onChange:function(e){setForm({...form,obs:e.target.value});},style:{...inp,minHeight:50,resize:'vertical'}}))
+        ),
+        h('div',{style:{display:'flex',gap:8,marginTop:16,justifyContent:'flex-end'}},
+          h('button',{onClick:function(){setMod(null);},style:{background:C.c3||'#e5e7eb',color:C.ct||'#111',border:'none',borderRadius:6,padding:'8px 18px',cursor:'pointer'}},'Cancelar'),
+          h('button',{onClick:salvar,style:{background:C.b1||'#166534',color:'#fff',border:'none',borderRadius:6,padding:'8px 18px',cursor:'pointer'}},'Salvar')
+        )
+      )
+    )
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ADMIN DENÚNCIAS AMBIENTAIS
+// ══════════════════════════════════════════════════════════════════════════════
+function AdminDenuncias(p){
+  var C=p.C||{};var uns=p.uns||[];var toast2=p.toast2||function(){};
+  var sDens=useState([]);var dens=sDens[0],setDens=sDens[1];
+  var sLoad=useState(true);var load=sLoad[0],setLoad=sLoad[1];
+  var sMod=useState(null);var mod=sMod[0],setMod=sMod[1];
+  var sFStatus=useState('');var fStatus=sFStatus[0],setFStatus=sFStatus[1];
+  var sFTipo=useState('');var fTipo=sFTipo[0],setFTipo=sFTipo[1];
+  var sForm=useState({status:'recebida',resposta:'',responsavel:'',unit_id:'',ocorrencia_id:''});
+  var form=sForm[0],setForm=sForm[1];
+  var TIPOS=['desmatamento','queimada','caca','pesca_ilegal','mineracao','poluicao','outro'];
+  var STATUS=['recebida','em_analise','concluida','arquivada'];
+  var ST_COLOR={recebida:'#dc2626',em_analise:'#d97706',concluida:'#16a34a',arquivada:'#6b7280'};
+  function load2(){setLoad(true);var q=new URLSearchParams(Object.fromEntries([['status',fStatus],['tipo',fTipo]].filter(function(x){return x[1];})));apiFetch('/api/denuncias?'+q).then(function(r){if(r.ok)setDens(r.denuncias||[]);}).finally(function(){setLoad(false);});}
+  useEffect(load2,[fStatus,fTipo]);
+  function openEdit(d){setForm({status:d.status,resposta:d.resposta||'',responsavel:d.responsavel||'',unit_id:d.unit_id||'',ocorrencia_id:d.ocorrencia_id||''});setMod(d);}
+  function salvar(){apiFetch('/api/denuncias/'+mod.id,{method:'PUT',body:JSON.stringify(form)}).then(function(r){if(r.ok){toast2('Denúncia atualizada!','ok');setMod(null);load2();}else toast2(r.error||'Erro','err');});}
+  function del(d){if(!confirm('Arquivar denúncia '+d.protocolo+'?'))return;apiFetch('/api/denuncias/'+d.id,{method:'DELETE'}).then(function(r){if(r.ok){toast2('Denúncia removida','ok');load2();}else toast2(r.error||'Erro','err');});}
+  var cs={background:C.c2||'#fff',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:8,padding:'12px 16px',marginBottom:10};
+  var inp={border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'6px 10px',fontSize:13,background:C.c1||'#f9fafb',color:C.ct||'#111',width:'100%',boxSizing:'border-box'};
+  var counts=STATUS.reduce(function(acc,s){acc[s]=(dens.filter(function(d){return d.status===s;}).length);return acc;},{});
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}},
+      h('h2',{style:{margin:0,fontSize:18,fontWeight:700,color:C.ct||'#111',flex:1}},'📢 Denúncias Ambientais'),
+      h('button',{onClick:load2,style:{background:C.c3||'#e5e7eb',color:C.ct||'#111',border:'none',borderRadius:6,padding:'6px 12px',cursor:'pointer',fontSize:12}},'🔄 Atualizar')
+    ),
+    h('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
+      STATUS.map(function(s){return h('div',{key:s,onClick:function(){setFStatus(fStatus===s?'':s);},style:{cursor:'pointer',background:fStatus===s?(ST_COLOR[s]||'#6b7280'):(C.c1||'#f9fafb'),color:fStatus===s?'#fff':(C.ct||'#111'),border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:20,padding:'4px 12px',fontSize:12}},s.replace('_',' ')+' ('+counts[s]+')');})
+    ),
+    h('div',{style:{display:'flex',gap:8,marginBottom:12}},
+      h('select',{value:fTipo,onChange:function(e){setFTipo(e.target.value);},style:{...inp,width:'auto'}},h('option',{value:''},'Todos os tipos'),TIPOS.map(function(t){return h('option',{key:t,value:t},t.replace('_',' '));}))
+    ),
+    load?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280'}},'Carregando...'):
+    dens.length===0?h('div',{style:{textAlign:'center',padding:20,color:C.cm||'#6b7280',fontSize:14}},'Nenhuma denúncia encontrada.'):
+    dens.map(function(d){
+      return h('div',{key:d.id,style:{...cs,borderLeft:'4px solid '+(ST_COLOR[d.status]||'#6b7280')}},
+        h('div',{style:{display:'flex',alignItems:'flex-start',gap:8}},
+          h('div',{style:{flex:1}},
+            h('div',{style:{fontWeight:700,fontSize:13,color:C.ct||'#111',marginBottom:2}},h('span',{style:{background:ST_COLOR[d.status],color:'#fff',borderRadius:4,padding:'1px 7px',fontSize:11,marginRight:8}},d.status.replace('_',' ')),d.protocolo,' — ',d.tipo.replace('_',' ')),
+            h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginTop:2,maxHeight:60,overflow:'hidden'}},d.descricao),
+            h('div',{style:{fontSize:11,color:C.cm||'#9ca3af',marginTop:4}},
+              d.municipio&&h('span',{style:{marginRight:8}},'📍 '+d.municipio),
+              !d.anonima&&d.denunciante_nome&&h('span',{style:{marginRight:8}},'👤 '+d.denunciante_nome),
+              h('span',null,new Date(d.created_at).toLocaleDateString('pt-BR'))
+            ),
+            d.resposta&&h('div',{style:{marginTop:6,fontSize:12,background:C.c1||'#f0fdf4',border:'1px solid '+(C.c3||'#bbf7d0'),borderRadius:4,padding:'4px 8px',color:C.ct||'#111'}},'Resposta: '+d.resposta)
+          ),
+          h('div',{style:{display:'flex',gap:6,flexShrink:0}},
+            h('button',{onClick:function(){openEdit(d);},style:{background:'#2563eb',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',fontSize:12,cursor:'pointer'}},'Tratar'),
+            h('button',{onClick:function(){del(d);},style:{background:'#dc2626',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',fontSize:12,cursor:'pointer'}},'✕')
+          )
+        )
+      );
+    }),
+    mod&&h('div',{style:{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'},onClick:function(e){if(e.target===e.currentTarget)setMod(null);}},
+      h('div',{style:{background:C.c2||'#fff',borderRadius:12,padding:24,width:'min(520px,95vw)',maxHeight:'90vh',overflowY:'auto'}},
+        h('h3',{style:{margin:'0 0 4px',color:C.ct||'#111'}},'Tratar Denúncia'),
+        h('div',{style:{fontSize:12,color:C.cm||'#6b7280',marginBottom:12}},'Protocolo: '+mod.protocolo),
+        h('div',{style:{background:C.c1||'#f9fafb',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'10px',fontSize:13,color:C.ct||'#111',marginBottom:12,maxHeight:100,overflow:'auto'}},mod.descricao),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 14px'}},
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Status'),h('select',{value:form.status,onChange:function(e){setForm({...form,status:e.target.value});},style:inp},STATUS.map(function(s){return h('option',{key:s,value:s},s.replace('_',' '));}))),
+          h('div',null,h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Responsável'),h('input',{value:form.responsavel,onChange:function(e){setForm({...form,responsavel:e.target.value});},style:inp})),
+          h('div',{style:{gridColumn:'span 2'}},h('label',{style:{fontSize:12,color:C.cm||'#6b7280'}},'Resposta ao denunciante'),h('textarea',{value:form.resposta,onChange:function(e){setForm({...form,resposta:e.target.value});},style:{...inp,minHeight:80,resize:'vertical'}}))
+        ),
+        h('div',{style:{display:'flex',gap:8,marginTop:16,justifyContent:'flex-end'}},
+          h('button',{onClick:function(){setMod(null);},style:{background:C.c3||'#e5e7eb',color:C.ct||'#111',border:'none',borderRadius:6,padding:'8px 18px',cursor:'pointer'}},'Cancelar'),
+          h('button',{onClick:salvar,style:{background:C.b1||'#166534',color:'#fff',border:'none',borderRadius:6,padding:'8px 18px',cursor:'pointer'}},'Salvar')
         )
       )
     )
@@ -5258,7 +5509,7 @@ function App(){
     {nome:"Unidades visíveis",valor:Math.round((unidadesVisiveis/Math.max(1,totalUnidades))*100),meta:80,cor:C.am}
   ];
 
-  var NAV=[{id:"home",l:t("nav_home")},{id:"cima",l:t("nav_cima")},{id:"ugai",l:t("nav_ugai")},{id:"mapa",l:t("nav_mapa")},{id:"noticias",l:t("nav_noticias")},{id:"sol",l:t("nav_sol")}].concat(pers.indicadoresPublicos!==false?[{id:"indicadores",l:t("nav_indicadores")}]:[]).concat([{id:"transp",l:"🔍 Transparência"}]).concat(!curUser?[{id:"solicitar-acesso",l:t("nav_acesso")}]:[]);
+  var NAV=[{id:"home",l:t("nav_home")},{id:"cima",l:t("nav_cima")},{id:"ugai",l:t("nav_ugai")},{id:"mapa",l:t("nav_mapa")},{id:"noticias",l:t("nav_noticias")},{id:"sol",l:t("nav_sol")}].concat(pers.indicadoresPublicos!==false?[{id:"indicadores",l:t("nav_indicadores")}]:[]).concat([{id:"transp",l:"🔍 Transparência"},{id:"denuncias",l:"📢 Denúncias"}]).concat(!curUser?[{id:"solicitar-acesso",l:t("nav_acesso")}]:[]);
 
   // Vistas especiais
   if(uVista) return h(PageUnidade,{u:uVista,uns:uns,setUns:setUns,curUser:curUser,toast2:toast2,onBack:function(){setUVista(null);},onSolicitar:function(){setSf(function(f){return Object.assign({},f,{un:uVista.nome});});setUVista(null);setPage("sol");}});
@@ -5614,6 +5865,10 @@ function App(){
       h(PgTransp,{uns:uns,sols:sols,C:C,onVerUnidade:function(u){setUVista(u);}})
     ),
 
+    page==="denuncias"&&h("div",{style:{padding:"28px 0 0"}},
+      h(PgDenuncias,{C:C,toast2:toast2,uns:uns})
+    ),
+
     page==="indicadores"&&h(PgIndicadores,{uns:uns,sols:sols,pers:pers,C:C,onVerUnidade:function(u){setUVista(u);},go:go}),
 
     page==="solicitar-acesso"&&h(PgSolicitarAcesso,{C:C,toast2:toast2,go:go}),
@@ -5630,7 +5885,7 @@ function App(){
       // Sidebar admin (idêntica ao v7)
       h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
-        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["equipamentos","⚙️ Equipamentos",canDo("units")],["documentos","📎 Documentos",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
+        [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["equipamentos","⚙️ Equipamentos",canDo("units")],["documentos","📎 Documentos",canDo("units")],["licencas","📋 Licenças",canDo("units")],["denuncias","📢 Denúncias",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
           var parts=it[1].match(/^(\S+)\s(.+)$/)||["",it[1].charAt(0),it[1].slice(2)];
           return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},parts[1]),parts[2]
@@ -6011,6 +6266,8 @@ function App(){
         atab==="ordens"&&canDo("units")&&h(AdminOrdens,{C:C,toast2:toast2,uns:uns}),
         atab==="equipamentos"&&canDo("units")&&h(AdminEquipamentos,{C:C,toast2:toast2,uns:uns}),
         atab==="documentos"&&canDo("units")&&h(AdminDocumentos,{C:C,toast2:toast2,uns:uns}),
+        atab==="licencas"&&canDo("units")&&h(AdminLicencas,{C:C,toast2:toast2,uns:uns}),
+        atab==="denuncias"&&canDo("units")&&h(AdminDenuncias,{C:C,toast2:toast2,uns:uns}),
         atab==="auditoria"&&curUser&&curUser.perfil==='admin'&&h(AdminAuditLog,{C:C}),
 
         ) // end inner padding div

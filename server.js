@@ -2291,6 +2291,218 @@ app.delete('/api/documentos/:id', requireAuth, asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// ─── Licenças Ambientais ─────────────────────────────────────────────────────
+
+const TIPOS_LIC = ['LP','LI','LO','LAC','ASV','outro'];
+const STATUS_LIC = ['ativa','vencida','suspensa','cancelada','em_renovacao'];
+
+app.get('/api/licencas', asyncRoute(async (req, res) => {
+  const { unit_id, tipo, status, vencendo } = req.query;
+  let sql = 'SELECT l.*, u.nome as unit_nome FROM sgua_licencas l LEFT JOIN units u ON u.id=l.unit_id WHERE 1=1';
+  const params = [];
+  if (unit_id) { params.push(parseInt(unit_id)); sql += ` AND l.unit_id=$${params.length}`; }
+  if (tipo && TIPOS_LIC.includes(tipo)) { params.push(tipo); sql += ` AND l.tipo=$${params.length}`; }
+  if (status && STATUS_LIC.includes(status)) { params.push(status); sql += ` AND l.status=$${params.length}`; }
+  if (vencendo) { const dias = Math.min(365, Math.max(1, parseInt(vencendo)||30)); params.push(dias); sql += ` AND l.validade <= CURRENT_DATE + ($${params.length} || ' days')::INTERVAL AND l.status='ativa'`; }
+  sql += ' ORDER BY l.validade ASC';
+  const rows = await query(sql, params);
+  res.json({ ok: true, licencas: rows });
+}));
+
+app.post('/api/licencas', requireAuth, asyncRoute(async (req, res) => {
+  const b = req.body || {};
+  const tipo = TIPOS_LIC.includes(b.tipo) ? b.tipo : 'LO';
+  const numero = sanitizeText(b.numero||'', 80);
+  const emissao = b.emissao || null;
+  const validade = b.validade || null;
+  if (!numero || !emissao || !validade) return res.status(400).json({ ok: false, error: 'Número, emissão e validade são obrigatórios.' });
+  const unit_id = b.unit_id ? parsePositiveId(b.unit_id) : null;
+  const row = await queryOne(
+    'INSERT INTO sgua_licencas (unit_id,tipo,numero,emissao,validade,status,requerente,atividade,condicionantes,arquivo_url,obs,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *',
+    [unit_id, tipo, numero, emissao, validade, STATUS_LIC.includes(b.status)?b.status:'ativa',
+     sanitizeText(b.requerente||'',200), sanitizeText(b.atividade||'',300),
+     sanitizeText(b.condicionantes||'',2000), sanitizeText(b.arquivo_url||'',500),
+     sanitizeText(b.obs||'',1000), req.user?.email||'']
+  );
+  auditLog(req, 'criar_licenca', 'licencas', row.id, { numero, tipo });
+  res.json({ ok: true, licenca: row });
+}));
+
+app.put('/api/licencas/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const b = req.body || {};
+  const fields = []; const vals = [];
+  const add = (col, v) => { vals.push(v); fields.push(`${col}=$${vals.length}`); };
+  if (b.tipo !== undefined && TIPOS_LIC.includes(b.tipo)) add('tipo', b.tipo);
+  if (b.numero !== undefined) add('numero', sanitizeText(b.numero,80));
+  if (b.emissao !== undefined) add('emissao', b.emissao);
+  if (b.validade !== undefined) add('validade', b.validade);
+  if (b.status !== undefined && STATUS_LIC.includes(b.status)) add('status', b.status);
+  if (b.requerente !== undefined) add('requerente', sanitizeText(b.requerente,200));
+  if (b.atividade !== undefined) add('atividade', sanitizeText(b.atividade,300));
+  if (b.condicionantes !== undefined) add('condicionantes', sanitizeText(b.condicionantes,2000));
+  if (b.arquivo_url !== undefined) add('arquivo_url', sanitizeText(b.arquivo_url,500));
+  if (b.obs !== undefined) add('obs', sanitizeText(b.obs,1000));
+  if (b.unit_id !== undefined) add('unit_id', b.unit_id ? parsePositiveId(b.unit_id) : null);
+  if (!fields.length) return res.status(400).json({ ok: false, error: 'Nenhum campo para atualizar.' });
+  vals.push(id); add('updated_at', 'now()');
+  const row = await queryOne(`UPDATE sgua_licencas SET ${fields.join(',')} WHERE id=$${vals.length} RETURNING *`, vals);
+  if (!row) return res.status(404).json({ ok: false, error: 'Licença não encontrada.' });
+  auditLog(req, 'editar_licenca', 'licencas', id, {});
+  res.json({ ok: true, licenca: row });
+}));
+
+app.delete('/api/licencas/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const r = await query('DELETE FROM sgua_licencas WHERE id=$1 RETURNING id', [id]);
+  if (!r.length) return res.status(404).json({ ok: false, error: 'Licença não encontrada.' });
+  auditLog(req, 'deletar_licenca', 'licencas', id, {});
+  res.json({ ok: true });
+}));
+
+app.get('/api/relatorios/licencas', requireAuth, asyncRoute(async (req, res) => {
+  if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
+  const { unit_id, status } = req.query;
+  let sql = 'SELECT l.*, u.nome as unit_nome FROM sgua_licencas l LEFT JOIN units u ON u.id=l.unit_id WHERE 1=1';
+  const params = [];
+  if (unit_id) { params.push(parseInt(unit_id)); sql += ` AND l.unit_id=$${params.length}`; }
+  if (status && STATUS_LIC.includes(status)) { params.push(status); sql += ` AND l.status=$${params.length}`; }
+  sql += ' ORDER BY l.validade ASC';
+  const licencas = await query(sql, params);
+  const doc = new PDFDocument({ margin: 40, size: 'A4' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="licencas.pdf"');
+  doc.pipe(res);
+  pdfHeader(doc, 'Relatório de Licenças Ambientais');
+  const hoje = new Date(); const alerta = new Date(); alerta.setDate(alerta.getDate()+30);
+  for (const l of licencas) {
+    const venc = new Date(l.validade); const proxVenc = venc <= alerta && l.status==='ativa';
+    doc.moveDown(0.3).font('Helvetica-Bold').fontSize(10).text(`[${l.tipo}] ${l.numero} — ${l.unit_nome||'Sem unidade'}`, { continued: false });
+    doc.font('Helvetica').fontSize(9)
+      .text(`Requerente: ${l.requerente||'—'} | Atividade: ${l.atividade||'—'}`)
+      .text(`Emissão: ${new Date(l.emissao).toLocaleDateString('pt-BR')}  |  Validade: ${venc.toLocaleDateString('pt-BR')}  |  Status: ${l.status.toUpperCase()}${proxVenc?' ⚠️ VENCIMENTO PRÓXIMO':''}`)
+      .moveDown(0.2);
+    doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#cccccc').stroke().moveDown(0.3);
+  }
+  if (!licencas.length) doc.moveDown().font('Helvetica').fontSize(11).text('Nenhuma licença encontrada para os filtros selecionados.');
+  doc.end();
+}));
+
+// ─── Relatório PDF de Equipamentos ──────────────────────────────────────────
+
+app.get('/api/relatorios/equipamentos', requireAuth, asyncRoute(async (req, res) => {
+  if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
+  const { unit_id, status, tipo } = req.query;
+  let sql = 'SELECT e.*, u.nome as unit_nome FROM sgua_equipamentos e LEFT JOIN units u ON u.id=e.unit_id WHERE 1=1';
+  const params = [];
+  if (unit_id) { params.push(parseInt(unit_id)); sql += ` AND e.unit_id=$${params.length}`; }
+  if (status) { params.push(status); sql += ` AND e.status=$${params.length}`; }
+  if (tipo) { params.push(tipo); sql += ` AND e.tipo=$${params.length}`; }
+  sql += ' ORDER BY u.nome ASC, e.nome ASC';
+  const equips = await query(sql, params);
+  const doc = new PDFDocument({ margin: 40, size: 'A4' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="equipamentos.pdf"');
+  doc.pipe(res);
+  pdfHeader(doc, 'Relatório de Inventário de Equipamentos');
+  const hoje = new Date(); const alerta = new Date(); alerta.setDate(alerta.getDate()+30);
+  for (const e of equips) {
+    const proxAlert = e.proxima_manutencao && new Date(e.proxima_manutencao) <= alerta && e.status==='operacional';
+    doc.moveDown(0.3).font('Helvetica-Bold').fontSize(10).text(`${e.nome} — ${e.unit_nome||'Sem unidade'}`);
+    doc.font('Helvetica').fontSize(9)
+      .text(`Tipo: ${e.tipo} | Marca/Modelo: ${e.marca||'—'}/${e.modelo||'—'} | Patrimônio: ${e.patrimonio||'—'}`)
+      .text(`Status: ${e.status.toUpperCase()}${proxAlert?' ⚠️ MANUTENÇÃO PRÓXIMA':''} | Próx. manutenção: ${e.proxima_manutencao?new Date(e.proxima_manutencao).toLocaleDateString('pt-BR'):'—'}`)
+      .moveDown(0.2);
+    doc.moveTo(40, doc.y).lineTo(555, doc.y).strokeColor('#cccccc').stroke().moveDown(0.3);
+  }
+  if (!equips.length) doc.moveDown().font('Helvetica').fontSize(11).text('Nenhum equipamento encontrado para os filtros selecionados.');
+  doc.end();
+}));
+
+// ─── Denúncias Ambientais ────────────────────────────────────────────────────
+
+const TIPOS_DEN = ['desmatamento','queimada','caca','pesca_ilegal','mineracao','poluicao','outro'];
+const STATUS_DEN = ['recebida','em_analise','concluida','arquivada'];
+const denunciaRateLimit = rateLimit({ windowMs: 60*60*1000, max: 5, standardHeaders: true, legacyHeaders: false,
+  message: { ok: false, error: 'Muitas denúncias enviadas. Tente novamente em 1 hora.' } });
+
+function gerarProtocolo(id) {
+  const d = new Date(); const ymd = d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0');
+  return 'DEN-'+ymd+'-'+String(id).padStart(4,'0');
+}
+
+app.post('/api/denuncias', denunciaRateLimit, asyncRoute(async (req, res) => {
+  const b = req.body || {};
+  const descricao = sanitizeText(b.descricao||'', 3000);
+  if (!descricao || descricao.length < 20) return res.status(400).json({ ok: false, error: 'Descrição muito curta (mínimo 20 caracteres).' });
+  const tipo = TIPOS_DEN.includes(b.tipo) ? b.tipo : 'outro';
+  const anonima = b.anonima !== false;
+  const unit_id = b.unit_id ? parsePositiveId(b.unit_id) : null;
+  // Inserir com protocolo temporário, depois atualizar com ID real
+  const row = await queryOne(
+    'INSERT INTO sgua_denuncias (protocolo,tipo,descricao,localizacao,municipio,anonima,denunciante_nome,denunciante_contato,status,unit_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+    ['TEMP', tipo, descricao, sanitizeText(b.localizacao||'',300), sanitizeText(b.municipio||'',100),
+     anonima, anonima?'':(sanitizeText(b.denunciante_nome||'',120)), anonima?'':(sanitizeText(b.denunciante_contato||'',120)), 'recebida', unit_id]
+  );
+  const protocolo = gerarProtocolo(row.id);
+  await query('UPDATE sgua_denuncias SET protocolo=$1 WHERE id=$2', [protocolo, row.id]);
+  // Notificação por email (não bloqueante)
+  sendAlertEmail(`📢 Nova denúncia ambiental: ${protocolo}`,
+    `Tipo: ${tipo}\nMunicípio: ${b.municipio||'não informado'}\nDescrição: ${descricao.slice(0,500)}\nProtocolo: ${protocolo}`
+  ).catch(()=>{});
+  res.json({ ok: true, protocolo, message: 'Denúncia registrada com sucesso. Guarde o protocolo para acompanhamento.' });
+}));
+
+app.get('/api/denuncias/consultar/:protocolo', asyncRoute(async (req, res) => {
+  const protocolo = (req.params.protocolo||'').toUpperCase().trim();
+  if (!protocolo.startsWith('DEN-')) return res.status(400).json({ ok: false, error: 'Protocolo inválido.' });
+  const row = await queryOne('SELECT protocolo,tipo,municipio,status,resposta,created_at,updated_at FROM sgua_denuncias WHERE protocolo=$1', [protocolo]);
+  if (!row) return res.status(404).json({ ok: false, error: 'Protocolo não encontrado.' });
+  res.json({ ok: true, denuncia: row });
+}));
+
+app.get('/api/denuncias', requireAuth, asyncRoute(async (req, res) => {
+  const { status, tipo, municipio } = req.query;
+  let sql = 'SELECT d.*, u.nome as unit_nome FROM sgua_denuncias d LEFT JOIN units u ON u.id=d.unit_id WHERE 1=1';
+  const params = [];
+  if (status && STATUS_DEN.includes(status)) { params.push(status); sql += ` AND d.status=$${params.length}`; }
+  if (tipo && TIPOS_DEN.includes(tipo)) { params.push(tipo); sql += ` AND d.tipo=$${params.length}`; }
+  if (municipio) { params.push('%'+municipio.toLowerCase()+'%'); sql += ` AND LOWER(d.municipio) LIKE $${params.length}`; }
+  sql += ' ORDER BY d.created_at DESC LIMIT 500';
+  const rows = await query(sql, params);
+  res.json({ ok: true, denuncias: rows });
+}));
+
+app.put('/api/denuncias/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const b = req.body || {};
+  const fields = []; const vals = [];
+  const add = (col, v) => { vals.push(v); fields.push(`${col}=$${vals.length}`); };
+  if (b.status !== undefined && STATUS_DEN.includes(b.status)) add('status', b.status);
+  if (b.resposta !== undefined) add('resposta', sanitizeText(b.resposta,3000));
+  if (b.responsavel !== undefined) add('responsavel', sanitizeText(b.responsavel,120));
+  if (b.ocorrencia_id !== undefined) add('ocorrencia_id', b.ocorrencia_id ? parsePositiveId(b.ocorrencia_id) : null);
+  if (b.unit_id !== undefined) add('unit_id', b.unit_id ? parsePositiveId(b.unit_id) : null);
+  if (!fields.length) return res.status(400).json({ ok: false, error: 'Nenhum campo para atualizar.' });
+  vals.push(id);
+  const row = await queryOne(`UPDATE sgua_denuncias SET ${fields.join(',')},updated_at=now() WHERE id=$${vals.length} RETURNING *`, vals);
+  if (!row) return res.status(404).json({ ok: false, error: 'Denúncia não encontrada.' });
+  auditLog(req, 'editar_denuncia', 'denuncias', id, { status: b.status });
+  res.json({ ok: true, denuncia: row });
+}));
+
+app.delete('/api/denuncias/:id', requireAuth, asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const r = await query('DELETE FROM sgua_denuncias WHERE id=$1 RETURNING id', [id]);
+  if (!r.length) return res.status(404).json({ ok: false, error: 'Denúncia não encontrada.' });
+  auditLog(req, 'deletar_denuncia', 'denuncias', id, {});
+  res.json({ ok: true });
+}));
+
 // ─── Backup ──────────────────────────────────────────────────────────────────
 
 app.get('/api/backup', asyncRoute(async (_req, res) => {
@@ -2764,6 +2976,47 @@ const server = app.listen(PORT, async () => {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_sgua_feeds_ativo ON sgua_feeds(ativo)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_sgua_feed_logs_feed_id ON sgua_feed_logs(feed_id)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_news_data_pub ON news(data_pub DESC NULLS LAST)`).catch(()=>{});
+    // Tabela licenças ambientais
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_licencas (
+      id SERIAL PRIMARY KEY,
+      unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+      tipo VARCHAR(10) NOT NULL DEFAULT 'LO',
+      numero VARCHAR(80) NOT NULL,
+      emissao DATE NOT NULL,
+      validade DATE NOT NULL,
+      status VARCHAR(20) NOT NULL DEFAULT 'ativa',
+      requerente VARCHAR(200) DEFAULT '',
+      atividade VARCHAR(300) DEFAULT '',
+      condicionantes TEXT DEFAULT '',
+      arquivo_url TEXT DEFAULT '',
+      obs TEXT DEFAULT '',
+      created_by VARCHAR(200) DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )`).catch(()=>{});
+    // Tabela denúncias ambientais
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_denuncias (
+      id SERIAL PRIMARY KEY,
+      protocolo VARCHAR(20) NOT NULL UNIQUE,
+      tipo VARCHAR(40) NOT NULL DEFAULT 'outro',
+      descricao TEXT NOT NULL,
+      localizacao TEXT DEFAULT '',
+      municipio VARCHAR(100) DEFAULT '',
+      anonima BOOLEAN DEFAULT true,
+      denunciante_nome VARCHAR(120) DEFAULT '',
+      denunciante_contato VARCHAR(120) DEFAULT '',
+      status VARCHAR(20) NOT NULL DEFAULT 'recebida',
+      unit_id INTEGER REFERENCES units(id) ON DELETE SET NULL,
+      ocorrencia_id INTEGER REFERENCES sgua_ocorrencias(id) ON DELETE SET NULL,
+      resposta TEXT DEFAULT '',
+      responsavel VARCHAR(120) DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    )`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_licencas_validade ON sgua_licencas(validade)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_licencas_unit_id ON sgua_licencas(unit_id)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_denuncias_protocolo ON sgua_denuncias(protocolo)`).catch(()=>{});
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_denuncias_status ON sgua_denuncias(status)`).catch(()=>{});
     // Migrar feeds do app_state se sgua_feeds estiver vazia (primeira instalação)
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
     if (exFeeds.length === 0) {
@@ -2881,6 +3134,30 @@ cron.schedule('0 6 * * *', async () => {
       } catch(e){ warnings.push(f.nome+': '+e.message); }
     }
     logger.info(`[CRON-RSS] ${totalAdded} novas notícias. Avisos: ${warnings.length}`);
+    // Alertas de equipamentos com manutenção nos próximos 15 dias
+    try {
+      const eqAlerta = await query(
+        "SELECT e.nome, e.proxima_manutencao, u.nome as unit_nome FROM sgua_equipamentos e LEFT JOIN units u ON u.id=e.unit_id WHERE e.proxima_manutencao BETWEEN CURRENT_DATE AND CURRENT_DATE + 15 AND e.status='operacional' ORDER BY e.proxima_manutencao ASC"
+      );
+      if (eqAlerta.length > 0) {
+        const linhas = eqAlerta.map(e => `• ${e.nome} (${e.unit_nome||'?'}) — ${new Date(e.proxima_manutencao).toLocaleDateString('pt-BR')}`).join('\n');
+        await sendAlertEmail(`⚙️ ${eqAlerta.length} equipamento(s) com manutenção nos próximos 15 dias`, linhas);
+        logger.info(`[CRON-EQ] ${eqAlerta.length} alertas de manutenção enviados`);
+      }
+    } catch(e){ logger.warn('[CRON-EQ] Alerta equipamentos falhou:', e.message); }
+    // Alertas de licenças vencendo em 30 dias e atualização de status
+    try {
+      const licVenc = await query(
+        "SELECT l.numero, l.tipo, l.validade, u.nome as unit_nome FROM sgua_licencas l LEFT JOIN units u ON u.id=l.unit_id WHERE l.validade <= CURRENT_DATE + 30 AND l.status='ativa' ORDER BY l.validade ASC"
+      );
+      if (licVenc.length > 0) {
+        const linhas = licVenc.map(l => `• [${l.tipo}] ${l.numero} (${l.unit_nome||'?'}) — vence ${new Date(l.validade).toLocaleDateString('pt-BR')}`).join('\n');
+        await sendAlertEmail(`📋 ${licVenc.length} licença(s) vencendo nos próximos 30 dias`, linhas);
+        logger.info(`[CRON-LIC] ${licVenc.length} alertas de licença enviados`);
+      }
+      // Marcar como vencida licenças já expiradas
+      await pool.query("UPDATE sgua_licencas SET status='vencida',updated_at=now() WHERE validade < CURRENT_DATE AND status='ativa'");
+    } catch(e){ logger.warn('[CRON-LIC] Alerta licenças falhou:', e.message); }
   } catch(e){ logger.error('[CRON-RSS] Falha:',e.message); }
 }, { timezone: 'UTC' });
 
