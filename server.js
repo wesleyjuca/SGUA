@@ -2201,7 +2201,10 @@ const CATS_DOC = ['relatorio','portaria','contrato','licitacao','legislacao','pl
 app.get('/api/documentos', asyncRoute(async (req, res) => {
   let sql = `SELECT d.*, u.name AS unit_name FROM sgua_documentos d LEFT JOIN units u ON u.id=d.unit_id WHERE 1=1`;
   const params = [];
-  const isAuth = req.headers.authorization;
+  let isAuth = false;
+  if (req.headers.authorization && jwt) {
+    try { jwt.verify(req.headers.authorization.replace('Bearer ',''), JWT_SECRET); isAuth = true; } catch(_) {}
+  }
   if (!isAuth) { sql += ` AND d.publico=true`; }
   if (req.query.publico === 'true') { sql += ` AND d.publico=true`; }
   if (req.query.publico === 'false' && isAuth) { sql += ` AND d.publico=false`; }
@@ -2482,7 +2485,7 @@ app.put('/api/reg-requests/:id', requireAuth, asyncRoute(async (req, res) => {
   if (!['aprovado','rejeitado'].includes(status)) return res.status(400).json({ ok: false, error: 'Status inválido.' });
   const result = await queryOne(
     'UPDATE sgua_reg_requests SET status=$1, obs=$2, reviewed_by=$3, reviewed_at=now() WHERE id=$4 RETURNING *',
-    [status, sanitizeText(body.obs||'',500), body.reviewed_by||null, id]
+    [status, sanitizeText(body.obs||'',500), req.admin?.email || null, id]
   );
   if (!result) return res.status(404).json({ ok: false, error: 'Solicitação não encontrada.' });
   res.json({ ok: true, data: result });
@@ -2898,6 +2901,36 @@ const server = app.listen(PORT, async () => {
     )`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_denuncias_protocolo ON sgua_denuncias(protocolo)`).catch(()=>{});
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_denuncias_status ON sgua_denuncias(status)`).catch(()=>{});
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_backups (
+      id SERIAL PRIMARY KEY,
+      label VARCHAR(200) NOT NULL DEFAULT '',
+      snapshot JSONB NOT NULL DEFAULT '{}',
+      size_kb INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )`).catch(()=>{});
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_reg_requests (
+      id SERIAL PRIMARY KEY,
+      nome VARCHAR(200) NOT NULL,
+      email VARCHAR(200) NOT NULL,
+      cargo VARCHAR(120) DEFAULT '',
+      organizacao VARCHAR(200) DEFAULT '',
+      justificativa TEXT DEFAULT '',
+      status VARCHAR(20) NOT NULL DEFAULT 'pendente',
+      obs TEXT DEFAULT '',
+      reviewed_by VARCHAR(200),
+      reviewed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )`).catch(()=>{});
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_notifications (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER,
+      tipo VARCHAR(40) DEFAULT 'info',
+      canal VARCHAR(40) DEFAULT 'sistema',
+      titulo VARCHAR(200) NOT NULL,
+      corpo TEXT DEFAULT '',
+      lida BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )`).catch(()=>{});
     // Migrar feeds do app_state se sgua_feeds estiver vazia (primeira instalação)
     const { rows: exFeeds } = await pool.query('SELECT id FROM sgua_feeds LIMIT 1');
     if (exFeeds.length === 0) {

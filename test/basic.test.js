@@ -309,6 +309,27 @@ test('GET /api/relatorios/equipamentos endpoint definido', () => {
   assert.ok(src.includes("'/api/relatorios/equipamentos'"), 'endpoint de relatório PDF de equipamentos deve existir');
 });
 
+test('sgua_backups tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_backups'), 'tabela sgua_backups deve ser criada no startup');
+});
+
+test('sgua_reg_requests tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_reg_requests'), 'tabela sgua_reg_requests deve ser criada no startup');
+});
+
+test('sgua_notifications tabela definida no startup', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sgua_notifications'), 'tabela sgua_notifications deve ser criada no startup');
+});
+
+test('GET /api/documentos valida JWT corretamente', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('jwt.verify(req.headers.authorization.replace'),
+    'GET /api/documentos deve verificar JWT, não apenas existência do header');
+});
+
 test('FDS_DEFAULTS contém ao menos um feed ativo', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   assert.ok(src.includes('FDS_DEFAULTS'), 'FDS_DEFAULTS deve existir no server.js');

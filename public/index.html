@@ -2747,7 +2747,7 @@ function PgTransp(p){
   var sBusca=useState('');var busca=sBusca[0],setBusca=sBusca[1];
   useEffect(function(){
     Promise.all([
-      fetch('/api/documentos?publico=true').then(function(r){return r.json();}).catch(function(){return [];}),
+      fetch('/api/documentos?publico=true').then(function(r){return r.json().then(function(d){return d.rows||[];});}).catch(function(){return [];}),
       fetch('/api/stats').then(function(r){return r.json();}).catch(function(){return null;})
     ]).then(function(res){setDocs(res[0]);setStats(res[1]);setLoad(false);});
   },[]);
@@ -6162,7 +6162,7 @@ function App(){
 
         atab==="users"&&canDo("users")&&h(AdminUsers,{users:users,setUsers:setUsers,curUser:curUser,toast2:toast2,setConf:setConf,uns:uns}),
 
-        atab==="cfg"&&canDo("cfg")&&h(AdminPersonalizacao,{pers:pers,setPers:setPers,C:C,toast2:toast2,isMobile:isMobile}),
+
 
         atab==="rel"&&canDo("rel")&&h(TabEB,{key:"rel"},h(AdminRelatorios,{uns:uns,setUns:setUns,news:news,sols:sols,toast2:toast2,pers:pers})),
 
