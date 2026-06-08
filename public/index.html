@@ -1511,76 +1511,129 @@ function Lightbox(p){
 // ─── PÁGINA DA UNIDADE ────────────────────────────────────────────────────────
 function PageUnidade(p){
   var u=p.u,onBack=p.onBack,onSolicitar=p.onSolicitar;
-  var sA=useState("sobre");var aba=sA[0],setAba=sA[1];
+  var sA=useState("geral");var aba=sA[0],setAba=sA[1];
   var sLb=useState(null);var lbFoto=sLb[0],setLbFoto=sLb[1];
+  var sEq=useState(null);var equips=sEq[0],setEquips=sEq[1];
+  var sDc=useState(null);var docsU=sDc[0],setDocsU=sDc[1];
+  var sOc=useState(null);var ocorrs=sOc[0],setOcorrs=sOc[1];
+  var sLd=useState(false);var ldTab=sLd[0],setLdTab=sLd[1];
   var cor=u.tipo==="CIMA"?C.g2:C.b1;
-  var corL=u.tipo==="CIMA"?C.gx:C.bl;
   var scr=scMap[u.status]||[C.cm,C.cx];var sc=scr[0],sbg=scr[1];
-  var abas=[["sobre","Sobre"],["historia","História"],["galeria","Galeria"],["mapa","Localização"],["estrutura","Estrutura"],["ocupacao","Ocupação"]];
-
+  var abas=[["geral","Visão Geral"],["historia","História"],["galeria","Galeria"],["mapa","Localização"],["estrutura","Estrutura"],["ocupacao","Ocupação"],["equipamentos","Equipamentos"],["documentos","Documentos"],["ocorrencias","Ocorrências"]];
+  var stEq={operacional:C.g2,manutencao:"#d97706",inativo:C.cm,descarte:C.rm};
+  var stSev={baixa:C.g2,media:"#d97706",alta:"#dc2626",critica:"#7c3aed"};
+  var stOc={aberta:"#dc2626",em_andamento:"#d97706",resolvida:C.g2,encerrada:C.cm};
+  var catIco={relatorio:"📊",portaria:"📜",contrato:"📋",licitacao:"🏛",legislacao:"⚖️",plano:"🗺",mapa:"🗺",outro:"📄"};
+  var card={background:"#fff",borderRadius:14,padding:"16px 18px",boxShadow:"0 2px 8px rgba(0,0,0,.06)",border:"1px solid "+C.cl};
+  useEffect(function(){
+    if(aba==="equipamentos"&&equips===null){
+      setLdTab(true);
+      fetch("/api/equipamentos?unit_id="+u.id).then(function(r){return r.json();}).then(function(d){setEquips(d.rows||[]);}).catch(function(){setEquips([]);}).finally(function(){setLdTab(false);});
+    }
+    if(aba==="documentos"&&docsU===null){
+      setLdTab(true);
+      fetch("/api/documentos?unit_id="+u.id+"&publico=true").then(function(r){return r.json();}).then(function(d){setDocsU(d.rows||[]);}).catch(function(){setDocsU([]);}).finally(function(){setLdTab(false);});
+    }
+    if(aba==="ocorrencias"&&ocorrs===null){
+      setLdTab(true);
+      fetch("/api/ocorrencias?unit_id="+u.id).then(function(r){return r.json();}).then(function(d){setOcorrs(d.data||[]);}).catch(function(){setOcorrs([]);}).finally(function(){setLdTab(false);});
+    }
+  },[aba]);
+  function LdTab(){return h("div",{style:{textAlign:"center",padding:"40px",color:C.cm,fontSize:14}},"Carregando…");}
+  function EmTab(t){return h("div",{style:{textAlign:"center",padding:"48px 20px",color:C.cm}},h("div",{style:{fontSize:36,marginBottom:12}},"📭"),h("div",{style:{fontSize:14}},t));}
   return h(React.Fragment,null,
     lbFoto&&h(Lightbox,{src:lbFoto.url,leg:lbFoto.leg,onClose:function(){setLbFoto(null);}}),
-    h("div",{style:{background:"#fff",minHeight:"100vh"}},
-    // Hero
-    h("div",{style:{position:"relative",height:300,overflow:"hidden",background:cor}},
-      u.foto&&h("img",{src:u.foto,alt:"",style:{width:"100%",height:"100%",objectFit:"cover",opacity:.7}}),
-      h("div",{style:{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 30%,rgba(0,0,0,.75)"}}),
-      h("div",{style:{position:"absolute",bottom:0,left:0,right:0,padding:"20px 24px"}},
-        h("button",{onClick:onBack,style:{background:"rgba(255,255,255,.2)",border:"0.5px solid rgba(255,255,255,.4)",color:"#fff",padding:"5px 14px",borderRadius:8,fontSize:12,cursor:"pointer",marginBottom:12}},"← Voltar"),
-        h("div",{style:{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}},h(Pill,{t:u.tipo,c:cor,b:"rgba(255,255,255,.2)"}),h(Pill,{t:slabel(u.status),c:sc,b:sbg})),
-        h("h1",{style:{fontSize:26,fontWeight:700,color:"#fff",margin:"0 0 4px"}},u.nome),
-        h("p",{style:{fontSize:13,color:"rgba(255,255,255,.8)",margin:0}},u.municipio+" · "+u.regional)
-      ),
-      h("button",{onClick:onSolicitar,style:{position:"absolute",top:20,right:20,background:cor,border:"none",color:"#fff",padding:"9px 18px",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer"}},"Solicitar uso")
-    ),
-    // Abas
-    h("div",{style:{borderBottom:"1px solid "+C.cl,background:"#fff",position:"sticky",top:52,zIndex:10}},
-      h("div",{style:{maxWidth:960,margin:"0 auto",padding:"0 20px",display:"flex",overflowX:"auto"}},
-        abas.map(function(a){return h("button",{key:a[0],onClick:function(){setAba(a[0]);},style:{background:"none",border:"none",cursor:"pointer",fontSize:13,fontWeight:aba===a[0]?700:400,color:aba===a[0]?cor:C.cm,padding:"13px 18px",borderBottom:aba===a[0]?"2.5px solid "+cor:"2.5px solid transparent",whiteSpace:"nowrap"}},a[1]);})
-      )
-    ),
-    h("div",{style:{maxWidth:960,margin:"0 auto",padding:"28px 20px 60px"}},
-      // Métricas
-      h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:24}},
-        h(StatBox,{label:"Taxa de uso",value:u.taxaUso+"%",color:u.taxaUso>80?C.rm:C.g2}),
-        h(StatBox,{label:"Agendamentos/mês",value:u.ag,color:C.b1}),
-        h(StatBox,{label:"Quartos",value:u.quartos||"—",color:cor}),
-        h(StatBox,{label:"Salas",value:u.salas,color:cor})
-      ),
-      // ABA SOBRE
-      aba==="sobre"&&h("div",{style:{display:"grid",gridTemplateColumns:"2fr 1fr",gap:20}},
-        h("div",null,
-          h(Card,{style:{padding:"20px 22px",marginBottom:16}},h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 10px",color:cor}},"Descrição"),h("p",{style:{fontSize:14,color:C.cd,lineHeight:1.8,margin:0}},u.descricao)),
-          u.decreto&&h("div",{style:{background:C.gx,border:"1px solid "+C.gl,borderRadius:12,padding:"14px 18px",marginBottom:16,display:"flex",gap:10}},
-            h("span",{style:{fontSize:18}},"📜"),
-            h("div",null,h("div",{style:{fontSize:11,fontWeight:700,color:C.g2,marginBottom:3}},"DECRETO DE CRIAÇÃO"),h("div",{style:{fontSize:13,color:C.cd,fontWeight:500}},u.decreto))
+    h("div",{style:{background:"#f8faf7",minHeight:"100vh"}},
+      h("div",{style:{position:"relative",minHeight:260,overflow:"hidden",background:"linear-gradient(135deg,#1b5e20,"+cor+")"}},
+        u.foto&&h("img",{src:u.foto,alt:"",style:{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",opacity:.25}}),
+        h("div",{style:{position:"absolute",inset:0,background:"linear-gradient(to bottom,transparent 20%,rgba(0,0,0,.6))"}}),
+        h("div",{style:{position:"relative",padding:"20px 24px 28px"}},
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}},
+            h("button",{onClick:onBack,style:{background:"rgba(255,255,255,.15)",backdropFilter:"blur(4px)",border:"1px solid rgba(255,255,255,.3)",color:"#fff",padding:"7px 16px",borderRadius:20,fontSize:12,cursor:"pointer",fontWeight:500}},"← Voltar"),
+            h("button",{onClick:onSolicitar,style:{background:"#fff",border:"none",color:cor,padding:"7px 18px",borderRadius:20,fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 2px 8px rgba(0,0,0,.2)"}},"Solicitar uso")
           ),
-          u.extras&&u.extras.length>0&&h(Card,{style:{padding:"16px 20px"}},
-            h("h3",{style:{fontSize:13,fontWeight:700,margin:"0 0 10px",color:cor}},"Informações complementares"),
-            u.extras.map(function(e){return h("div",{key:e.id,style:{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"0.5px solid "+C.cl}},h("span",{style:{fontSize:13,color:C.cm}},e.k),h("span",{style:{fontSize:13,fontWeight:600,color:C.cd}},e.v));})
-          )
-        ),
-        h("div",null,
-          h(Card,{style:{padding:"16px 18px",marginBottom:14}},h("h3",{style:{fontSize:13,fontWeight:700,margin:"0 0 10px",color:cor}},"Órgãos presentes"),h("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},u.orgaos.map(function(o){return h(Pill,{key:o,t:o,c:C.b1,b:C.bl});}))),
-          h(Card,{style:{padding:"16px 18px"}},
-            h("h3",{style:{fontSize:13,fontWeight:700,margin:"0 0 8px",color:cor}},"Coordenadas"),
-            h("div",{style:{fontFamily:"monospace",fontSize:12,color:C.cd,lineHeight:2}},h("div",null,"Lat: "+u.coords.lat.toFixed(6)),h("div",null,"Lon: "+u.coords.lng.toFixed(6))),
-            h("a",{href:"https://www.google.com/maps?q="+u.coords.lat+","+u.coords.lng,target:"_blank",rel:"noreferrer",style:{display:"block",marginTop:8,fontSize:11,color:C.b1,fontWeight:500}},"Abrir no Google Maps ↗")
+          h("div",{style:{marginTop:56}},
+            h("div",{style:{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}},h(Pill,{t:u.tipo,c:cor,b:"rgba(255,255,255,.2)"}),h(Pill,{t:slabel(u.status),c:sc,b:sbg})),
+            h("h1",{style:{fontSize:26,fontWeight:800,color:"#fff",margin:"0 0 5px",lineHeight:1.2}},u.nome),
+            h("p",{style:{fontSize:13,color:"rgba(255,255,255,.8)",margin:0}},u.municipio+" · "+u.regional)
           )
         )
       ),
-      aba==="historia"&&h(Card,{style:{padding:"24px 28px",maxWidth:740}},h("h2",{style:{fontSize:18,fontWeight:700,margin:"0 0 16px",color:cor}},"História da unidade"),u.historia?h("p",{style:{fontSize:14,color:C.cd,lineHeight:1.9,margin:0}},u.historia):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Histórico não cadastrado.")),
-      aba==="galeria"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Galeria de fotos"),u.galeria&&u.galeria.length>0?h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}},u.galeria.map(function(f,i){return h("div",{key:i,onClick:function(){setLbFoto(f);},style:{aspectRatio:"4/3",borderRadius:10,overflow:"hidden",background:C.cl,cursor:"zoom-in"}},h("img",{src:f.url,alt:f.leg||"Foto da galeria",loading:"lazy",style:{width:"100%",height:"100%",objectFit:"cover"}}));})):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Nenhuma foto cadastrada.")),
-      aba==="mapa"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Localização georeferenciada"),h(MapView,{units:[u],height:"380px",compact:false,singleUnit:true}),h("div",{style:{marginTop:8,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:C.cx,borderRadius:8,fontSize:11,color:C.cm}},h("span",{style:{fontFamily:"monospace"}},"Lat "+u.coords.lat.toFixed(6)+", Lon "+u.coords.lng.toFixed(6)),h("a",{href:"https://www.google.com/maps?q="+u.coords.lat+","+u.coords.lng,target:"_blank",rel:"noreferrer",style:{color:C.b1,fontWeight:500}},"Abrir no Maps ↗"))),
-      
-      aba==="ocupacao"&&h(PainelOcupacao,{u:u,uns:p.uns||[u],setUns:p.setUns||function(){},curUser:p.curUser,toast2:p.toast2||function(){}}),
-      aba==="estrutura"&&h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12}},
-        [{ic:"🛏",l:"Quartos",v:u.quartos||"Não possui"},{ic:"🚪",l:"Salas de reunião",v:u.salas},{ic:"🍽",l:"Cozinha",v:u.cozinha?"Sim":"Não"},{ic:"🎤",l:"Auditório",v:u.auditorio?"Sim":"Não"}].map(function(s,i){
-          return h(Card,{key:i,style:{padding:"16px 18px"}},h("div",{style:{fontSize:22,marginBottom:8}},s.ic),h("div",{style:{fontSize:11,color:C.cm,marginBottom:4}},s.l),h("div",{style:{fontSize:18,fontWeight:700,color:cor}},s.v));
-        })
+      h("div",{style:{borderBottom:"2px solid "+C.cl,background:"#fff",position:"sticky",top:52,zIndex:10,boxShadow:"0 1px 4px rgba(0,0,0,.06)"}},
+        h("div",{style:{maxWidth:1000,margin:"0 auto",padding:"0 16px",display:"flex",overflowX:"auto"}},
+          abas.map(function(a){return h("button",{key:a[0],onClick:function(){setAba(a[0]);},style:{background:"none",border:"none",cursor:"pointer",fontSize:13,fontWeight:aba===a[0]?700:400,color:aba===a[0]?cor:C.cm,padding:"13px 16px",borderBottom:aba===a[0]?"2.5px solid "+cor:"2.5px solid transparent",whiteSpace:"nowrap"}},a[1]);})
+        )
+      ),
+      h("div",{style:{maxWidth:1000,margin:"0 auto",padding:"24px 16px 60px"}},
+        aba==="geral"&&h("div",null,
+          h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:20}},
+            [{ic:"📊",l:"Taxa de uso",v:u.taxaUso+"%",c:u.taxaUso>80?C.rm:C.g2},{ic:"📅",l:"Agend./mês",v:u.ag,c:C.b1},{ic:"🛏",l:"Quartos",v:u.quartos||"—",c:cor},{ic:"🚪",l:"Salas",v:u.salas,c:cor}].map(function(s,i){
+              return h("div",{key:i,style:Object.assign({},card,{textAlign:"center",padding:"16px 12px"})},h("div",{style:{fontSize:24,marginBottom:6}},s.ic),h("div",{style:{fontSize:20,fontWeight:800,color:s.c,marginBottom:2}},s.v),h("div",{style:{fontSize:11,color:C.cm}},s.l));
+            })
+          ),
+          h("div",{style:{display:"grid",gridTemplateColumns:"2fr 1fr",gap:14}},
+            h("div",null,
+              h("div",{style:Object.assign({},card,{padding:"20px 22px",marginBottom:14})},h("h3",{style:{fontSize:14,fontWeight:700,margin:"0 0 10px",color:cor}},"Sobre a unidade"),h("p",{style:{fontSize:14,color:C.cd,lineHeight:1.8,margin:0}},u.descricao)),
+              u.decreto&&h("div",{style:{background:C.gx,border:"1px solid "+C.gl,borderRadius:12,padding:"14px 18px",display:"flex",gap:10,alignItems:"flex-start"}},h("span",{style:{fontSize:18}},"📜"),h("div",null,h("div",{style:{fontSize:11,fontWeight:700,color:C.g2,marginBottom:3}},"DECRETO DE CRIAÇÃO"),h("div",{style:{fontSize:13,color:C.cd,fontWeight:500}},u.decreto)))
+            ),
+            h("div",null,
+              h("div",{style:Object.assign({},card,{marginBottom:12})},h("h3",{style:{fontSize:13,fontWeight:700,margin:"0 0 10px",color:cor}},"Órgãos presentes"),h("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},u.orgaos.map(function(o){return h(Pill,{key:o,t:o,c:C.b1,b:C.bl});}))),
+              h("div",{style:card},h("h3",{style:{fontSize:13,fontWeight:700,margin:"0 0 8px",color:cor}},"Localização"),h("div",{style:{fontFamily:"monospace",fontSize:12,color:C.cd,lineHeight:1.9}},h("div",null,"Lat: "+u.coords.lat.toFixed(6)),h("div",null,"Lon: "+u.coords.lng.toFixed(6))),h("a",{href:"https://www.google.com/maps?q="+u.coords.lat+","+u.coords.lng,target:"_blank",rel:"noreferrer",style:{display:"block",marginTop:8,fontSize:11,color:C.b1,fontWeight:600}},"Abrir no Google Maps ↗"))
+            )
+          ),
+          u.extras&&u.extras.length>0&&h("div",{style:Object.assign({},card,{padding:"16px 20px",marginTop:14})},h("h3",{style:{fontSize:13,fontWeight:700,margin:"0 0 10px",color:cor}},"Informações complementares"),u.extras.map(function(e){return h("div",{key:e.id,style:{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"0.5px solid "+C.cl}},h("span",{style:{fontSize:13,color:C.cm}},e.k),h("span",{style:{fontSize:13,fontWeight:600,color:C.cd}},e.v));}))
+        ),
+        aba==="historia"&&h("div",{style:Object.assign({},card,{padding:"28px",maxWidth:740})},h("h2",{style:{fontSize:18,fontWeight:700,margin:"0 0 16px",color:cor}},"História da unidade"),u.historia?h("p",{style:{fontSize:14,color:C.cd,lineHeight:1.9,margin:0}},u.historia):h("p",{style:{fontSize:14,color:C.cm,fontStyle:"italic"}},"Histórico não cadastrado.")),
+        aba==="galeria"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Galeria de fotos"),u.galeria&&u.galeria.length>0?h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}},u.galeria.map(function(f,i){return h("div",{key:i,onClick:function(){setLbFoto(f);},style:{aspectRatio:"4/3",borderRadius:12,overflow:"hidden",background:C.cl,cursor:"zoom-in",boxShadow:"0 2px 8px rgba(0,0,0,.1)"}},h("img",{src:f.url,alt:f.leg||"",loading:"lazy",style:{width:"100%",height:"100%",objectFit:"cover"}}));})):h("div",{style:{textAlign:"center",padding:"48px 20px",color:C.cm}},h("div",{style:{fontSize:36,marginBottom:12}},"🖼️"),h("div",{style:{fontSize:14}},"Nenhuma foto cadastrada."))),
+        aba==="mapa"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Localização georeferenciada"),h(MapView,{units:[u],height:"420px",compact:false,singleUnit:true}),h("div",{style:{marginTop:10,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",background:"#fff",borderRadius:10,border:"1px solid "+C.cl,fontSize:11,color:C.cm}},h("span",{style:{fontFamily:"monospace"}},"Lat "+u.coords.lat.toFixed(6)+", Lon "+u.coords.lng.toFixed(6)),h("a",{href:"https://www.google.com/maps?q="+u.coords.lat+","+u.coords.lng,target:"_blank",rel:"noreferrer",style:{color:C.b1,fontWeight:600}},"Abrir no Google Maps ↗"))),
+        aba==="estrutura"&&h("div",null,h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Estrutura física"),h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14}},[{ic:"🛏",l:"Quartos",v:u.quartos||"Não possui"},{ic:"🚪",l:"Salas de reunião",v:u.salas},{ic:"🍽",l:"Cozinha",v:u.cozinha?"Sim":"Não"},{ic:"🎤",l:"Auditório",v:u.auditorio?"Sim":"Não"}].map(function(s,i){return h("div",{key:i,style:Object.assign({},card,{textAlign:"center",padding:"22px 16px"})},h("div",{style:{fontSize:30,marginBottom:10}},s.ic),h("div",{style:{fontSize:11,color:C.cm,marginBottom:6}},s.l),h("div",{style:{fontSize:18,fontWeight:700,color:cor}},s.v));}))),
+        aba==="ocupacao"&&h(PainelOcupacao,{u:u,uns:p.uns||[u],setUns:p.setUns||function(){},curUser:p.curUser,toast2:p.toast2||function(){}}),
+        aba==="equipamentos"&&h("div",null,
+          h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Equipamentos"),
+          ldTab?LdTab():equips===null?null:equips.length===0?EmTab("Nenhum equipamento cadastrado para esta unidade."):
+          h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}},
+            equips.map(function(e){var ec=stEq[e.status]||C.cm;
+              return h("div",{key:e.id,style:card},
+                h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}},h("span",{style:{fontSize:12,color:C.cm,fontWeight:500}},e.tipo),h("span",{style:{background:ec+"20",color:ec,padding:"2px 10px",borderRadius:20,fontSize:11,fontWeight:700}},e.status)),
+                h("div",{style:{fontSize:14,fontWeight:700,color:C.cd,marginBottom:3}},e.nome),
+                e.marca&&h("div",{style:{fontSize:12,color:C.cm}},e.marca+(e.modelo?" · "+e.modelo:"")),
+                e.localizacao&&h("div",{style:{fontSize:11,color:C.cm,marginTop:4}},e.localizacao)
+              );
+            })
+          )
+        ),
+        aba==="documentos"&&h("div",null,
+          h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Documentos"),
+          ldTab?LdTab():docsU===null?null:docsU.length===0?EmTab("Nenhum documento público para esta unidade."):
+          h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+            docsU.map(function(d){
+              return h("div",{key:d.id,style:Object.assign({},card,{display:"flex",alignItems:"center",gap:14})},
+                h("div",{style:{fontSize:28,flexShrink:0}},catIco[d.categoria]||"📄"),
+                h("div",{style:{flex:1}},h("div",{style:{fontSize:14,fontWeight:600,color:C.cd,marginBottom:2}},d.titulo),h("div",{style:{fontSize:11,color:C.cm}},d.categoria+(d.ano?" · "+d.ano:"")),d.descricao&&h("div",{style:{fontSize:12,color:C.cm,marginTop:2}},d.descricao)),
+                d.arquivo_url&&h("a",{href:d.arquivo_url,target:"_blank",rel:"noreferrer",style:{background:cor,color:"#fff",padding:"7px 14px",borderRadius:8,fontSize:12,fontWeight:600,textDecoration:"none",flexShrink:0,whiteSpace:"nowrap"}},"⬇ Baixar")
+              );
+            })
+          )
+        ),
+        aba==="ocorrencias"&&h("div",null,
+          h("h2",{style:{fontSize:16,fontWeight:700,margin:"0 0 16px",color:cor}},"Ocorrências"),
+          ldTab?LdTab():ocorrs===null?null:ocorrs.length===0?EmTab("Nenhuma ocorrência registrada para esta unidade."):
+          h("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+            ocorrs.map(function(o){var sv=stSev[o.severidade]||C.cm;var so=stOc[o.status]||C.cm;
+              return h("div",{key:o.id,style:Object.assign({},card,{borderLeft:"4px solid "+sv})},
+                h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,flexWrap:"wrap",gap:6}},
+                  h("div",{style:{display:"flex",gap:6}},h("span",{style:{background:sv+"20",color:sv,padding:"2px 10px",borderRadius:20,fontSize:11,fontWeight:700}},o.severidade),h("span",{style:{background:so+"20",color:so,padding:"2px 10px",borderRadius:20,fontSize:11,fontWeight:600}},o.status)),
+                  h("span",{style:{fontSize:11,color:C.cm}},o.data_ocorrencia?o.data_ocorrencia.slice(0,10):"")
+                ),
+                h("div",{style:{fontSize:14,fontWeight:600,color:C.cd,marginBottom:3}},o.titulo),
+                o.descricao&&h("div",{style:{fontSize:12,color:C.cm,lineHeight:1.5}},o.descricao)
+              );
+            })
+          )
+        )
       )
     )
-  ));
+  );
 }
 
 
@@ -1623,9 +1676,9 @@ function SecNoticias(p){
             onMouseEnter:function(e){e.currentTarget.style.borderColor=cc[0];},
             onMouseLeave:function(e){e.currentTarget.style.borderColor=cc[0]+"40";}},
             h("div",{style:{background:"linear-gradient(135deg,"+cc[0]+"e0,"+cc[0]+")",padding:"18px 20px 14px"}},
-              h(Pill,{t:n.categoria,c:"#fff",b:"rgba(255,255,255,.2)",s:10}),
+              h("div",{style:{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}},h(Pill,{t:n.categoria,c:"#fff",b:"rgba(255,255,255,.2)",s:10}),n.is_rss&&h("span",{style:{background:"rgba(255,255,255,.25)",color:"#fff",padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,letterSpacing:.4}},"RSS")),
               h("h3",{style:{fontSize:15,fontWeight:700,color:"#fff",margin:"8px 0 6px",lineHeight:1.4}},n.titulo),
-              h("div",{style:{fontSize:11,color:"rgba(255,255,255,.65)"}},formatData(n.data))
+              h("div",{style:{fontSize:11,color:"rgba(255,255,255,.65)"}},formatData(n.data)+(n.fonte?" · "+n.fonte:""))
             ),
             h("div",{style:{padding:"12px 18px"}},h("p",{style:{fontSize:13,color:C.cd,lineHeight:1.6,margin:"0 0 8px"}},n.resumo),h("span",{style:{fontSize:12,color:cc[0],fontWeight:600}},"Ler mais →"))
           );
@@ -1641,10 +1694,10 @@ function SecNoticias(p){
             onMouseLeave:function(e){e.currentTarget.style.borderColor=C.cl;}},
             h("div",{style:{width:4,flexShrink:0,borderRadius:2,background:cc[0],alignSelf:"stretch"}}),
             h("div",{style:{flex:1}},
-              h("div",{style:{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap"}},h(Pill,{t:n.categoria,c:cc[0],b:cc[1],s:10}),n.unidade&&h(Pill,{t:n.unidade,c:C.cm,b:C.cl,s:10})),
+              h("div",{style:{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap",alignItems:"center"}},h(Pill,{t:n.categoria,c:cc[0],b:cc[1],s:10}),n.unidade&&h(Pill,{t:n.unidade,c:C.cm,b:C.cl,s:10}),n.is_rss&&h("span",{style:{background:C.gx,color:C.g2,padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,border:"1px solid "+C.gl}},"RSS")),
               h("h3",{style:{fontSize:14,fontWeight:600,color:C.cd,margin:"0 0 4px",lineHeight:1.4}},n.titulo),
               h("p",{style:{fontSize:12,color:C.cm,margin:"0 0 5px",lineHeight:1.5}},n.resumo),
-              h("span",{style:{fontSize:11,color:C.cm}},formatData(n.data)+(n.autor?" · "+n.autor:""))
+              h("span",{style:{fontSize:11,color:C.cm}},formatData(n.data)+(n.autor?" · "+n.autor:"")+(n.fonte?" · "+n.fonte:""))
             ),
             h("span",{style:{fontSize:12,color:cc[0],fontWeight:600,alignSelf:"center"}},"→")
           );

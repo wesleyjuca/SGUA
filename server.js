@@ -2950,9 +2950,13 @@ const server = app.listen(PORT, async () => {
     const FDS_DEFAULTS = [
       {nome:'Agência Brasil — Meio Ambiente',url:'https://agenciabrasil.ebc.com.br/rss/meio-ambiente/feed.rss',categoria:'Monitoramento',ativo:true},
       {nome:'Agência Brasil — Amazônia',url:'https://agenciabrasil.ebc.com.br/rss/amazonia/feed.rss',categoria:'Geral',ativo:true},
+      {nome:'Agência Brasil — Sustentabilidade',url:'https://agenciabrasil.ebc.com.br/rss/sustentabilidade/feed.rss',categoria:'Geral',ativo:true},
       {nome:'Ministério do Meio Ambiente',url:'https://www.gov.br/mma/pt-br/assuntos/noticias/RSS',categoria:'Legislação',ativo:true},
       {nome:'INPE — Notícias',url:'https://www.inpe.br/rss/noticias.php',categoria:'Monitoramento',ativo:true},
+      {nome:'ICMBio — Notícias',url:'https://www.gov.br/icmbio/pt-br/assuntos/noticias/RSS',categoria:'Conservação',ativo:true},
+      {nome:'IMAZON — Alertas Amazônia',url:'https://imazon.org.br/feed/',categoria:'Monitoramento',ativo:true},
       {nome:'Portal SEMA/AC',url:'https://sema.ac.gov.br/feed',categoria:'Gestão',ativo:true},
+      {nome:'INPA — Pesquisas Amazônia',url:'https://www.inpa.gov.br/rss/noticias.php',categoria:'Pesquisa',ativo:false},
       {nome:'Agência Brasil — Geral (exemplo — pode editar)',url:'https://agenciabrasil.ebc.com.br/rss/geral/feed.rss',categoria:'Geral',ativo:false}
     ];
     for (const fd of FDS_DEFAULTS) {

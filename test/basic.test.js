@@ -341,3 +341,24 @@ test('PgDenuncias componente definido no frontend', () => {
   const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   assert.ok(src.includes('function PgDenuncias('), 'componente público PgDenuncias deve existir');
 });
+
+test('FDS_DEFAULTS contém feed ICMBio', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('ICMBio'), 'FDS_DEFAULTS deve conter feed do ICMBio');
+});
+
+test('FDS_DEFAULTS contém feed IMAZON', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('IMAZON') && src.includes('imazon.org.br'), 'FDS_DEFAULTS deve conter feed do IMAZON');
+});
+
+test('FDS_DEFAULTS contém feed Agência Brasil Sustentabilidade', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('sustentabilidade/feed.rss'), 'FDS_DEFAULTS deve conter feed de sustentabilidade da Agência Brasil');
+});
+
+test('PageUnidade redesenhado com abas Equipamentos Documentos Ocorrencias', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('"equipamentos","Equipamentos"') && src.includes('"documentos","Documentos"') && src.includes('"ocorrencias","Ocorrências"'),
+    'PageUnidade deve ter abas Equipamentos, Documentos e Ocorrências');
+});
