@@ -260,10 +260,10 @@ test('cron RSS respeita frequencia semanal', () => {
     'cron RSS deve verificar dia da semana para feeds semanais');
 });
 
-test('FDS_DEFAULTS inclui INPE e MMA', () => {
+test('servidor não auto-cadastra feeds padrão no startup', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes('inpe.br') && src.includes('gov.br/mma'),
-    'feeds padrão devem incluir INPE e Ministério do Meio Ambiente');
+  assert.ok(!src.includes('FDS_DEFAULTS'),
+    'sistema deve iniciar sem feeds pré-cadastrados — feeds gerenciados exclusivamente pelo admin');
 });
 
 test('GET /api/feeds usa window function para logs (sem N+1)', () => {
@@ -330,11 +330,10 @@ test('GET /api/documentos valida JWT corretamente', () => {
     'GET /api/documentos deve verificar JWT, não apenas existência do header');
 });
 
-test('FDS_DEFAULTS contém ao menos um feed ativo', () => {
+test('inserirArtigo salva data_pub e fonte nas notícias', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes('FDS_DEFAULTS'), 'FDS_DEFAULTS deve existir no server.js');
-  assert.ok(src.includes('agenciabrasil.ebc.com.br') && src.includes('ativo:true'),
-    'FDS_DEFAULTS deve conter ao menos um feed com ativo:true (Agência Brasil)');
+  assert.ok(src.includes('data_pub,fonte') && src.includes('item.date'),
+    'inserirArtigo deve salvar data de publicação e nome da fonte no banco');
 });
 
 test('PgDenuncias componente definido no frontend', () => {
@@ -342,19 +341,21 @@ test('PgDenuncias componente definido no frontend', () => {
   assert.ok(src.includes('function PgDenuncias('), 'componente público PgDenuncias deve existir');
 });
 
-test('FDS_DEFAULTS contém feed ICMBio', () => {
+test('undici é carregado opcionalmente para suporte a certs gov.br', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes('ICMBio'), 'FDS_DEFAULTS deve conter feed do ICMBio');
+  assert.ok(src.includes("require('undici')") && src.includes('rejectUnauthorized: false'),
+    'undici deve ser carregado opcionalmente para permitir feeds gov.br com certificados auto-assinados');
 });
 
-test('FDS_DEFAULTS contém feed IMAZON', () => {
+test('User-Agent de feeds usa formato compatível com servidores externos', () => {
   const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes('IMAZON') && src.includes('imazon.org.br'), 'FDS_DEFAULTS deve conter feed do IMAZON');
+  assert.ok(src.includes('Mozilla/5.0') && src.includes('SGUA-RSS-Bot'),
+    'User-Agent do feed deve usar formato Mozilla para evitar bloqueios HTTP 403');
 });
 
-test('FDS_DEFAULTS contém feed Agência Brasil Sustentabilidade', () => {
-  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
-  assert.ok(src.includes('sustentabilidade/feed.rss'), 'FDS_DEFAULTS deve conter feed de sustentabilidade da Agência Brasil');
+test('frontend FDS começa vazio (sem feeds pré-cadastrados)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('var FDS=[];'), 'array FDS do frontend deve ser vazio — feeds vêm do servidor');
 });
 
 test('PageUnidade redesenhado com abas Equipamentos Documentos Ocorrencias', () => {

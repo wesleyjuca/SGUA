@@ -14,8 +14,8 @@ let jwt; try { jwt = require('jsonwebtoken'); } catch(e) { jwt = null; }
 let createSupabaseClient; try { createSupabaseClient = require('@supabase/supabase-js').createClient; } catch(e) { createSupabaseClient = null; }
 let PDFDocument; try { PDFDocument = require('pdfkit'); } catch(e) { PDFDocument = null; }
 // Agent com rejectUnauthorized:false apenas para fetch de feeds externos (gov BR com certs auto-assinados)
-const { Agent: UndiciAgent } = require('undici');
-const feedAgent = new UndiciAgent({ connect: { rejectUnauthorized: false } });
+let feedAgent;
+try { const { Agent: UndiciAgent } = require('undici'); feedAgent = new UndiciAgent({ connect: { rejectUnauthorized: false } }); } catch(_) { feedAgent = undefined; }
 const pino = require('pino');
 const pinoHttp = require('pino-http');
 const { Pool } = require('pg');
@@ -247,7 +247,7 @@ async function fetchFeedItems(feed) {
   const timeout = setTimeout(() => ctrl.abort(), 5000);
   try {
     const response = await fetch(feed.url, {
-      headers: { 'User-Agent': 'SGUA-RSS-Sync/1.0 (+https://sema.ac.gov.br)' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SGUA-RSS-Bot/2.0; +https://sema.ac.gov.br)' },
       signal: ctrl.signal,
       dispatcher: feedAgent
     });
@@ -319,7 +319,7 @@ async function discoverRssUrl(url) {
   try {
     const ctrl = new AbortController();
     const tmr = setTimeout(() => ctrl.abort(), 3000);
-    const resp = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'SGUA-RSS-Discover/1.0' }, dispatcher: feedAgent });
+    const resp = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SGUA-RSS-Bot/2.0; +https://sema.ac.gov.br)' }, dispatcher: feedAgent });
     clearTimeout(tmr);
     const html = await resp.text();
     const linkRx = /<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/gi;
@@ -568,8 +568,8 @@ async function inserirArtigo(item, feed) {
     }
 
     const { rowCount } = await client.query(
-      'INSERT INTO news (title,content,source,link,category,is_rss,resumo) VALUES ($1,$2,$3,$4,$5,true,$6) ON CONFLICT (title,source) DO NOTHING',
-      [title, content, item.source || feed.nome, item.link || null, item.category || 'Geral', resumo]
+      'INSERT INTO news (title,content,source,link,category,is_rss,resumo,data_pub,fonte) VALUES ($1,$2,$3,$4,$5,true,$6,$7,$8) ON CONFLICT (title,source) DO NOTHING',
+      [title, content, item.source || feed.nome, item.link || null, item.category || 'Geral', resumo, item.date || null, feed.nome]
     );
     if (rowCount > 0) {
       await client.query('UPDATE sgua_feeds SET noticias_hoje=noticias_hoje+1 WHERE id=$1', [feed.id]);
@@ -2946,26 +2946,7 @@ const server = app.listen(PORT, async () => {
         logger.info('[DB] Feeds migrados do app_state para sgua_feeds');
       }
     }
-    // Garantir que feeds padrão ambientais existam (ON CONFLICT DO NOTHING preserva configurações do usuário)
-    const FDS_DEFAULTS = [
-      {nome:'Agência Brasil — Meio Ambiente',url:'https://agenciabrasil.ebc.com.br/rss/meio-ambiente/feed.rss',categoria:'Monitoramento',ativo:true},
-      {nome:'Agência Brasil — Amazônia',url:'https://agenciabrasil.ebc.com.br/rss/amazonia/feed.rss',categoria:'Geral',ativo:true},
-      {nome:'Agência Brasil — Sustentabilidade',url:'https://agenciabrasil.ebc.com.br/rss/sustentabilidade/feed.rss',categoria:'Geral',ativo:true},
-      {nome:'Ministério do Meio Ambiente',url:'https://www.gov.br/mma/pt-br/assuntos/noticias/RSS',categoria:'Legislação',ativo:true},
-      {nome:'INPE — Notícias',url:'https://www.inpe.br/rss/noticias.php',categoria:'Monitoramento',ativo:true},
-      {nome:'ICMBio — Notícias',url:'https://www.gov.br/icmbio/pt-br/assuntos/noticias/RSS',categoria:'Conservação',ativo:true},
-      {nome:'IMAZON — Alertas Amazônia',url:'https://imazon.org.br/feed/',categoria:'Monitoramento',ativo:true},
-      {nome:'Portal SEMA/AC',url:'https://sema.ac.gov.br/feed',categoria:'Gestão',ativo:true},
-      {nome:'INPA — Pesquisas Amazônia',url:'https://www.inpa.gov.br/rss/noticias.php',categoria:'Pesquisa',ativo:false},
-      {nome:'Agência Brasil — Geral (exemplo — pode editar)',url:'https://agenciabrasil.ebc.com.br/rss/geral/feed.rss',categoria:'Geral',ativo:false}
-    ];
-    for (const fd of FDS_DEFAULTS) {
-      await pool.query(
-        'INSERT INTO sgua_feeds (nome,url,categoria,ativo,status) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (url) DO NOTHING',
-        [fd.nome, fd.url, fd.categoria, fd.ativo, 'aguardando']
-      ).catch(()=>{});
-    }
-    logger.info('[DB] Feeds padrão verificados/inseridos');
+    // Sistema inicia sem feeds pré-cadastrados — feeds são gerenciados exclusivamente pelo administrador
   } catch(e) { logger.error('[DB] startup init failed:', e.message); }
 });
 
