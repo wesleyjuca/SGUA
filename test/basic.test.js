@@ -362,3 +362,21 @@ test('PageUnidade redesenhado com abas Equipamentos Documentos Ocorrencias', () 
   assert.ok(src.includes('"equipamentos","Equipamentos"') && src.includes('"documentos","Documentos"') && src.includes('"ocorrencias","Ocorrências"'),
     'PageUnidade deve ter abas Equipamentos, Documentos e Ocorrências');
 });
+
+test('PgIndicadores integra /api/stats/ocupacao-historico', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('/api/stats/ocupacao-historico'),
+    'PgIndicadores deve buscar série histórica de ocupação');
+});
+
+test('PgIndicadores tem 3 abas consolidadas', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes("'resumo'")&&src.includes("'graficos'")&&src.includes("'relatorios'")&&!src.includes("'solicitacoes'")&&!src.includes("'visao'"),
+    'PgIndicadores deve ter exatamente 3 abas: resumo, graficos, relatorios');
+});
+
+test('doExport aplica período no título do relatório PDF', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('Período:')&&src.includes('dtStart')&&src.includes('dtEnd'),
+    'doExport deve incluir período (dtStart/dtEnd) no título do PDF quando informado');
+});
