@@ -1384,19 +1384,26 @@ app.post('/api/feeds', requireAuth, asyncRoute(async (req, res) => {
     return res.status(400).json({ ok: false, error: 'Nome e URL válida são obrigatórios.' });
   const existing = await queryOne('SELECT id FROM sgua_feeds WHERE url=$1',[url]);
   if (existing) return res.status(409).json({ ok: false, error: 'Já existe um feed com esta URL.' });
-  // Validar usando fetchSmartItems (tenta RSS, autodiscover e HTML scraping)
-  const feedObj = { url, nome, categoria, ativo: true };
-  const validacao = await fetchSmartItems(feedObj);
-  const statusInicial = validacao.ok ? 'aguardando' : (validacao.error==='timeout' ? 'sem_resposta' : 'invalido');
-  const atvFinal = body.ativo !== false; // Sempre respeita escolha do usuário
-  const metodoInicial = validacao.metodo || 'rss';
+  // Salvar imediatamente com status='aguardando' — validação ocorre em background
+  const atvFinal = body.ativo !== false;
   const [feed] = await query(
     'INSERT INTO sgua_feeds (nome,url,categoria,ativo,status,prioridade,frequencia,ultimo_erro,palavras_chave,metodo_detec,quantidade_diaria,usar_ia,prompt_ia) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *',
-    [nome, url, categoria, atvFinal, statusInicial, prioridade, frequencia, validacao.ok?'':String(validacao.error||'').slice(0,500), palavras_chave, metodoInicial, quantidade_diaria, usar_ia, prompt_ia]
+    [nome, url, categoria, atvFinal, 'aguardando', prioridade, frequencia, '', palavras_chave, 'rss', quantidade_diaria, usar_ia, prompt_ia]
   );
-  await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
-    [feed.id,'validacao',validacao.ok, validacao.ok?`${validacao.items.length} itens encontrados via ${metodoInicial}`:String(validacao.error||'').slice(0,500)]);
-  res.status(201).json({ ok:true, feed, validacao:{ok:validacao.ok, count:validacao.ok?validacao.items.length:0, metodo:metodoInicial, error:validacao.ok?null:validacao.error} });
+  // Responder ao frontend imediatamente — sem esperar validação externa
+  res.status(201).json({ ok: true, feed, validacao: null });
+  // Validar em background (fire-and-forget) — atualiza status após conclusão
+  setImmediate(async function() {
+    try {
+      const feedObj = { url, nome, categoria, ativo: true };
+      const v = await fetchSmartItems(feedObj);
+      const st = v.ok ? 'aguardando' : (v.error === 'timeout' ? 'sem_resposta' : 'invalido');
+      await query('UPDATE sgua_feeds SET status=$1,ultimo_erro=$2,metodo_detec=$3,updated_at=now() WHERE id=$4',
+        [st, v.ok ? '' : String(v.error || '').slice(0, 500), v.metodo || 'rss', feed.id]);
+      await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
+        [feed.id, 'validacao', v.ok, v.ok ? `${v.items.length} itens encontrados via ${v.metodo}` : String(v.error || '').slice(0, 500)]);
+    } catch (_) {}
+  });
 }));
 
 app.put('/api/feeds/:id', requireAuth, asyncRoute(async (req, res) => {
@@ -1407,19 +1414,12 @@ app.put('/api/feeds/:id', requireAuth, asyncRoute(async (req, res) => {
   const body = req.body || {};
   const urlMudou = body.url && body.url.trim() !== existing.url;
   if (urlMudou && !isSafeUrl(body.url)) return res.status(400).json({ ok:false, error:'URL inválida.' });
-  let validacao = { ok: true, items: [] };
-  let newStatus = existing.status;
-  let atvFinal = body.ativo !== undefined ? body.ativo : existing.ativo;
-  if (urlMudou) {
-    validacao = await fetchSmartItems({ url: body.url.trim(), nome: body.nome||existing.nome, categoria: body.categoria||existing.categoria, ativo: true });
-    newStatus = !validacao.ok ? (validacao.error==='timeout'?'sem_resposta':'invalido') : 'aguardando';
-    atvFinal = body.ativo !== undefined ? body.ativo : existing.ativo;
-  }
+  const atvFinal = body.ativo !== undefined ? body.ativo : existing.ativo;
   const fields = ['updated_at=now()'];
   const vals = [];
   const addField = (col,val) => { vals.push(val); fields.push(`${col}=$${vals.length}`); };
   if (body.nome !== undefined) addField('nome', String(body.nome).slice(0,200));
-  if (body.url !== undefined) { addField('url', body.url.trim()); addField('status', newStatus); addField('ultimo_erro', validacao.ok?'':String(validacao.error||'').slice(0,500)); addField('metodo_detec', validacao.metodo||existing.metodo_detec||'rss'); }
+  if (body.url !== undefined) { addField('url', body.url.trim()); addField('status', 'aguardando'); addField('ultimo_erro', ''); addField('metodo_detec', existing.metodo_detec||'rss'); }
   if (body.categoria !== undefined) addField('categoria', String(body.categoria).slice(0,100));
   if (body.ativo !== undefined) addField('ativo', atvFinal);
   if (body.prioridade !== undefined) addField('prioridade', parseInt(body.prioridade)||0);
@@ -1430,9 +1430,23 @@ app.put('/api/feeds/:id', requireAuth, asyncRoute(async (req, res) => {
   if (body.prompt_ia !== undefined) addField('prompt_ia', sanitizeText(String(body.prompt_ia||''),500));
   vals.push(id);
   const [feed] = await query(`UPDATE sgua_feeds SET ${fields.join(',')} WHERE id=$${vals.length} RETURNING *`, vals);
-  if (urlMudou) await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
-    [id,'validacao',validacao.ok, validacao.ok?`URL atualizada — ${validacao.items.length} itens`:String(validacao.error||'').slice(0,500)]);
-  res.json({ ok:true, feed, validacao: urlMudou?{ok:validacao.ok,count:validacao.ok?validacao.items.length:0,error:validacao.ok?null:validacao.error}:null });
+  // Responder imediatamente; se URL mudou, validar em background
+  res.json({ ok: true, feed, validacao: null });
+  if (urlMudou) {
+    const novaUrl = body.url.trim();
+    const novoNome = body.nome || existing.nome;
+    const novaCat = body.categoria || existing.categoria;
+    setImmediate(async function() {
+      try {
+        const v = await fetchSmartItems({ url: novaUrl, nome: novoNome, categoria: novaCat, ativo: true });
+        const st = v.ok ? 'aguardando' : (v.error === 'timeout' ? 'sem_resposta' : 'invalido');
+        await query('UPDATE sgua_feeds SET status=$1,ultimo_erro=$2,metodo_detec=$3,updated_at=now() WHERE id=$4',
+          [st, v.ok ? '' : String(v.error || '').slice(0, 500), v.metodo || 'rss', id]);
+        await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
+          [id, 'validacao', v.ok, v.ok ? `URL atualizada — ${v.items.length} itens via ${v.metodo}` : String(v.error || '').slice(0, 500)]);
+      } catch (_) {}
+    });
+  }
 }));
 
 app.delete('/api/feeds/:id', requireAuth, asyncRoute(async (req, res) => {
@@ -1492,9 +1506,15 @@ app.post('/api/feeds/scrape', requireAuth, asyncRoute(async (req, res) => {
   if (!url || typeof url !== 'string' || !isSafeUrl(url))
     return res.status(400).json({ ok: false, error: 'URL inválida.' });
   const feed = { url: url.trim(), nome: nome || 'Teste', categoria: categoria || 'Geral', ativo: true };
+  // Timeout explícito de 12s para não ultrapassar o limite do proxy (30s)
+  const timeoutP = new Promise(function(resolve) {
+    setTimeout(function() {
+      resolve({ ok: false, error: 'Tempo limite excedido. O servidor do feed pode estar lento ou inacessível.', metodo: 'timeout', items: [] });
+    }, 12000);
+  });
   let result;
   try {
-    result = await fetchSmartItems(feed);
+    result = await Promise.race([fetchSmartItems(feed), timeoutP]);
   } catch (e) {
     return res.json({ ok: false, error: e.message || 'Erro ao buscar feed.', metodo: 'erro', items: [] });
   }

@@ -381,3 +381,16 @@ test('doExport aplica período no título do relatório PDF', () => {
   assert.ok(src.includes('Período:')&&src.includes('dtStart')&&src.includes('dtEnd'),
     'doExport deve incluir período (dtStart/dtEnd) no título do PDF quando informado');
 });
+
+test('POST /api/feeds responde imediatamente sem aguardar validação', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  // Deve usar setImmediate para validação async e não ter await fetchSmartItems antes do res.json
+  assert.ok(src.includes('setImmediate') && src.includes('validacao: null'),
+    'POST /api/feeds deve salvar imediatamente e validar em background via setImmediate');
+});
+
+test('POST /api/feeds/scrape respeita timeout de 12s', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('Promise.race') && src.includes('12000'),
+    'POST /api/feeds/scrape deve usar Promise.race com timeout de 12s');
+});

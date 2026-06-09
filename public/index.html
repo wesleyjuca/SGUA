@@ -1749,7 +1749,7 @@ function FmFd(p){
     apiFetch('/api/feeds/autodiscover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:f.url})})
       .then(function(r){return r.json();})
       .then(function(d){setDiscoRes(d);setDiscovering(false);})
-      .catch(function(){setDiscoRes({ok:false,encontrados:[]});setDiscovering(false);});
+      .catch(function(){setDiscoRes({ok:false,error:'servidor',encontrados:[]});setDiscovering(false);});
   }
   function save(){
     if(!f.nome.trim()){setErrFd('Nome obrigatório.');return;}
@@ -1781,7 +1781,9 @@ function FmFd(p){
               discoRes.encontrados.map(function(e,i){return h('button',{key:i,type:'button',onClick:function(){upd('url',e.url);setDiscoRes(null);setVerif(null);},style:{textAlign:'left',padding:'5px 8px',borderRadius:6,border:'1px solid #DEE2D8',background:'#F8F9FA',cursor:'pointer',fontSize:11}},
                 '🔗 '+e.url.replace(/^https?:\/\//,'').slice(0,60)+' ('+e.count+' itens)');})
             )
-          :h('div',{style:{fontSize:11,color:'#D32F2F',padding:'4px 8px'}},'❌ Nenhum feed RSS encontrado nesta URL.')
+          :discoRes.error==='servidor'
+            ?h('div',{style:{fontSize:11,color:'#B45309',padding:'4px 8px'}},'⚠️ Servidor não respondeu. Tente usar o botão Verificar diretamente.')
+            :h('div',{style:{fontSize:11,color:'#D32F2F',padding:'4px 8px'}},'❌ Nenhum feed RSS encontrado nesta URL. Tente usar o botão Verificar.')
       )
     ),
     h('div',null,
@@ -5330,7 +5332,8 @@ function App(){
         if(!d.ok){toast2('Erro: '+(d.error||'falha'),C.rm);return;}
         recarregarFeeds();
         setModal(null);
-        if(d.validacao&&!d.validacao.ok){toast2('Feed salvo mas inválido: '+(d.validacao.error||'erro desconhecido')+'. Verifique a URL.',C.am);}
+        if(d.validacao==null||d.validacao===undefined){toast2(f.id?'Feed atualizado. Validação em andamento...':'Feed adicionado. Validando URL em segundo plano...',C.am);}
+        else if(d.validacao&&!d.validacao.ok){toast2('Feed salvo mas inválido: '+(d.validacao.error||'erro desconhecido')+'. Verifique a URL.',C.am);}
         else{toast2(f.id?'Feed atualizado.':'Feed adicionado.');}
       })
       .catch(function(){setSavingFd(false);toast2('Falha ao salvar feed.',C.rm);});
