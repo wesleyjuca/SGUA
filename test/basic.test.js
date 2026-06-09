@@ -394,3 +394,37 @@ test('POST /api/feeds/scrape respeita timeout de 12s', () => {
   assert.ok(src.includes('Promise.race') && src.includes('12000'),
     'POST /api/feeds/scrape deve usar Promise.race com timeout de 12s');
 });
+
+test('GET /api/relatorios/denuncias endpoint definido', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("'/api/relatorios/denuncias'") || src.includes('"/api/relatorios/denuncias"'),
+    'Deve existir endpoint GET /api/relatorios/denuncias para PDF de denúncias');
+});
+
+test('cron de reset usa timezone America/Rio_Branco', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('America/Rio_Branco'),
+    'Crons devem usar timezone America/Rio_Branco para hora local do Acre');
+});
+
+test('relatórios PDF têm LIMIT de segurança nas queries', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(
+    src.includes('ORDER BY o.data_ocorrencia DESC LIMIT 1000') &&
+    src.includes('ORDER BY o.created_at DESC LIMIT 1000') &&
+    src.includes('ORDER BY u.nome ASC, e.nome ASC LIMIT 1000'),
+    'Queries de relatório devem ter LIMIT 1000 para evitar OOM em datasets grandes'
+  );
+});
+
+test('AdminDenuncias tem botão de relatório PDF', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('/api/relatorios/denuncias'),
+    'AdminDenuncias deve ter botão que abre /api/relatorios/denuncias');
+});
+
+test('feed auto-reativação implementado no cron', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('auto_reativacao') && src.includes("status='pausado'"),
+    'Cron diário deve tentar reativar automaticamente feeds pausados há mais de 24h');
+});

@@ -2042,7 +2042,7 @@ app.get('/api/relatorios/ocorrencias', requireAuth, asyncRoute(async (req, res) 
   if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
   const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
   const fim = req.query.fim || new Date().toISOString().slice(0,10);
-  const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ocorrencias o LEFT JOIN units u ON u.id=o.unit_id WHERE o.data_ocorrencia BETWEEN $1 AND $2 ORDER BY o.data_ocorrencia DESC`, [inicio, fim]);
+  const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ocorrencias o LEFT JOIN units u ON u.id=o.unit_id WHERE o.data_ocorrencia BETWEEN $1 AND $2 ORDER BY o.data_ocorrencia DESC LIMIT 1000`, [inicio, fim]);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="relatorio-ocorrencias-${inicio}-${fim}.pdf"`);
   const doc = new PDFDocument({ margin: 50 });
@@ -2077,7 +2077,7 @@ app.get('/api/relatorios/ordens', requireAuth, asyncRoute(async (req, res) => {
   if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
   const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
   const fim = req.query.fim || new Date().toISOString().slice(0,10);
-  const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ordens o LEFT JOIN units u ON u.id=o.unit_id WHERE o.created_at::date BETWEEN $1 AND $2 ORDER BY o.created_at DESC`, [inicio, fim]);
+  const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ordens o LEFT JOIN units u ON u.id=o.unit_id WHERE o.created_at::date BETWEEN $1 AND $2 ORDER BY o.created_at DESC LIMIT 1000`, [inicio, fim]);
   const totalEst = rows.reduce((s,r)=>s+Number(r.custo_estimado||0),0);
   const totalReal = rows.reduce((s,r)=>s+Number(r.custo_real||0),0);
   res.setHeader('Content-Type', 'application/pdf');
@@ -2324,7 +2324,7 @@ app.get('/api/relatorios/equipamentos', requireAuth, asyncRoute(async (req, res)
   if (unit_id) { params.push(parseInt(unit_id)); sql += ` AND e.unit_id=$${params.length}`; }
   if (status) { params.push(status); sql += ` AND e.status=$${params.length}`; }
   if (tipo) { params.push(tipo); sql += ` AND e.tipo=$${params.length}`; }
-  sql += ' ORDER BY u.nome ASC, e.nome ASC';
+  sql += ' ORDER BY u.nome ASC, e.nome ASC LIMIT 1000';
   const equips = await query(sql, params);
   const doc = new PDFDocument({ margin: 40, size: 'A4' });
   res.setHeader('Content-Type', 'application/pdf');
@@ -2425,6 +2425,45 @@ app.delete('/api/denuncias/:id', requireAuth, asyncRoute(async (req, res) => {
   if (!r.length) return res.status(404).json({ ok: false, error: 'Denúncia não encontrada.' });
   auditLog(req, 'deletar_denuncia', 'denuncias', id, {});
   res.json({ ok: true });
+}));
+
+app.get('/api/relatorios/denuncias', requireAuth, asyncRoute(async (req, res) => {
+  if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
+  const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
+  const fim = req.query.fim || new Date().toISOString().slice(0,10);
+  const rows = await query(
+    `SELECT d.*, u.nome as unit_nome FROM sgua_denuncias d LEFT JOIN units u ON u.id=d.unit_id WHERE d.created_at::date BETWEEN $1 AND $2 ORDER BY d.created_at DESC LIMIT 1000`,
+    [inicio, fim]
+  );
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="relatorio-denuncias-${inicio}-${fim}.pdf"`);
+  const doc = new PDFDocument({ margin: 50 });
+  doc.pipe(res);
+  pdfHeader(doc, `Relatório de Denúncias Ambientais — ${inicio} a ${fim}`);
+  doc.fontSize(9).font('Helvetica-Bold');
+  const cols = ['Data','Protocolo','Tipo','Município','Status','Anônima'];
+  const xs = [50,110,210,280,360,440];
+  cols.forEach((h2, i) => {
+    doc.text(h2, xs[i], doc.y, { width: i < cols.length-1 ? xs[i+1]-xs[i]-4 : 100, continued: i < cols.length-1 });
+    if (i === cols.length-1) doc.text(h2, xs[i], doc.y);
+  });
+  doc.moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+  doc.moveDown(0.3);
+  doc.font('Helvetica').fontSize(8);
+  rows.forEach(r => {
+    if (doc.y > 700) { doc.addPage(); }
+    const y = doc.y;
+    doc.text(String(r.created_at||'').slice(0,10), xs[0], y, {width:56,continued:true});
+    doc.text((r.protocolo||'').slice(0,14), xs[1], y, {width:96,continued:true});
+    doc.text((r.tipo||'').replace('_',' ').slice(0,14), xs[2], y, {width:66,continued:true});
+    doc.text((r.municipio||'—').slice(0,18), xs[3], y, {width:76,continued:true});
+    doc.text((r.status||'').replace('_',' ').slice(0,14), xs[4], y, {width:76,continued:true});
+    doc.text(r.anonima ? 'Sim' : 'Não', xs[5], y, {width:100});
+  });
+  doc.moveDown(1);
+  doc.font('Helvetica-Bold').fontSize(10).text('Total: ' + rows.length + ' denúncia(s)');
+  doc.end();
+  auditLog(req, 'relatorio_denuncias', 'relatorios', null, { inicio, fim });
 }));
 
 // ─── Backup ──────────────────────────────────────────────────────────────────
@@ -3010,9 +3049,9 @@ cron.schedule('0 7 * * 0', async () => {
   } catch (err) {
     logger.error('[Backup] Falha no backup automático:', err.message);
   }
-}, { timezone: 'UTC' });
+}, { timezone: 'America/Rio_Branco' });
 
-// Cron: daily 06:00 UTC — sincronizar RSS feeds
+// Cron: daily 06:00 horário Acre — sincronizar RSS feeds
 cron.schedule('0 6 * * *', async () => {
   try {
     const isSaturday = new Date().getDay() === 6;
@@ -3064,13 +3103,25 @@ cron.schedule('0 6 * * *', async () => {
         logger.info(`[CRON-EQ] ${eqAlerta.length} alertas de manutenção enviados`);
       }
     } catch(e){ logger.warn('[CRON-EQ] Alerta equipamentos falhou:', e.message); }
+    // Auto-reativação de feeds pausados há mais de 24h
+    try {
+      const pausados = await pool.query(
+        "SELECT id, nome FROM sgua_feeds WHERE status='pausado' AND updated_at < now() - interval '24 hours' LIMIT 5"
+      );
+      for (const f of pausados.rows) {
+        await pool.query('UPDATE sgua_feeds SET ativo=true,status=\'aguardando\',falhas_consecutivas=0,updated_at=now() WHERE id=$1',[f.id]);
+        await pool.query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
+          [f.id,'auto_reativacao',true,'Reativação automática após 24h de pausa — URL será testada no próximo sync']);
+        logger.info(`[CRON-RSS] Feed "${f.nome}" reativado para nova tentativa`);
+      }
+    } catch(e){ logger.warn('[CRON-RSS] Auto-reativação falhou:', e.message); }
   } catch(e){ logger.error('[CRON-RSS] Falha:',e.message); }
-}, { timezone: 'UTC' });
+}, { timezone: 'America/Rio_Branco' });
 
-// Cron: reset cota diária (meia-noite UTC)
+// Cron: reset cota diária (meia-noite horário Acre)
 cron.schedule('0 0 * * *', async () => {
   try {
     await pool.query("UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=CURRENT_DATE WHERE ultima_reset < CURRENT_DATE OR ultima_reset IS NULL");
     logger.info('[CRON-RESET] Cotas diárias resetadas');
   } catch(e){ logger.error('[CRON-RESET] Falha:',e.message); }
-}, { timezone: 'UTC' });
+}, { timezone: 'America/Rio_Branco' });

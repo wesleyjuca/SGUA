@@ -3812,6 +3812,9 @@ function AdminDenuncias(p){
   var sFTipo=useState('');var fTipo=sFTipo[0],setFTipo=sFTipo[1];
   var sForm=useState({status:'recebida',resposta:'',responsavel:'',unit_id:'',ocorrencia_id:''});
   var form=sForm[0],setForm=sForm[1];
+  var anoAtual=new Date().getFullYear();
+  var sDtI=useState(anoAtual+'-01-01');var dtI=sDtI[0],setDtI=sDtI[1];
+  var sDtF=useState(new Date().toISOString().slice(0,10));var dtF=sDtF[0],setDtF=sDtF[1];
   var TIPOS=['desmatamento','queimada','caca','pesca_ilegal','mineracao','poluicao','outro'];
   var STATUS=['recebida','em_analise','concluida','arquivada'];
   var ST_COLOR={recebida:'#dc2626',em_analise:'#d97706',concluida:'#16a34a',arquivada:'#6b7280'};
@@ -3826,7 +3829,13 @@ function AdminDenuncias(p){
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:12,flexWrap:'wrap'}},
       h('h2',{style:{margin:0,fontSize:18,fontWeight:700,color:C.ct||'#111',flex:1}},'📢 Denúncias Ambientais'),
-      h('button',{onClick:load2,style:{background:C.c3||'#e5e7eb',color:C.ct||'#111',border:'none',borderRadius:6,padding:'6px 12px',cursor:'pointer',fontSize:12}},'🔄 Atualizar')
+      h('div',{style:{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}},
+        h('input',{type:'date',value:dtI,onChange:function(e){setDtI(e.target.value);},style:{border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'4px 8px',fontSize:11,color:C.ct||'#111',background:C.c1||'#f9fafb'}}),
+        h('span',{style:{fontSize:11,color:C.cm||'#6b7280'}},'até'),
+        h('input',{type:'date',value:dtF,onChange:function(e){setDtF(e.target.value);},style:{border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'4px 8px',fontSize:11,color:C.ct||'#111',background:C.c1||'#f9fafb'}}),
+        h('button',{onClick:function(){window.open('/api/relatorios/denuncias?inicio='+dtI+'&fim='+dtF);},style:{background:'#1A7A4A',color:'#fff',border:'none',borderRadius:6,padding:'5px 10px',cursor:'pointer',fontSize:11,whiteSpace:'nowrap'}},'📄 PDF'),
+        h('button',{onClick:load2,style:{background:C.c3||'#e5e7eb',color:C.ct||'#111',border:'none',borderRadius:6,padding:'6px 12px',cursor:'pointer',fontSize:12}},'🔄 Atualizar')
+      )
     ),
     h('div',{style:{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}},
       STATUS.map(function(s){return h('div',{key:s,onClick:function(){setFStatus(fStatus===s?'':s);},style:{cursor:'pointer',background:fStatus===s?(ST_COLOR[s]||'#6b7280'):(C.c1||'#f9fafb'),color:fStatus===s?'#fff':(C.ct||'#111'),border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:20,padding:'4px 12px',fontSize:12}},s.replace('_',' ')+' ('+counts[s]+')');})
