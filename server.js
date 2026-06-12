@@ -147,11 +147,19 @@ function parsePositiveId(value) {
 
 function isSafeUrl(url) {
   try {
-    const { protocol } = new URL(url);
-    return protocol === 'http:' || protocol === 'https:';
+    const { protocol, hostname } = new URL(url);
+    if (protocol !== 'http:' && protocol !== 'https:') return false;
+    // Bloquear SSRF: IPs privados, loopback e link-local
+    if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.|::1$|0\.0\.0\.0)/.test(hostname)) return false;
+    return true;
   } catch {
     return false;
   }
+}
+function safeDate(raw, fallback) {
+  // Garante que apenas dígitos e hífens entrem em headers HTTP (prevent header injection)
+  const sanitized = String(raw || '').replace(/[^0-9\-]/g, '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(sanitized) ? sanitized : (fallback || new Date().toISOString().slice(0, 10));
 }
 
 function pgError(err, res) {
@@ -1402,7 +1410,7 @@ app.post('/api/feeds', requireAuth, asyncRoute(async (req, res) => {
         [st, v.ok ? '' : String(v.error || '').slice(0, 500), v.metodo || 'rss', feed.id]);
       await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
         [feed.id, 'validacao', v.ok, v.ok ? `${v.items.length} itens encontrados via ${v.metodo}` : String(v.error || '').slice(0, 500)]);
-    } catch (_) {}
+    } catch (e) { logger.warn({ err: e, feed_id: feed.id }, '[Feed] Validação background falhou'); }
   });
 }));
 
@@ -1444,7 +1452,7 @@ app.put('/api/feeds/:id', requireAuth, asyncRoute(async (req, res) => {
           [st, v.ok ? '' : String(v.error || '').slice(0, 500), v.metodo || 'rss', id]);
         await query('INSERT INTO sgua_feed_logs (feed_id,tipo,ok,mensagem) VALUES ($1,$2,$3,$4)',
           [id, 'validacao', v.ok, v.ok ? `URL atualizada — ${v.items.length} itens via ${v.metodo}` : String(v.error || '').slice(0, 500)]);
-      } catch (_) {}
+      } catch (e) { logger.warn({ err: e, feed_id: id }, '[Feed] Validação background (PUT) falhou'); }
     });
   }
 }));
@@ -1535,7 +1543,7 @@ app.post('/api/feeds/autodiscover', requireAuth, asyncRoute(async (req, res) => 
   try {
     const ctrl = new AbortController();
     const tmr = setTimeout(()=>ctrl.abort(),3000);
-    const resp = await fetch(url,{signal:ctrl.signal,headers:{'User-Agent':'SGUA-RSS-Discover/1.0'},dispatcher:feedAgent});
+    const resp = await fetch(url,{signal:ctrl.signal,headers:{'User-Agent':'Mozilla/5.0 (compatible; SGUA-RSS-Bot/2.0; +https://sema.ac.gov.br)'},dispatcher:feedAgent});
     clearTimeout(tmr);
     const html = await resp.text();
     const linkRx = /<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]*href=["']([^"']+)["']/gi;
@@ -2040,8 +2048,8 @@ app.get('/api/relatorios/ocupacao', requireAuth, asyncRoute(async (req, res) => 
 
 app.get('/api/relatorios/ocorrencias', requireAuth, asyncRoute(async (req, res) => {
   if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
-  const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
-  const fim = req.query.fim || new Date().toISOString().slice(0,10);
+  const inicio = safeDate(req.query.inicio, new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10));
+  const fim = safeDate(req.query.fim);
   const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ocorrencias o LEFT JOIN units u ON u.id=o.unit_id WHERE o.data_ocorrencia BETWEEN $1 AND $2 ORDER BY o.data_ocorrencia DESC LIMIT 1000`, [inicio, fim]);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="relatorio-ocorrencias-${inicio}-${fim}.pdf"`);
@@ -2075,8 +2083,8 @@ app.get('/api/relatorios/ocorrencias', requireAuth, asyncRoute(async (req, res) 
 
 app.get('/api/relatorios/ordens', requireAuth, asyncRoute(async (req, res) => {
   if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
-  const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
-  const fim = req.query.fim || new Date().toISOString().slice(0,10);
+  const inicio = safeDate(req.query.inicio, new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10));
+  const fim = safeDate(req.query.fim);
   const rows = await query(`SELECT o.*, u.name AS unit_name FROM sgua_ordens o LEFT JOIN units u ON u.id=o.unit_id WHERE o.created_at::date BETWEEN $1 AND $2 ORDER BY o.created_at DESC LIMIT 1000`, [inicio, fim]);
   const totalEst = rows.reduce((s,r)=>s+Number(r.custo_estimado||0),0);
   const totalReal = rows.reduce((s,r)=>s+Number(r.custo_real||0),0);
@@ -2429,8 +2437,8 @@ app.delete('/api/denuncias/:id', requireAuth, asyncRoute(async (req, res) => {
 
 app.get('/api/relatorios/denuncias', requireAuth, asyncRoute(async (req, res) => {
   if (!PDFDocument) return res.status(503).json({ ok: false, error: 'pdfkit não disponível.' });
-  const inicio = req.query.inicio || new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10);
-  const fim = req.query.fim || new Date().toISOString().slice(0,10);
+  const inicio = safeDate(req.query.inicio, new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0,10));
+  const fim = safeDate(req.query.fim);
   const rows = await query(
     `SELECT d.*, u.nome as unit_nome FROM sgua_denuncias d LEFT JOIN units u ON u.id=d.unit_id WHERE d.created_at::date BETWEEN $1 AND $2 ORDER BY d.created_at DESC LIMIT 1000`,
     [inicio, fim]
