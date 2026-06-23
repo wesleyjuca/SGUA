@@ -1,7 +1,6 @@
 'use strict';
 
-// Bypass SSL certificate validation for outbound feed requests (gov BR sites often have expired/self-signed certs)
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+const { createHash, randomBytes } = require('crypto');
 
 const path = require('path');
 const fs = require('fs');
@@ -16,7 +15,18 @@ const { Pool } = require('pg');
 const app = express();
 
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com"],
+      imgSrc: ["'self'", "data:", "*.tile.openstreetmap.org", "*.openstreetmap.org", "*"],
+      connectSrc: ["'self'", "https://sgua-production.up.railway.app", "https://*.supabase.co"],
+      fontSrc: ["'self'", "data:", "cdnjs.cloudflare.com"],
+      objectSrc: ["'none'"],
+      frameSrc: ["'none'"]
+    }
+  },
   crossOriginEmbedderPolicy: false
 }));
 
@@ -381,16 +391,116 @@ async function fetchSmartItems(feed) {
 
 // CORS para GitHub Pages (frontend estático em wesleyjuca.github.io)
 app.use((req, res, next) => {
-  const allowed = ['https://wesleyjuca.github.io', 'http://localhost:3000'];
+  const allowed = ['https://wesleyjuca.github.io', 'http://localhost:3000', 'http://localhost:5500'];
   const origin = req.headers.origin;
   if (origin && allowed.includes(origin)) {
     res.set('Access-Control-Allow-Origin', origin);
     res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.set('Access-Control-Allow-Headers', 'Content-Type,Authorization');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
+
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+function hashSenha(senha) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = createHash('sha256').update(salt + senha).digest('hex');
+  return `sha256:${salt}:${hash}`;
+}
+
+function verificaSenha(senha, stored) {
+  if (!stored) return false;
+  const parts = stored.split(':');
+  if (parts.length !== 3 || parts[0] !== 'sha256') return false;
+  const [, salt, hash] = parts;
+  return createHash('sha256').update(salt + senha).digest('hex') === hash;
+}
+
+async function getSession(req) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7);
+  if (!token) return null;
+  try {
+    const row = await queryOne(
+      `SELECT s.*, u.name, u.email, u.role FROM sgua_sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.id = $1 AND s.expires_at > now()`,
+      [token]
+    );
+    return row || null;
+  } catch { return null; }
+}
+
+async function requireAuth(req, res, next) {
+  const sess = await getSession(req);
+  if (!sess) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
+  req.session = sess;
+  next();
+}
+
+// ─── Auth routes ──────────────────────────────────────────────────────────────
+
+app.post('/api/auth/login', asyncRoute(async (req, res) => {
+  const email = sanitizeText((req.body || {}).email, 160).toLowerCase();
+  const senha = String((req.body || {}).senha || '');
+  if (!email || !senha) return res.status(400).json({ ok: false, error: 'E-mail e senha são obrigatórios.' });
+
+  const user = await queryOne('SELECT * FROM users WHERE email = $1', [email]);
+  if (!user) return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
+
+  if (!verificaSenha(senha, user.senha_hash)) {
+    return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
+  }
+
+  const token = randomBytes(32).toString('hex');
+  await query(
+    'INSERT INTO sgua_sessions (id, user_id, expires_at) VALUES ($1, $2, now() + INTERVAL \'7 days\')',
+    [token, user.id]
+  );
+
+  res.json({ ok: true, token, usuario: { id: user.id, name: user.name, email: user.email, role: user.role } });
+}));
+
+app.get('/api/auth/me', asyncRoute(async (req, res) => {
+  const sess = await getSession(req);
+  if (!sess) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
+  res.json({ ok: true, usuario: { id: sess.user_id, name: sess.name, email: sess.email, role: sess.role } });
+}));
+
+app.post('/api/auth/logout', asyncRoute(async (req, res) => {
+  const auth = req.headers.authorization;
+  if (auth && auth.startsWith('Bearer ')) {
+    const token = auth.slice(7);
+    await query('DELETE FROM sgua_sessions WHERE id = $1', [token]).catch(() => {});
+  }
+  res.json({ ok: true });
+}));
+
+// ─── Config endpoint ──────────────────────────────────────────────────────────
+
+const DEFAULT_SECS = { hero: true, alert: true, bloco: true, mapa: true, dash: true, acesso: true, news: true, ia: false };
+
+app.get('/api/config', asyncRoute(async (_req, res) => {
+  try {
+    const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua_config'");
+    res.json({ ok: true, configuracoes: row ? row.value : DEFAULT_SECS });
+  } catch {
+    res.json({ ok: true, configuracoes: DEFAULT_SECS });
+  }
+}));
+
+app.put('/api/config', asyncRoute(async (req, res) => {
+  const cfg = req.body;
+  if (!cfg || typeof cfg !== 'object') return res.status(400).json({ ok: false, error: 'Payload inválido.' });
+  await query(
+    "INSERT INTO app_state (key, value, updated_at) VALUES ('sgua_config', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
+    [JSON.stringify(cfg)]
+  );
+  res.json({ ok: true });
+}));
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(PUBLIC_DIR));
@@ -459,22 +569,35 @@ app.post('/api/users', asyncRoute(async (req, res) => {
   const name = sanitizeText(req.body.name, 120);
   const email = sanitizeText(req.body.email, 160).toLowerCase();
   const role = sanitizeText(req.body.role, 20) || 'viewer';
+  const senha = String(req.body.senha || '');
 
   if (!name) return res.status(400).json({ ok: false, error: 'Nome é obrigatório.' });
   if (!validateEmail(email)) return res.status(400).json({ ok: false, error: 'E-mail inválido.' });
   if (!['admin', 'manager', 'viewer'].includes(role)) {
     return res.status(400).json({ ok: false, error: 'Perfil inválido.' });
   }
+  if (!senha || senha.length < 6) return res.status(400).json({ ok: false, error: 'Senha deve ter ao menos 6 caracteres.' });
 
   try {
     const data = await queryOne(
-      'INSERT INTO users(name, email, role) VALUES ($1, $2, $3) RETURNING *',
-      [name, email, role]
+      'INSERT INTO users(name, email, role, senha_hash) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role, created_at',
+      [name, email, role, hashSenha(senha)]
     );
     res.status(201).json({ ok: true, data });
   } catch (err) {
     return pgError(err, res);
   }
+}));
+
+app.post('/api/users/:id/password', asyncRoute(async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
+  const senha = String(req.body.senha || '');
+  if (!senha || senha.length < 6) return res.status(400).json({ ok: false, error: 'Senha deve ter ao menos 6 caracteres.' });
+  const existing = await queryOne('SELECT id FROM users WHERE id = $1', [id]);
+  if (!existing) return res.status(404).json({ ok: false, error: 'Usuário não encontrado.' });
+  await query('UPDATE users SET senha_hash = $1 WHERE id = $2', [hashSenha(senha), id]);
+  res.json({ ok: true });
 }));
 
 app.put('/api/users/:id', asyncRoute(async (req, res) => {
@@ -487,6 +610,7 @@ app.put('/api/users/:id', asyncRoute(async (req, res) => {
   const name = sanitizeText(req.body.name ?? existing.name, 120);
   const email = sanitizeText(req.body.email ?? existing.email, 160).toLowerCase();
   const role = sanitizeText(req.body.role ?? existing.role, 20);
+  const senha = req.body.senha ? String(req.body.senha) : null;
 
   if (!name || !validateEmail(email)) {
     return res.status(400).json({ ok: false, error: 'Dados de usuário inválidos.' });
@@ -496,10 +620,18 @@ app.put('/api/users/:id', asyncRoute(async (req, res) => {
   }
 
   try {
-    const data = await queryOne(
-      'UPDATE users SET name = $1, email = $2, role = $3 WHERE id = $4 RETURNING *',
-      [name, email, role, id]
-    );
+    let data;
+    if (senha && senha.length >= 6) {
+      data = await queryOne(
+        'UPDATE users SET name = $1, email = $2, role = $3, senha_hash = $4 WHERE id = $5 RETURNING id, name, email, role, created_at',
+        [name, email, role, hashSenha(senha), id]
+      );
+    } else {
+      data = await queryOne(
+        'UPDATE users SET name = $1, email = $2, role = $3 WHERE id = $4 RETURNING id, name, email, role, created_at',
+        [name, email, role, id]
+      );
+    }
     res.json({ ok: true, data });
   } catch (err) {
     return pgError(err, res);
@@ -1565,6 +1697,37 @@ app.listen(PORT, async () => {
   }
   // Auto-criar tabelas
   try {
+    // Core tables
+    await pool.query(`CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, name VARCHAR(120) NOT NULL, email VARCHAR(160) UNIQUE NOT NULL, role VARCHAR(20) DEFAULT 'viewer', senha_hash TEXT, created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS units (id SERIAL PRIMARY KEY, name VARCHAR(140) NOT NULL, address VARCHAR(255), description TEXT, latitude DOUBLE PRECISION, longitude DOUBLE PRECISION, status VARCHAR(16) DEFAULT 'active', capacity INTEGER DEFAULT 0, current_occupancy INTEGER DEFAULT 0, banner_url TEXT, contact_name VARCHAR(120), contact_email VARCHAR(160), contact_phone VARCHAR(30), created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS unit_photos (id SERIAL PRIMARY KEY, unit_id INTEGER REFERENCES units(id) ON DELETE CASCADE, url TEXT NOT NULL, filename TEXT NOT NULL, caption VARCHAR(200), is_banner BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS occupancy_records (id SERIAL PRIMARY KEY, unit_id INTEGER REFERENCES units(id), user_id INTEGER REFERENCES users(id), organization_name VARCHAR(120) NOT NULL, usage_type VARCHAR(120) NOT NULL, start_date DATE DEFAULT CURRENT_DATE, end_date DATE, active BOOLEAN DEFAULT true, created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS news (id SERIAL PRIMARY KEY, title VARCHAR(180) NOT NULL, content TEXT, source VARCHAR(200), link TEXT, category VARCHAR(100) DEFAULT 'Geral', is_rss BOOLEAN DEFAULT false, author_id INTEGER REFERENCES users(id), created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS requests (id SERIAL PRIMARY KEY, unit_id INTEGER REFERENCES units(id), requester_name VARCHAR(120) NOT NULL, requester_email VARCHAR(160), usage_type VARCHAR(120) NOT NULL, notes TEXT, status VARCHAR(20) DEFAULT 'pending', created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS app_state (key VARCHAR(100) PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_sessions (id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, user_id INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL, expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '7 days', created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_backups (id SERIAL PRIMARY KEY, label VARCHAR(160), snapshot JSONB NOT NULL, size_kb INTEGER DEFAULT 0, created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_reg_requests (id SERIAL PRIMARY KEY, nome VARCHAR(120) NOT NULL, email VARCHAR(160) NOT NULL, cargo VARCHAR(80), organizacao VARCHAR(120), justificativa TEXT, status VARCHAR(20) DEFAULT 'pendente', obs TEXT, reviewed_by INTEGER, reviewed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS sgua_notifications (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES users(id), tipo VARCHAR(40) DEFAULT 'sistema', canal VARCHAR(20) DEFAULT 'sistema', titulo VARCHAR(200), corpo VARCHAR(600), lida BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now())`);
+    // Extra columns on news
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS visivel BOOLEAN DEFAULT true`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS destaque BOOLEAN DEFAULT false`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS resumo TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS unidade TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS autor_nome TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS fonte TEXT DEFAULT ''`).catch(()=>{});
+    await pool.query(`ALTER TABLE news ADD COLUMN IF NOT EXISTS data_pub DATE`).catch(()=>{});
+    try { await pool.query(`ALTER TABLE news ADD CONSTRAINT news_title_source_unique UNIQUE (title, source)`); } catch(_) {}
+    // Seed default admin if users table is empty
+    const { rows: existingUsers } = await pool.query('SELECT id FROM users LIMIT 1');
+    if (existingUsers.length === 0) {
+      await pool.query(
+        "INSERT INTO users (name, email, role, senha_hash) VALUES ($1,$2,$3,$4) ON CONFLICT (email) DO NOTHING",
+        ['Administrador', 'admin@sema.ac.gov.br', 'admin', hashSenha('admin123')]
+      );
+      console.log('[DB] Usuário admin padrão criado: admin@sema.ac.gov.br / admin123');
+    }
+    console.log('[DB] Tabelas inicializadas com sucesso.');
     await pool.query(`CREATE TABLE IF NOT EXISTS sgua_suggestions (
       id SERIAL PRIMARY KEY, texto TEXT NOT NULL, tipo VARCHAR(40) DEFAULT 'sistema',
       status VARCHAR(20) DEFAULT 'pendente', prioridade VARCHAR(20) DEFAULT 'media',
