@@ -96,18 +96,43 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 10_000
+  connectionTimeoutMillis: 10_000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000
 });
 
 pool.on('error', (err) => {
   logger.error('[Pool] Erro inesperado em cliente inativo:', err.message);
 });
 
+async function waitForDb(maxAttempts = 5, delayMs = 5000) {
+  for (let i = 1; i <= maxAttempts; i++) {
+    try {
+      await pool.query('SELECT 1');
+      logger.info('[DB] Conexão estabelecida com sucesso.');
+      return;
+    } catch (err) {
+      logger.warn(`[DB] Tentativa ${i}/${maxAttempts} falhou: ${err.message}`);
+      if (i < maxAttempts) await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  logger.error('[DB] Não foi possível conectar ao banco após múltiplas tentativas. Servidor iniciará sem garantia de DB.');
+}
+
 // ─── DB helpers ───────────────────────────────────────────────────────────────
 
 async function query(sql, params = []) {
-  const { rows } = await pool.query(sql, params);
-  return rows;
+  try {
+    const { rows } = await pool.query(sql, params);
+    return rows;
+  } catch (err) {
+    if (err.code && ['ECONNRESET','ECONNREFUSED','ENOTFOUND','57P01'].includes(err.code)) {
+      logger.warn('[DB] Erro de conexão detectado, retentando query...');
+      const { rows } = await pool.query(sql, params);
+      return rows;
+    }
+    throw err;
+  }
 }
 
 async function queryOne(sql, params = []) {
@@ -649,7 +674,7 @@ function requireAuth(req, res, next) {
 
 // Healthcheck leve — Railway/Render precisam de 200 para considerar o deploy bem-sucedido
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
+  res.json({ ok: true, uptime: Math.floor(process.uptime()), version: process.env.npm_package_version || '1.0.0', timestamp: new Date().toISOString() });
 });
 
 app.get('/api/ai/status', (_req, res) => {
@@ -2756,6 +2781,7 @@ app.use((err, _req, res, _next) => {
 const server = app.listen(PORT, async () => {
   logger.info(`SGUA executando em http://localhost:${PORT}`);
   logger.info(`Banco: PostgreSQL (Supabase)`);
+  await waitForDb();
   // Avisos de configuração opcional (não fatais)
   if (!process.env.ANTHROPIC_API_KEY) logger.warn('[Config] ANTHROPIC_API_KEY ausente — síntese de artigos por IA desabilitada.');
   if (!process.env.SMTP_HOST) logger.warn('[Config] SMTP_HOST ausente — notificações por e-mail desabilitadas.');
@@ -3132,4 +3158,14 @@ cron.schedule('0 0 * * *', async () => {
     await pool.query("UPDATE sgua_feeds SET noticias_hoje=0, ultima_reset=CURRENT_DATE WHERE ultima_reset < CURRENT_DATE OR ultima_reset IS NULL");
     logger.info('[CRON-RESET] Cotas diárias resetadas');
   } catch(e){ logger.error('[CRON-RESET] Falha:',e.message); }
+}, { timezone: 'America/Rio_Branco' });
+
+// Cron: keepalive — evita pausa do Supabase free tier (toda segunda às 08h Acre)
+cron.schedule('0 8 * * 1', async () => {
+  try {
+    await pool.query('SELECT 1');
+    logger.info('[Keepalive] Ping ao banco executado com sucesso.');
+  } catch (err) {
+    logger.warn('[Keepalive] Ping falhou:', err.message);
+  }
 }, { timezone: 'America/Rio_Branco' });

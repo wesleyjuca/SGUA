@@ -428,3 +428,33 @@ test('feed auto-reativação implementado no cron', () => {
   assert.ok(src.includes('auto_reativacao') && src.includes("status='pausado'"),
     'Cron diário deve tentar reativar automaticamente feeds pausados há mais de 24h');
 });
+
+test('pool usa keepAlive para evitar pausa do Supabase', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('keepAlive: true') && src.includes('keepAliveInitialDelayMillis'),
+    'Pool deve ter keepAlive ativado para manter conexões persistentes');
+});
+
+test('waitForDb definida com retry de conexão', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('async function waitForDb(') && src.includes('maxAttempts'),
+    'waitForDb deve tentar se conectar múltiplas vezes antes de desistir');
+});
+
+test('cron keepalive anti-pausa Supabase definido', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('[Keepalive]') && src.includes("'0 8 * * 1'"),
+    'Deve existir cron semanal de keepalive para evitar pausa do Supabase free tier');
+});
+
+test('query() tem retry automático em erros de conexão', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('ECONNRESET') && src.includes('retentando query'),
+    'query() deve retenar automaticamente em erros de conexão transientes');
+});
+
+test('/api/health inclui timestamp e version', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('timestamp: new Date().toISOString()') && src.includes('npm_package_version'),
+    'Endpoint /api/health deve retornar timestamp e versão da aplicação');
+});
