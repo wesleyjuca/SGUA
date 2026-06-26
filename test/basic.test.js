@@ -13,9 +13,15 @@ test('server.js syntax valid', () => {
 
 test('index.html JS syntax valid', () => {
   const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
-  const js = src.slice(src.indexOf('<script>') + 8, src.lastIndexOf('</script>'));
-  fs.writeFileSync('/tmp/sgua_test_check.js', js);
-  assert.doesNotThrow(() => execSync('node --check /tmp/sgua_test_check.js'));
+  const pattern = /src="(js\/[^"]+\.js)"/g;
+  let match;
+  while ((match = pattern.exec(src)) !== null) {
+    const jsFile = path.join(ROOT, 'public', match[1]);
+    assert.doesNotThrow(
+      () => execSync('node --check ' + jsFile, {cwd: ROOT}),
+      'Syntax error in ' + match[1]
+    );
+  }
 });
 
 test('package.json valid JSON', () => {
