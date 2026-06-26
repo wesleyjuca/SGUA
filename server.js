@@ -30,7 +30,18 @@ const logger = pino({
 const app = express();
 
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com"],
+      imgSrc: ["'self'", "data:", "*.tile.openstreetmap.org", "*.openstreetmap.org", "*"],
+      connectSrc: ["'self'", "https://sgua-production.up.railway.app", "https://*.supabase.co"],
+      fontSrc: ["'self'", "data:", "cdnjs.cloudflare.com"],
+      objectSrc: ["'none'"],
+      frameSrc: ["'none'"]
+    }
+  },
   crossOriginEmbedderPolicy: false
 }));
 
@@ -652,6 +663,106 @@ app.use((req, res, next) => {
   next();
 });
 
+// ─── Auth helpers ─────────────────────────────────────────────────────────────
+
+function hashSenha(senha) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = createHash('sha256').update(salt + senha).digest('hex');
+  return `sha256:${salt}:${hash}`;
+}
+
+function verificaSenha(senha, stored) {
+  if (!stored) return false;
+  const parts = stored.split(':');
+  if (parts.length !== 3 || parts[0] !== 'sha256') return false;
+  const [, salt, hash] = parts;
+  return createHash('sha256').update(salt + senha).digest('hex') === hash;
+}
+
+async function getSession(req) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  const token = auth.slice(7);
+  if (!token) return null;
+  try {
+    const row = await queryOne(
+      `SELECT s.*, u.name, u.email, u.role FROM sgua_sessions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.id = $1 AND s.expires_at > now()`,
+      [token]
+    );
+    return row || null;
+  } catch { return null; }
+}
+
+async function requireAuth(req, res, next) {
+  const sess = await getSession(req);
+  if (!sess) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
+  req.session = sess;
+  next();
+}
+
+// ─── Auth routes ──────────────────────────────────────────────────────────────
+
+app.post('/api/auth/login', asyncRoute(async (req, res) => {
+  const email = sanitizeText((req.body || {}).email, 160).toLowerCase();
+  const senha = String((req.body || {}).senha || '');
+  if (!email || !senha) return res.status(400).json({ ok: false, error: 'E-mail e senha são obrigatórios.' });
+
+  const user = await queryOne('SELECT * FROM users WHERE email = $1', [email]);
+  if (!user) return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
+
+  if (!verificaSenha(senha, user.senha_hash)) {
+    return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
+  }
+
+  const token = randomBytes(32).toString('hex');
+  await query(
+    'INSERT INTO sgua_sessions (id, user_id, expires_at) VALUES ($1, $2, now() + INTERVAL \'7 days\')',
+    [token, user.id]
+  );
+
+  res.json({ ok: true, token, usuario: { id: user.id, name: user.name, email: user.email, role: user.role } });
+}));
+
+app.get('/api/auth/me', asyncRoute(async (req, res) => {
+  const sess = await getSession(req);
+  if (!sess) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
+  res.json({ ok: true, usuario: { id: sess.user_id, name: sess.name, email: sess.email, role: sess.role } });
+}));
+
+app.post('/api/auth/logout', asyncRoute(async (req, res) => {
+  const auth = req.headers.authorization;
+  if (auth && auth.startsWith('Bearer ')) {
+    const token = auth.slice(7);
+    await query('DELETE FROM sgua_sessions WHERE id = $1', [token]).catch(() => {});
+  }
+  res.json({ ok: true });
+}));
+
+// ─── Config endpoint ──────────────────────────────────────────────────────────
+
+const DEFAULT_SECS = { hero: true, alert: true, bloco: true, mapa: true, dash: true, acesso: true, news: true, ia: false };
+
+app.get('/api/config', asyncRoute(async (_req, res) => {
+  try {
+    const row = await queryOne("SELECT value FROM app_state WHERE key = 'sgua_config'");
+    res.json({ ok: true, configuracoes: row ? row.value : DEFAULT_SECS });
+  } catch {
+    res.json({ ok: true, configuracoes: DEFAULT_SECS });
+  }
+}));
+
+app.put('/api/config', asyncRoute(async (req, res) => {
+  const cfg = req.body;
+  if (!cfg || typeof cfg !== 'object') return res.status(400).json({ ok: false, error: 'Payload inválido.' });
+  await query(
+    "INSERT INTO app_state (key, value, updated_at) VALUES ('sgua_config', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
+    [JSON.stringify(cfg)]
+  );
+  res.json({ ok: true });
+}));
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(PUBLIC_DIR));
 
@@ -822,17 +933,19 @@ app.post('/api/users', requireAuth, asyncRoute(async (req, res) => {
   const name = sanitizeText(req.body.name, 120);
   const email = sanitizeText(req.body.email, 160).toLowerCase();
   const role = sanitizeText(req.body.role, 20) || 'viewer';
+  const senha = String(req.body.senha || '');
 
   if (!name) return res.status(400).json({ ok: false, error: 'Nome é obrigatório.' });
   if (!validateEmail(email)) return res.status(400).json({ ok: false, error: 'E-mail inválido.' });
   if (!['admin', 'manager', 'viewer'].includes(role)) {
     return res.status(400).json({ ok: false, error: 'Perfil inválido.' });
   }
+  if (!senha || senha.length < 6) return res.status(400).json({ ok: false, error: 'Senha deve ter ao menos 6 caracteres.' });
 
   try {
     const data = await queryOne(
-      'INSERT INTO users(name, email, role) VALUES ($1, $2, $3) RETURNING *',
-      [name, email, role]
+      'INSERT INTO users(name, email, role, senha_hash) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role, created_at',
+      [name, email, role, hashSenha(senha)]
     );
     res.status(201).json({ ok: true, data });
   } catch (err) {
@@ -850,6 +963,7 @@ app.put('/api/users/:id', requireAuth, asyncRoute(async (req, res) => {
   const name = sanitizeText(req.body.name ?? existing.name, 120);
   const email = sanitizeText(req.body.email ?? existing.email, 160).toLowerCase();
   const role = sanitizeText(req.body.role ?? existing.role, 20);
+  const senha = req.body.senha ? String(req.body.senha) : null;
 
   if (!name || !validateEmail(email)) {
     return res.status(400).json({ ok: false, error: 'Dados de usuário inválidos.' });
@@ -859,10 +973,18 @@ app.put('/api/users/:id', requireAuth, asyncRoute(async (req, res) => {
   }
 
   try {
-    const data = await queryOne(
-      'UPDATE users SET name = $1, email = $2, role = $3 WHERE id = $4 RETURNING *',
-      [name, email, role, id]
-    );
+    let data;
+    if (senha && senha.length >= 6) {
+      data = await queryOne(
+        'UPDATE users SET name = $1, email = $2, role = $3, senha_hash = $4 WHERE id = $5 RETURNING id, name, email, role, created_at',
+        [name, email, role, hashSenha(senha), id]
+      );
+    } else {
+      data = await queryOne(
+        'UPDATE users SET name = $1, email = $2, role = $3 WHERE id = $4 RETURNING id, name, email, role, created_at',
+        [name, email, role, id]
+      );
+    }
     res.json({ ok: true, data });
   } catch (err) {
     return pgError(err, res);
