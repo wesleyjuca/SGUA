@@ -2,6 +2,14 @@
 
 const path = require('path');
 const fs = require('fs');
+const { randomBytes, createHash } = require('crypto');
+
+// Hash de senha para a tabela legada `users` (formato sha256:salt:hash).
+function hashSenha(senha) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = createHash('sha256').update(salt + String(senha)).digest('hex');
+  return `sha256:${salt}:${hash}`;
+}
 const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -663,82 +671,14 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Auth helpers ─────────────────────────────────────────────────────────────
+// Body parser — DEVE vir antes das rotas de auth/config para que req.body seja populado.
+// (As rotas de autenticação JWT ficam definidas mais abaixo, a partir de "Auth endpoints".)
+app.use(express.json({ limit: '2mb' }));
 
-function hashSenha(senha) {
-  const salt = randomBytes(16).toString('hex');
-  const hash = createHash('sha256').update(salt + senha).digest('hex');
-  return `sha256:${salt}:${hash}`;
-}
-
-function verificaSenha(senha, stored) {
-  if (!stored) return false;
-  const parts = stored.split(':');
-  if (parts.length !== 3 || parts[0] !== 'sha256') return false;
-  const [, salt, hash] = parts;
-  return createHash('sha256').update(salt + senha).digest('hex') === hash;
-}
-
-async function getSession(req) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return null;
-  const token = auth.slice(7);
-  if (!token) return null;
-  try {
-    const row = await queryOne(
-      `SELECT s.*, u.name, u.email, u.role FROM sgua_sessions s
-       JOIN users u ON u.id = s.user_id
-       WHERE s.id = $1 AND s.expires_at > now()`,
-      [token]
-    );
-    return row || null;
-  } catch { return null; }
-}
-
-async function requireAuth(req, res, next) {
-  const sess = await getSession(req);
-  if (!sess) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
-  req.session = sess;
-  next();
-}
-
-// ─── Auth routes ──────────────────────────────────────────────────────────────
-
-app.post('/api/auth/login', asyncRoute(async (req, res) => {
-  const email = sanitizeText((req.body || {}).email, 160).toLowerCase();
-  const senha = String((req.body || {}).senha || '');
-  if (!email || !senha) return res.status(400).json({ ok: false, error: 'E-mail e senha são obrigatórios.' });
-
-  const user = await queryOne('SELECT * FROM users WHERE email = $1', [email]);
-  if (!user) return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
-
-  if (!verificaSenha(senha, user.senha_hash)) {
-    return res.status(401).json({ ok: false, error: 'Credenciais inválidas.' });
-  }
-
-  const token = randomBytes(32).toString('hex');
-  await query(
-    'INSERT INTO sgua_sessions (id, user_id, expires_at) VALUES ($1, $2, now() + INTERVAL \'7 days\')',
-    [token, user.id]
-  );
-
-  res.json({ ok: true, token, usuario: { id: user.id, name: user.name, email: user.email, role: user.role } });
-}));
-
-app.get('/api/auth/me', asyncRoute(async (req, res) => {
-  const sess = await getSession(req);
-  if (!sess) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
-  res.json({ ok: true, usuario: { id: sess.user_id, name: sess.name, email: sess.email, role: sess.role } });
-}));
-
-app.post('/api/auth/logout', asyncRoute(async (req, res) => {
-  const auth = req.headers.authorization;
-  if (auth && auth.startsWith('Bearer ')) {
-    const token = auth.slice(7);
-    await query('DELETE FROM sgua_sessions WHERE id = $1', [token]).catch(() => {});
-  }
+// Logout stateless (JWT) — o cliente apenas descarta o token localmente.
+app.post('/api/auth/logout', (_req, res) => {
   res.json({ ok: true });
-}));
+});
 
 // ─── Config endpoint ──────────────────────────────────────────────────────────
 
@@ -753,7 +693,7 @@ app.get('/api/config', asyncRoute(async (_req, res) => {
   }
 }));
 
-app.put('/api/config', asyncRoute(async (req, res) => {
+app.put('/api/config', requireAuth, asyncRoute(async (req, res) => {
   const cfg = req.body;
   if (!cfg || typeof cfg !== 'object') return res.status(400).json({ ok: false, error: 'Payload inválido.' });
   await query(
@@ -763,13 +703,12 @@ app.put('/api/config', asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.use(express.json({ limit: '2mb' }));
 app.use(express.static(PUBLIC_DIR));
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
 function requireAuth(req, res, next) {
-  if (!jwt) return next(); // JWT not installed — skip auth (development only)
+  if (!jwt) return res.status(503).json({ ok: false, error: 'Serviço de autenticação indisponível.' }); // falha segura: nunca liberar sem JWT
   const header = req.headers['authorization'] || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return res.status(401).json({ ok: false, error: 'Não autenticado.' });
@@ -925,7 +864,8 @@ app.get('/api/meta/model', (_req, res) => {
 // ─── Users CRUD ───────────────────────────────────────────────────────────────
 
 app.get('/api/users', asyncRoute(async (_req, res) => {
-  const data = await query('SELECT * FROM users ORDER BY id DESC');
+  // Nunca expor coluna de hash de senha — seleção explícita de campos seguros.
+  const data = await query('SELECT id, name, email, role FROM users ORDER BY id DESC');
   res.json({ ok: true, data });
 }));
 
@@ -2623,7 +2563,7 @@ app.get('/api/relatorios/denuncias', requireAuth, asyncRoute(async (req, res) =>
 
 // ─── Backup ──────────────────────────────────────────────────────────────────
 
-app.get('/api/backup', asyncRoute(async (_req, res) => {
+app.get('/api/backup', requireAuth, asyncRoute(async (_req, res) => {
   const rows = await query('SELECT id, created_at, label, size_kb FROM sgua_backups ORDER BY created_at DESC LIMIT 50');
   res.json({ ok: true, data: rows });
 }));
@@ -2643,7 +2583,7 @@ app.post('/api/backup', requireAuth, asyncRoute(async (req, res) => {
   res.status(201).json({ ok: true, data: result });
 }));
 
-app.get('/api/backup/:id', asyncRoute(async (req, res) => {
+app.get('/api/backup/:id', requireAuth, asyncRoute(async (req, res) => {
   const id = parsePositiveId(req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'ID inválido.' });
   const row = await queryOne('SELECT * FROM sgua_backups WHERE id = $1', [id]);

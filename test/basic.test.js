@@ -464,3 +464,73 @@ test('/api/health inclui timestamp e version', () => {
   assert.ok(src.includes('timestamp: new Date().toISOString()') && src.includes('npm_package_version'),
     'Endpoint /api/health deve retornar timestamp e versão da aplicação');
 });
+
+// ─── Correções críticas (PR: fix-critical-inconsistencies) ────────────────────
+
+test('body parser (express.json) vem ANTES das rotas de auth/config', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const iJson = src.indexOf("express.json({ limit: '2mb' })");
+  const iLogin = src.indexOf("app.post('/api/auth/login'");
+  const iConfigPut = src.indexOf("app.put('/api/config'");
+  assert.ok(iJson > -1 && iLogin > -1 && iConfigPut > -1, 'marcadores presentes');
+  assert.ok(iJson < iLogin, 'express.json deve preceder POST /api/auth/login');
+  assert.ok(iJson < iConfigPut, 'express.json deve preceder PUT /api/config');
+});
+
+test('não há rota legada de login por sessão (sgua_sessions removida)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(!src.includes('INSERT INTO sgua_sessions'), 'login legado de sessão deve ter sido removido');
+  const count = (src.match(/app\.post\('\/api\/auth\/login'/g) || []).length;
+  assert.strictEqual(count, 1, 'deve existir exatamente uma rota POST /api/auth/login (JWT)');
+  assert.ok(src.includes("app.post('/api/auth/login', authLimiter"), 'a rota de login deve ser a JWT com authLimiter');
+});
+
+test('GET /api/users não seleciona coluna de hash de senha', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes('SELECT id, name, email, role FROM users ORDER BY id DESC'),
+    'listagem de usuários deve usar seleção explícita de colunas seguras');
+});
+
+test('requireAuth falha de forma segura (503) se JWT indisponível', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("if (!jwt) return res.status(503)"),
+    'requireAuth não deve liberar acesso quando o módulo jwt não está disponível');
+});
+
+test('endpoints sensíveis de backup exigem autenticação', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("app.get('/api/backup', requireAuth"), 'GET /api/backup deve exigir auth');
+  assert.ok(src.includes("app.get('/api/backup/:id', requireAuth"), 'GET /api/backup/:id deve exigir auth');
+});
+
+test('crypto importado no escopo do módulo (server.js)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.ok(src.includes("const { randomBytes, createHash } = require('crypto')"),
+    'randomBytes/createHash devem ser importados no topo, não dentro de uma função');
+});
+
+test('frontend define helper apiJson (parse JSON) sem alterar apiFetch', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('function apiJson(url, opts)'), 'apiJson deve existir');
+  assert.ok(src.includes('function apiFetch(url, opts)'), 'apiFetch deve continuar existindo');
+});
+
+test('módulos admin fase-40+ usam apiJson e a chave de resposta correta', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes("apiJson('/api/equipamentos'"), 'equipamentos deve usar apiJson');
+  assert.ok(src.includes("apiJson('/api/ocorrencias'") && src.includes('setOcrs(d.data'),
+    'ocorrências deve usar apiJson e ler d.data (servidor envia {data})');
+  assert.ok(src.includes("apiJson('/api/ordens'") && src.includes('setOrds(d.data'),
+    'ordens deve usar apiJson e ler d.data');
+});
+
+test('chave JWT consistente no frontend (__sgua_jwt, sem sgua_token)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(!src.includes("getItem('sgua_token')"), 'não deve restar a chave errada sgua_token');
+});
+
+test('sanitizeHtml usa allowlist inerte (DOMParser)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('new DOMParser().parseFromString') && src.includes('var ALLOWED='),
+    'sanitizeHtml deve usar DOMParser + allowlist em vez de denylist');
+});

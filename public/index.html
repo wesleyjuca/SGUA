@@ -129,22 +129,37 @@ function sha256(msg){
   return H.map(function(n){return('00000000'+(n>>>0).toString(16)).slice(-8);}).join('');
 }
 
+// Sanitização por ALLOWLIST (não denylist). Usa DOMParser para parsear de forma
+// inerte (não executa scripts nem dispara img onerror durante a limpeza).
+// Só sobrevivem tags seguras; só href/src http(s) e alt são mantidos; on*, style,
+// javascript:/data: e qualquer outro atributo são removidos.
 function sanitizeHtml(html){
   if(!html)return '';
-  var div=document.createElement('div');
-  div.innerHTML=html;
-  var dangerous=['script','iframe','object','embed','form','base','link','meta','style'];
-  dangerous.forEach(function(tag){
-    Array.from(div.getElementsByTagName(tag)).forEach(function(el){el.remove();});
-  });
-  Array.from(div.querySelectorAll('*')).forEach(function(el){
-    Array.from(el.attributes).forEach(function(attr){
-      if(/^on/i.test(attr.name)||/javascript:/i.test(attr.value)||/data:/i.test(attr.value)){
-        el.removeAttribute(attr.name);
-      }
+  var ALLOWED={P:1,BR:1,STRONG:1,B:1,EM:1,I:1,U:1,UL:1,OL:1,LI:1,A:1,H3:1,H4:1,H5:1,BLOCKQUOTE:1,SPAN:1,IMG:1};
+  var body;
+  try{ body=new DOMParser().parseFromString(String(html),'text/html').body; }
+  catch(e){ var d=document.createElement('div'); d.textContent=String(html); return d.innerHTML; }
+  Array.prototype.forEach.call(
+    body.querySelectorAll('script,style,iframe,object,embed,form,base,link,meta,svg,math,video,audio,source'),
+    function(el){ el.remove(); }
+  );
+  Array.prototype.forEach.call(body.querySelectorAll('*'),function(el){
+    var tag=el.tagName;
+    if(!ALLOWED[tag]){
+      var parent=el.parentNode;
+      if(parent){ while(el.firstChild){ parent.insertBefore(el.firstChild,el); } parent.removeChild(el); }
+      return;
+    }
+    Array.prototype.slice.call(el.attributes).forEach(function(attr){
+      var name=attr.name.toLowerCase(), val=attr.value||'';
+      if(tag==='A'&&name==='href'&&/^https?:\/\//i.test(val))return;
+      if(tag==='IMG'&&name==='src'&&/^https?:\/\//i.test(val))return;
+      if(tag==='IMG'&&name==='alt')return;
+      el.removeAttribute(attr.name);
     });
+    if(tag==='A'){ el.setAttribute('rel','noopener noreferrer nofollow'); el.setAttribute('target','_blank'); }
   });
-  return div.innerHTML;
+  return body.innerHTML;
 }
 
 function isSafeUrl(url){
@@ -242,6 +257,13 @@ function apiFetch(url, opts) {
     }
     return r;
   });
+}
+
+// apiJson — igual ao apiFetch, mas já resolve o corpo como JSON.
+// Usado pelos módulos que esperam o objeto parseado ({ok, rows, data, ...}).
+// (NÃO troque apiFetch por este em News/Feeds/Suggestions/Notifications, que já fazem .json() manualmente.)
+function apiJson(url, opts) {
+  return apiFetch(url, opts).then(function(r) { return r.json(); });
 }
 
 // Supabase — persistência direta (sem servidor intermediário)
@@ -796,25 +818,20 @@ function AdminRelatorios(p){
   var C=p.C||{g2:'#0F5C3A',cd:'#1E2218',cm:'#6B7260',cl:'#DEE2D8',cx:'#F7F8F5',rm:'#A32D2D',b1:'#1565A8'};
 
   function downloadPdf(endpoint,filename){
-    apiFetch(endpoint).then(function(resp){
-      if(resp instanceof Response){return resp.blob();}
-      // apiFetch retorna objeto parsed; para PDF precisamos usar fetch diretamente
-      return null;
-    }).catch(function(){return null;}).then(function(){
-      // Usar fetch nativo para blob
-      var token=localStorage.getItem('sgua_token');
-      fetch(endpoint,{headers:token?{Authorization:'Bearer '+token}:{}}).then(function(r){
-        if(!r.ok){toast2('Erro ao gerar PDF','error');return;}
-        return r.blob();
-      }).then(function(blob){
-        if(!blob)return;
-        var url=URL.createObjectURL(blob);
-        var a=document.createElement('a');
-        a.href=url;a.download=filename;a.click();
-        setTimeout(function(){URL.revokeObjectURL(url);},2000);
-        toast2('PDF gerado!','success');
-      }).catch(function(){toast2('Erro ao baixar PDF','error');});
-    });
+    // Uma única requisição autenticada (chave JWT correta: __sgua_jwt) que baixa o blob do PDF.
+    var token;
+    try{token=localStorage.getItem('__sgua_jwt')||'';}catch(e){token='';}
+    fetch(endpoint,{headers:token?{Authorization:'Bearer '+token}:{}}).then(function(r){
+      if(!r.ok){toast2('Erro ao gerar PDF','error');return null;}
+      return r.blob();
+    }).then(function(blob){
+      if(!blob)return;
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url;a.download=filename;a.click();
+      setTimeout(function(){URL.revokeObjectURL(url);},2000);
+      toast2('PDF gerado!','success');
+    }).catch(function(){toast2('Erro ao baixar PDF','error');});
   }
 
   var mesAtual=new Date().getMonth()+1;
@@ -3460,26 +3477,26 @@ function AdminEquipamentos(p){
     if(f2.status)qs.push('status='+encodeURIComponent(f2.status));
     if(f2.tipo)qs.push('tipo='+encodeURIComponent(f2.tipo));
     if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
-    apiFetch('/api/equipamentos'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setEqs(d.rows||[]);}).finally(function(){setLoad(false);});
+    apiJson('/api/equipamentos'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setEqs(d.rows||[]);}).finally(function(){setLoad(false);});
   }
   useEffect(function(){load2();},[]);
 
   function save(data){
     var method=data.id?'PUT':'POST';
     var url=data.id?'/api/equipamentos/'+data.id:'/api/equipamentos';
-    apiFetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+    apiJson(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
       if(d.ok){toast2('Equipamento salvo!','success');setFm(null);load2();}
       else toast2(d.error||'Erro','error');
     });
   }
   function del2(){
-    apiFetch('/api/equipamentos/'+delId,{method:'DELETE'}).then(function(d){
+    apiJson('/api/equipamentos/'+delId,{method:'DELETE'}).then(function(d){
       if(d.ok){toast2('Removido!','success');setDelId(null);load2();}
       else toast2(d.error||'Erro','error');
     });
   }
   function criarOrdem(eq){
-    apiFetch('/api/equipamentos/'+eq.id+'/criar-ordem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo:'Manutenção: '+eq.nome})}).then(function(d){
+    apiJson('/api/equipamentos/'+eq.id+'/criar-ordem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo:'Manutenção: '+eq.nome})}).then(function(d){
       if(d.ok)toast2('Ordem criada! Acesse a aba Manutenção.','success');
       else toast2(d.error||'Erro','error');
     });
@@ -3649,7 +3666,7 @@ function AdminDocumentos(p){
     if(f2.categoria)qs.push('categoria='+encodeURIComponent(f2.categoria));
     if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
     if(f2.publico)qs.push('publico='+f2.publico);
-    apiFetch('/api/documentos'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setDocs(d.rows||[]);}).finally(function(){setLoad(false);});
+    apiJson('/api/documentos'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setDocs(d.rows||[]);}).finally(function(){setLoad(false);});
   }
   useEffect(function(){load2();},[]);
 
@@ -3658,7 +3675,8 @@ function AdminDocumentos(p){
     if(file)fd.append('arquivo',file);
     Object.keys(data).forEach(function(k){if(data[k]!==undefined&&data[k]!=='')fd.append(k,data[k]);});
     setUploading(true);
-    var token=localStorage.getItem('sgua_token');
+    var token;
+    try{token=localStorage.getItem('__sgua_jwt')||'';}catch(e){token='';}
     fetch('/api/documentos/upload',{method:'POST',headers:token?{Authorization:'Bearer '+token}:{},body:fd})
       .then(function(r){return r.json();})
       .then(function(d){
@@ -3667,19 +3685,19 @@ function AdminDocumentos(p){
       }).catch(function(){toast2('Erro ao enviar','error');}).finally(function(){setUploading(false);});
   }
   function updateMeta(id, data){
-    apiFetch('/api/documentos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+    apiJson('/api/documentos/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
       if(d.ok){toast2('Atualizado!','success');setFm(null);load2();}
       else toast2(d.error||'Erro','error');
     });
   }
   function togglePublic(doc){
-    apiFetch('/api/documentos/'+doc.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({publico:!doc.publico})}).then(function(d){
+    apiJson('/api/documentos/'+doc.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({publico:!doc.publico})}).then(function(d){
       if(d.ok)load2();
       else toast2(d.error||'Erro','error');
     });
   }
   function del2(){
-    apiFetch('/api/documentos/'+delId,{method:'DELETE'}).then(function(d){
+    apiJson('/api/documentos/'+delId,{method:'DELETE'}).then(function(d){
       if(d.ok){toast2('Removido!','success');setDelId(null);load2();}
       else toast2(d.error||'Erro','error');
     });
@@ -3818,11 +3836,11 @@ function AdminDenuncias(p){
   var TIPOS=['desmatamento','queimada','caca','pesca_ilegal','mineracao','poluicao','outro'];
   var STATUS=['recebida','em_analise','concluida','arquivada'];
   var ST_COLOR={recebida:'#dc2626',em_analise:'#d97706',concluida:'#16a34a',arquivada:'#6b7280'};
-  function load2(){setLoad(true);var q=new URLSearchParams(Object.fromEntries([['status',fStatus],['tipo',fTipo]].filter(function(x){return x[1];})));apiFetch('/api/denuncias?'+q).then(function(r){if(r.ok)setDens(r.denuncias||[]);}).finally(function(){setLoad(false);});}
+  function load2(){setLoad(true);var q=new URLSearchParams(Object.fromEntries([['status',fStatus],['tipo',fTipo]].filter(function(x){return x[1];})));apiJson('/api/denuncias?'+q).then(function(r){if(r.ok)setDens(r.denuncias||[]);}).finally(function(){setLoad(false);});}
   useEffect(load2,[fStatus,fTipo]);
   function openEdit(d){setForm({status:d.status,resposta:d.resposta||'',responsavel:d.responsavel||'',unit_id:d.unit_id||'',ocorrencia_id:d.ocorrencia_id||''});setMod(d);}
-  function salvar(){apiFetch('/api/denuncias/'+mod.id,{method:'PUT',body:JSON.stringify(form)}).then(function(r){if(r.ok){toast2('Denúncia atualizada!','ok');setMod(null);load2();}else toast2(r.error||'Erro','err');});}
-  function del(d){if(!confirm('Arquivar denúncia '+d.protocolo+'?'))return;apiFetch('/api/denuncias/'+d.id,{method:'DELETE'}).then(function(r){if(r.ok){toast2('Denúncia removida','ok');load2();}else toast2(r.error||'Erro','err');});}
+  function salvar(){apiJson('/api/denuncias/'+mod.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(form)}).then(function(r){if(r.ok){toast2('Denúncia atualizada!','ok');setMod(null);load2();}else toast2(r.error||'Erro','err');});}
+  function del(d){if(!confirm('Arquivar denúncia '+d.protocolo+'?'))return;apiJson('/api/denuncias/'+d.id,{method:'DELETE'}).then(function(r){if(r.ok){toast2('Denúncia removida','ok');load2();}else toast2(r.error||'Erro','err');});}
   var cs={background:C.c2||'#fff',border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:8,padding:'12px 16px',marginBottom:10};
   var inp={border:'1px solid '+(C.c3||'#e5e7eb'),borderRadius:6,padding:'6px 10px',fontSize:13,background:C.c1||'#f9fafb',color:C.ct||'#111',width:'100%',boxSizing:'border-box'};
   var counts=STATUS.reduce(function(acc,s){acc[s]=(dens.filter(function(d){return d.status===s;}).length);return acc;},{});
@@ -3907,20 +3925,20 @@ function AdminAgenda(p){
     if(f2.status)qs.push('status='+encodeURIComponent(f2.status));
     if(f2.tipo)qs.push('tipo='+encodeURIComponent(f2.tipo));
     if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
-    apiFetch('/api/agenda'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setEvs(d.rows||[]);}).finally(function(){setLoad(false);});
+    apiJson('/api/agenda'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setEvs(d.rows||[]);}).finally(function(){setLoad(false);});
   }
   useEffect(function(){load2();},[]);
 
   function save(data){
     var method=data.id?'PUT':'POST';
     var url=data.id?'/api/agenda/'+data.id:'/api/agenda';
-    apiFetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+    apiJson(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
       if(d.ok){toast2('Evento salvo!','success');setFm(null);load2();}
       else toast2(d.error||'Erro ao salvar','error');
     });
   }
   function del2(){
-    apiFetch('/api/agenda/'+delId,{method:'DELETE'}).then(function(d){
+    apiJson('/api/agenda/'+delId,{method:'DELETE'}).then(function(d){
       if(d.ok){toast2('Removido!','success');setDelId(null);load2();}
       else toast2(d.error||'Erro','error');
     });
@@ -4078,20 +4096,20 @@ function AdminOcorrencias(p){
     if(f2.status)qs.push('status='+encodeURIComponent(f2.status));
     if(f2.tipo)qs.push('tipo='+encodeURIComponent(f2.tipo));
     if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
-    apiFetch('/api/ocorrencias'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setOcrs(d.rows||[]);}).finally(function(){setLoad(false);});
+    apiJson('/api/ocorrencias'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setOcrs(d.data||[]);}).finally(function(){setLoad(false);});
   }
   useEffect(function(){load2();},[]);
 
   function save(data){
     var method=data.id?'PUT':'POST';
     var url=data.id?'/api/ocorrencias/'+data.id:'/api/ocorrencias';
-    apiFetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+    apiJson(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
       if(d.ok){toast2('Ocorrência salva!','success');setFm(null);load2();}
       else toast2(d.error||'Erro ao salvar','error');
     });
   }
   function del2(){
-    apiFetch('/api/ocorrencias/'+delId,{method:'DELETE'}).then(function(d){
+    apiJson('/api/ocorrencias/'+delId,{method:'DELETE'}).then(function(d){
       if(d.ok){toast2('Removida!','success');setDelId(null);load2();}
       else toast2(d.error||'Erro','error');
     });
@@ -4242,20 +4260,20 @@ function AdminOrdens(p){
     if(f2.status)qs.push('status='+encodeURIComponent(f2.status));
     if(f2.prioridade)qs.push('prioridade='+encodeURIComponent(f2.prioridade));
     if(f2.unit_id)qs.push('unit_id='+encodeURIComponent(f2.unit_id));
-    apiFetch('/api/ordens'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setOrds(d.rows||[]);}).finally(function(){setLoad(false);});
+    apiJson('/api/ordens'+(qs.length?'?'+qs.join('&'):'')).then(function(d){if(d.ok)setOrds(d.data||[]);}).finally(function(){setLoad(false);});
   }
   useEffect(function(){load2();},[]);
 
   function save(data){
     var method=data.id?'PUT':'POST';
     var url=data.id?'/api/ordens/'+data.id:'/api/ordens';
-    apiFetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
+    apiJson(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}).then(function(d){
       if(d.ok){toast2('Ordem salva!','success');setFm(null);load2();}
       else toast2(d.error||'Erro ao salvar','error');
     });
   }
   function del2(){
-    apiFetch('/api/ordens/'+delId,{method:'DELETE'}).then(function(d){
+    apiJson('/api/ordens/'+delId,{method:'DELETE'}).then(function(d){
       if(d.ok){toast2('Removida!','success');setDelId(null);load2();}
       else toast2(d.error||'Erro','error');
     });
@@ -4418,8 +4436,8 @@ function AdminAuditLog(p){
     setLoad(true);
     var qs=['limit='+LIMIT,'offset='+(pg2*LIMIT)];
     if(f2.entidade)qs.push('entidade='+encodeURIComponent(f2.entidade));
-    apiFetch('/api/audit?'+qs.join('&')).then(function(d){
-      if(d.ok){setRows(d.rows||[]);setTotal(Number(d.total)||0);}
+    apiJson('/api/audit?'+qs.join('&')).then(function(d){
+      if(d.ok){setRows(d.data||[]);setTotal(Number(d.total)||0);}
     }).finally(function(){setLoad(false);});
   }
   useEffect(function(){load2();},[]);
@@ -5139,7 +5157,7 @@ function App(){
 
   // Buscar stats do dashboard
   useEffect(function(){
-    apiFetch('/api/stats').then(function(d){if(d.ok)setDashStats(d);}).catch(function(){});
+    apiJson('/api/stats').then(function(d){if(d.ok)setDashStats(d);}).catch(function(){});
   },[atab]);
 
   // Buscar notificações do usuário logado
