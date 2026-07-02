@@ -16,6 +16,9 @@ input,select,textarea{padding:8px 12px;border:1px solid #DEE2D8;border-radius:8p
 input:focus,select:focus,textarea:focus{border-color:#2E9E63;box-shadow:0 0 0 2px rgba(46,158,99,.1)}
 button{cursor:pointer}
 a{color:inherit;text-decoration:none}
+/* Acessibilidade: restaura indicador de foco visível para navegação por teclado (mantém outline:none só no mouse) */
+:focus-visible{outline:2px solid #2E9E63;outline-offset:2px;border-radius:4px}
+a:focus-visible,button:focus-visible,[role="button"]:focus-visible{outline:2px solid #2E9E63;outline-offset:2px}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:#F7F8F5}
 ::-webkit-scrollbar-thumb{background:#DEE2D8;border-radius:4px}
@@ -5094,6 +5097,7 @@ function App(){
   var sCU=useState(function(){return lsGet('curUser',null);});var curUser=sCU[0],setCurUser=sCU[1];
   var sSL=useState(false);var showLogin=sSL[0],setShowLogin=sSL[1];
   var sAT=useState("dash");var atab=sAT[0],setAtab=sAT[1];
+  var sANO=useState(false);var adminNavOpen=sANO[0],setAdminNavOpen=sANO[1];
   var sTt=useState(null);var toast=sTt[0],setToast=sTt[1];
   var sMo=useState(null);var modal=sMo[0],setModal=sMo[1];
   var sCf=useState(null);var conf=sCf[0],setConf=sCf[1];
@@ -5567,12 +5571,12 @@ function App(){
             h("div",{style:{fontWeight:600,color:"rgba(255,255,255,.85)"}},curUser.nome.split(" ")[0]),
             h("div",{style:{fontSize:10}},PL[curUser.perfil])
           ),
-          !isMobile&&h("select",{value:lang,onChange:function(e){setLang(e.target.value);},title:t("idioma"),style:{background:"rgba(255,255,255,.1)",border:"0.5px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.8)",padding:"5px 6px",borderRadius:7,fontSize:11,cursor:"pointer",outline:"none"}},
+          !isMobile&&h("select",{value:lang,onChange:function(e){setLang(e.target.value);},title:t("idioma"),"aria-label":t("idioma"),style:{background:"rgba(255,255,255,.1)",border:"0.5px solid rgba(255,255,255,.2)",color:"rgba(255,255,255,.8)",padding:"5px 6px",borderRadius:7,fontSize:11,cursor:"pointer",outline:"none"}},
             h("option",{value:"pt"},"🇧🇷 PT"),h("option",{value:"en"},"🇺🇸 EN"),h("option",{value:"es"},"🇪🇸 ES")
           ),
-          h("button",{onClick:function(){if(curUser)go("admin");else setShowLogin(true);},style:{background:page==="admin"?"rgba(255,255,255,.18)":"rgba(255,255,255,.07)",border:"0.5px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.8)",padding:"6px 10px",borderRadius:8,fontSize:12,cursor:"pointer"}},isMobile?"⚙":"⚙ Admin"),
+          h("button",{"aria-label":"Painel administrativo",onClick:function(){if(curUser)go("admin");else setShowLogin(true);},style:{background:page==="admin"?"rgba(255,255,255,.18)":"rgba(255,255,255,.07)",border:"0.5px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.8)",padding:"6px 10px",borderRadius:8,fontSize:12,cursor:"pointer"}},isMobile?"⚙":"⚙ Admin"),
           curUser&&h("div",{style:{position:"relative"}},
-            h("button",{onClick:function(){setNotifOpen(function(o){return !o;});},style:{background:"none",border:"0.5px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.75)",padding:"6px 10px",borderRadius:8,fontSize:14,cursor:"pointer",position:"relative"}},
+            h("button",{"aria-label":"Notificações ("+notifs.filter(function(n){return !n.lida;}).length+" não lidas)","aria-expanded":notifOpen?"true":"false",onClick:function(){setNotifOpen(function(o){return !o;});},style:{background:"none",border:"0.5px solid rgba(255,255,255,.18)",color:"rgba(255,255,255,.75)",padding:"6px 10px",borderRadius:8,fontSize:14,cursor:"pointer",position:"relative"}},
               "🔔",
               notifs.filter(function(n){return !n.lida;}).length>0&&h("span",{style:{position:"absolute",top:-4,right:-4,background:C.rm,color:"#fff",borderRadius:"50%",fontSize:9,width:15,height:15,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,lineHeight:1}},Math.min(notifs.filter(function(n){return !n.lida;}).length,9)+"")
             ),
@@ -5884,13 +5888,15 @@ function App(){
       h("button",{onClick:function(){setShowLogin(true);},style:{padding:"12px 32px",borderRadius:10,border:"none",background:C.g2,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}},t("admin_login"))
     ),
 
-    page==="admin"&&curUser&&h("div",{style:{display:"flex",minHeight:"calc(100vh - 72px)"},className:darkMode?"sgua-dark":""},
-      // Sidebar admin (idêntica ao v7)
-      h("div",{style:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
+    page==="admin"&&curUser&&h("div",{style:{display:"flex",minHeight:"calc(100vh - 72px)",position:"relative"},className:darkMode?"sgua-dark":""},
+      // Overlay do drawer (mobile) — fecha o menu ao tocar fora
+      isMobile&&adminNavOpen&&h("div",{onClick:function(){setAdminNavOpen(false);},"aria-hidden":"true",style:{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",zIndex:299}}),
+      // Sidebar admin — drawer off-canvas no mobile, fixa no desktop
+      h("nav",{"aria-label":"Menu do painel administrativo",style:isMobile?{position:"fixed",top:0,left:0,bottom:0,width:240,zIndex:300,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2,boxShadow:"2px 0 16px rgba(0,0,0,.18)",transform:adminNavOpen?"translateX(0)":"translateX(-100%)",transition:"transform .25s ease",overflowY:"auto"}:{width:200,flexShrink:0,background:"#fff",borderRight:"1px solid "+C.cl,padding:"16px 10px",display:"flex",flexDirection:"column",gap:2}},
         h("div",{style:{fontSize:10,fontWeight:700,color:C.cm,padding:"4px 12px 8px",letterSpacing:.8}},"GESTÃO"),
         [["dash",t("tab_dash"),true],["uns",t("tab_uns"),canDo("units")],["nws",t("tab_nws"),canDo("news")],["fds",t("tab_fds"),canDo("feeds")],["sols",t("tab_sols"),canDo("sols")],["agenda","📅 Agenda",canDo("units")],["ocorrencias","🚨 Ocorrências",canDo("units")],["ordens","🔧 Manutenção",canDo("units")],["equipamentos","⚙️ Equipamentos",canDo("units")],["documentos","📎 Documentos",canDo("units")],["denuncias","📢 Denúncias",canDo("units")],["users",t("tab_users"),canDo("users")],["regreqs","📬 Solicitações de Acesso",canDo("users")],["rel",t("tab_rel"),canDo("rel")],["auditoria","📋 Auditoria",curUser&&curUser.perfil==='admin'],["monitor",t("tab_monitor"),true],["pers",t("tab_pers"),canDo("cfg")],["backup",t("tab_backup"),canDo("backup")],["notif",t("tab_notif"),canDo("notif")],["alertas",t("tab_alertas"),canDo("cfg")]].filter(function(it){return it[2];}).map(function(it){
           var parts=it[1].match(/^(\S+)\s(.+)$/)||["",it[1].charAt(0),it[1].slice(2)];
-          return h("button",{key:it[0],onClick:function(){setAtab(it[0]);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
+          return h("button",{key:it[0],"aria-current":atab===it[0]?"page":undefined,onClick:function(){setAtab(it[0]);if(isMobile)setAdminNavOpen(false);},style:{width:"100%",textAlign:"left",padding:"9px 12px",borderRadius:9,border:"none",background:atab===it[0]?C.gx:"none",color:atab===it[0]?C.g1:C.cm,fontSize:13,fontWeight:atab===it[0]?700:400,cursor:"pointer",display:"flex",alignItems:"center",gap:7}},
             h("span",{style:{fontSize:14}},parts[1]),parts[2]
           );
         }),
@@ -5907,7 +5913,8 @@ function App(){
       // Conteúdo admin
       h("div",{style:{flex:1,overflowY:"auto",background:C.cx,display:"flex",flexDirection:"column"}},
         h("div",{style:{padding:"10px 28px 0",borderBottom:"1px solid "+C.cl,background:C.cx,flexShrink:0}},
-          h("input",{value:qAdm,onChange:function(e){setQAdm(e.target.value);},placeholder:"🔍 Buscar em unidades, notícias, solicitações...",style:{width:"100%",maxWidth:460,padding:"7px 12px",borderRadius:8,border:"1px solid "+C.cl,background:"#fff",fontSize:12,boxSizing:"border-box",color:C.cd,marginBottom:10}})
+          isMobile&&h("button",{"aria-label":"Abrir menu do painel administrativo","aria-expanded":adminNavOpen?"true":"false",onClick:function(){setAdminNavOpen(true);},style:{display:"inline-flex",alignItems:"center",gap:6,padding:"7px 12px",borderRadius:8,border:"1px solid "+C.cl,background:"#fff",color:C.cd,fontSize:13,fontWeight:600,cursor:"pointer",marginBottom:10}},"☰ Menu"),
+          h("input",{"aria-label":"Buscar no painel","type":"search",value:qAdm,onChange:function(e){setQAdm(e.target.value);},placeholder:"🔍 Buscar em unidades, notícias, solicitações...",style:{width:"100%",maxWidth:460,padding:"7px 12px",borderRadius:8,border:"1px solid "+C.cl,background:"#fff",fontSize:12,boxSizing:"border-box",color:C.cd,marginBottom:10}})
         ),
         h("div",{style:{flex:1,padding:"24px 28px",overflowY:"auto"}},
 
@@ -6215,9 +6222,9 @@ function App(){
                       h("button",{onClick:function(){setConf({nome:f.nome,fn:function(){delFd(f.id);}});},style:{padding:"5px 10px",borderRadius:7,border:"1px solid "+C.rm,background:C.rl,color:C.rm,fontSize:11,cursor:"pointer"}},"Excluir")
                     ),
                     h("div",{style:{display:"flex",gap:4}},
-                      h("button",{onClick:function(){apiFetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:Math.max(0,(f.prioridade||0)-1)})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↓"),
+                      h("button",{"aria-label":"Diminuir prioridade do feed",title:"Diminuir prioridade",onClick:function(){apiFetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:Math.max(0,(f.prioridade||0)-1)})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↓"),
                       h("span",{style:{fontSize:10,color:C.cm,padding:"3px 4px"}},"P"+(f.prioridade||0)),
-                      h("button",{onClick:function(){apiFetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:(f.prioridade||0)+1})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↑")
+                      h("button",{"aria-label":"Aumentar prioridade do feed",title:"Aumentar prioridade",onClick:function(){apiFetch('/api/feeds/'+f.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({prioridade:(f.prioridade||0)+1})}).then(function(){recarregarFeeds();});},style:{padding:"3px 8px",borderRadius:5,border:"1px solid "+C.cl,background:"none",cursor:"pointer",fontSize:10}},"↑")
                     ),
                     tr&&!tr.loading&&h("div",{style:{fontSize:11,padding:"4px 8px",borderRadius:6,background:tr.ok?C.gx:C.rl,border:"1px solid "+(tr.ok?C.g2:C.rm),color:tr.ok?C.g2:C.rm,marginTop:2}},tr.ok?"✅ "+tr.count+" itens":"❌ "+tr.error)
                   )
