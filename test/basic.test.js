@@ -534,3 +534,21 @@ test('sanitizeHtml usa allowlist inerte (DOMParser)', () => {
   assert.ok(src.includes('new DOMParser().parseFromString') && src.includes('var ALLOWED='),
     'sanitizeHtml deve usar DOMParser + allowlist em vez de denylist');
 });
+
+// ─── Admin responsivo mobile + acessibilidade (PR 3/3) ────────────────────────
+
+test('painel admin tem drawer colapsável no mobile', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes('adminNavOpen'), 'estado adminNavOpen deve existir');
+  assert.ok(src.includes('setAdminNavOpen'), 'setter setAdminNavOpen deve existir');
+  assert.ok(src.includes('☰ Menu'), 'deve haver botão hambúrguer no painel admin');
+  assert.ok(src.includes('translateX(-100%)'), 'a sidebar deve ser um drawer off-canvas no mobile');
+});
+
+test('acessibilidade: aria-labels e foco visível presentes', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.ok(src.includes(':focus-visible'), 'deve restaurar indicador de foco para teclado');
+  assert.ok(src.includes('"aria-label":"Notificações'), 'sino de notificações deve ter aria-label');
+  assert.ok(src.includes('"aria-label":"Abrir menu do painel administrativo"'), 'hambúrguer deve ter aria-label');
+  assert.ok(src.includes('"aria-current":atab===it[0]'), 'item de nav ativo deve marcar aria-current');
+});
